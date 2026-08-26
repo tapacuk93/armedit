@@ -36,7 +36,7 @@ KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 QEMU      := qemu-system-aarch64
 QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
 
-.PHONY: all tty window kernel backend run win boot boot-tty serve clean
+.PHONY: all tty window kernel backend app ios ios-run run win boot boot-tty serve clean
 all: tty window kernel backend
 tty: $(B)/asmedit-tty
 window: $(B)/asmedit-window
@@ -62,6 +62,52 @@ $(B)/asmeditd: $(BACKEND_OBJ)
 
 $(B)/kernel.elf: $(KERNEL_OBJ) kernel/link.ld
 	ld.lld -T kernel/link.ld -o $@ $(KERNEL_OBJ)
+
+# --- iOS ---------------------------------------------------------------
+# The same editor core behind a UIKit front end.  Simulator by default,
+# because a device build needs a signing identity this repository has no
+# business knowing about.
+IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
+IOS_ARCH  := arm64-apple-ios16.0-simulator
+IOS_SRC   := app/ios.S app/env.S app/backend_client.S editor/editor.S \
+             net/str.S net/http.S $(FONT_SRC)
+IOS_OBJ   := $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
+
+$(B)/ios/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(INC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) -c $< -o $@
+
+ios: $(B)/asmedit-ios.app
+
+$(B)/asmedit-ios.app: $(IOS_OBJ) app/ios/Info.plist
+	@rm -rf $@ && mkdir -p $@
+	$(CC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) \
+	  -framework UIKit -framework CoreGraphics -framework Foundation \
+	  -o $@/asmedit $(IOS_OBJ)
+	@cp app/ios/Info.plist $@/Info.plist
+	@codesign --force --sign - $@ 2>/dev/null || true
+	@echo "built $@"
+
+# Boot a simulator, install, launch.  SIM overrides the device.
+SIM ?= iPhone 17 Pro
+ios-run: $(B)/asmedit-ios.app
+	@xcrun simctl boot "$(SIM)" 2>/dev/null || true
+	@xcrun simctl install "$(SIM)" $(B)/asmedit-ios.app
+	@xcrun simctl launch "$(SIM)" com.oeaio.asmedit
+	@open -a Simulator
+
+# A double-clickable Mac app: the same binary, in the bundle layout Finder
+# and the Dock expect.
+app: $(B)/asmedit.app
+
+$(B)/asmedit.app: $(B)/asmedit-window app/macos/Info.plist
+	@rm -rf $@
+	@mkdir -p $@/Contents/MacOS
+	@cp app/macos/Info.plist $@/Contents/Info.plist
+	@cp $(B)/asmedit-window $@/Contents/MacOS/asmedit
+	@printf 'APPL????' > $@/Contents/PkgInfo
+	@codesign --force --sign - $@ 2>/dev/null || true
+	@echo "built $@"
 
 run: $(B)/asmedit-tty
 	@$(B)/asmedit-tty $(TEXT)
