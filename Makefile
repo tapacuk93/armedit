@@ -21,7 +21,12 @@ LD_MACHO := ld -lSystem -syslibroot $(SDK) -arch arm64
 B        := build
 
 FONT_SRC   := font/font.S font/render.S
-KERNEL_SRC := kernel/boot.S kernel/uart.S kernel/fwcfg.S kernel/console.S kernel/main.S
+# The kernel splits in two: kernel/ is what it does, kernel/arch/<cpu>/ is
+# what the machine is.  A port replaces the second half and transliterates the
+# first; see kernel/PORTING.md.
+KERNEL_ARCH ?= aarch64
+KERNEL_SRC := kernel/main.S kernel/console.S \
+              $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 BACKEND_SRC := backend/daemon.S backend/page.S backend/util.S backend/aicoin.S \
                backend/aws.S backend/sigv4.S crypto/sha256.S crypto/hmac.S \
@@ -60,8 +65,8 @@ $(B)/asmedit-window: $(WIN_OBJ)
 $(B)/asmeditd: $(BACKEND_OBJ)
 	$(LD_MACHO) -o $@ $^
 
-$(B)/kernel.elf: $(KERNEL_OBJ) kernel/link.ld
-	ld.lld -T kernel/link.ld -o $@ $(KERNEL_OBJ)
+$(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
+	ld.lld -T kernel/arch/$(KERNEL_ARCH)/link.ld -o $@ $(KERNEL_OBJ)
 
 # --- iOS ---------------------------------------------------------------
 # The same editor core behind a UIKit front end.  Simulator by default,

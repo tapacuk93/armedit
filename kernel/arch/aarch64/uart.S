@@ -10,6 +10,7 @@
 #define UART_DR         0x00
 #define UART_FR         0x18
 #define UART_FR_TXFF    5               /* bit index */
+#define UART_FR_RXFE    4
 
         .section .text
         .p2align 2
@@ -39,6 +40,20 @@ uart_puts:
         b       1b
 2:      ldr     x19, [sp, #16]
         ldp     x29, x30, [sp], #32
+        ret
+
+/*
+ * uart_getc - one byte if the receiver has one, otherwise -1.
+ * RXFE (bit 4 of FR) is clear when there is something to read.
+ */
+        .globl  uart_getc
+uart_getc:
+        mov     x1, #UART_BASE
+        ldr     w2, [x1, #UART_FR]
+        tbnz    w2, #UART_FR_RXFE, 1f
+        ldrb    w0, [x1, #UART_DR]
+        ret
+1:      mov     w0, #-1
         ret
 
 /* uart_puthex - w0 as 8 hex digits, for poking at registers. */
