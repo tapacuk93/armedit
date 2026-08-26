@@ -75,6 +75,7 @@ _main:
         bl      SYM(editor_init)
         LEA     x0, seed_text
         bl      SYM(editor_insert_str)
+        bl      SYM(backend_session)    /* open with an instance attached */
 
         CLS     s_NSApplication
         mov     x27, x0

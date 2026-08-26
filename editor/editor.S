@@ -569,6 +569,32 @@ SYM(editor_mark_synced):
         ldp     x29, x30, [sp], #16
         ret
 
+/* editor_cursor_get - w0 = the cursor's byte offset in the current screen */
+        .globl  SYM(editor_cursor_get)
+SYM(editor_cursor_get):
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      ed_cur
+        ldr     w0, [x0, #SCR_CUR_OFF]
+        ldp     x29, x30, [sp], #16
+        ret
+
+/* editor_cursor_set - w0 = byte offset, clamped to the text that is there */
+        .globl  SYM(editor_cursor_set)
+SYM(editor_cursor_set):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     w19, w0
+        bl      ed_cur
+        ldr     w9, [x0, #SCR_LEN_OFF]
+        cmp     w19, w9
+        csel    w19, w19, w9, lo
+        str     w19, [x0, #SCR_CUR_OFF]
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
 /* editor_view - w0 = first visible row, w1 = visible row count */
         .globl  SYM(editor_view)
 SYM(editor_view):

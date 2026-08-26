@@ -23,6 +23,11 @@ B        := build
 FONT_SRC   := font/font.S font/render.S
 KERNEL_SRC := kernel/boot.S kernel/uart.S kernel/fwcfg.S kernel/console.S kernel/main.S
 
+BACKEND_SRC := backend/daemon.S backend/page.S backend/util.S backend/aicoin.S \
+               backend/aws.S backend/sigv4.S crypto/sha256.S crypto/hmac.S \
+               net/str.S net/http.S net/server.S app/env.S
+BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
+
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S
 WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/backend_client.S editor/editor.S $(NET_SRC) $(FONT_SRC))
@@ -31,11 +36,12 @@ KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 QEMU      := qemu-system-aarch64
 QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
 
-.PHONY: all tty window kernel run win boot boot-tty clean
-all: tty window kernel
+.PHONY: all tty window kernel backend run win boot boot-tty serve clean
+all: tty window kernel backend
 tty: $(B)/asmedit-tty
 window: $(B)/asmedit-window
 kernel: $(B)/kernel.elf
+backend: $(B)/asmeditd
 
 $(B)/macho/%.o: %.S
 	@mkdir -p $(dir $@)
@@ -51,6 +57,9 @@ $(B)/asmedit-tty: $(TTY_OBJ)
 $(B)/asmedit-window: $(WIN_OBJ)
 	$(LD_MACHO) -framework AppKit -framework CoreGraphics -o $@ $^
 
+$(B)/asmeditd: $(BACKEND_OBJ)
+	$(LD_MACHO) -o $@ $^
+
 $(B)/kernel.elf: $(KERNEL_OBJ) kernel/link.ld
 	ld.lld -T kernel/link.ld -o $@ $(KERNEL_OBJ)
 
@@ -59,6 +68,9 @@ run: $(B)/asmedit-tty
 
 win: $(B)/asmedit-window
 	@$(B)/asmedit-window $(TEXT)
+
+serve: $(B)/asmeditd
+	@$(B)/asmeditd
 
 boot: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) -device ramfb -display cocoa

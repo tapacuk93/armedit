@@ -60,6 +60,9 @@ SYM(backend_submit):
         stp     x21, x22, [sp, #32]
         str     x23, [sp, #48]
         mov     w23, w0                 /* ED_SUBMIT or ED_AIFY */
+        bl      SYM(editor_cursor_get)  /* where the user was when they asked */
+        LEA     x9, saved_cursor
+        str     w0, [x9]
 
 /* ---- where is the backend, and what is our key? ------------------------- */
         LEA     x0, s_env_backend
@@ -211,6 +214,9 @@ SYM(backend_submit):
         b.ne    6f
         LEA     x0, replybuf            /* aify: the answer IS the screen */
         bl      SYM(editor_screen_set)
+        LEA     x9, saved_cursor        /* put the caret back where it was */
+        ldr     w0, [x9]
+        bl      SYM(editor_cursor_set)
         bl      SYM(editor_mark_synced)
         b       .Lsub_out
 6:      LEA     x0, m_reply_open        /* agent: append it below */
@@ -228,7 +234,98 @@ SYM(backend_submit):
         ldp     x29, x30, [sp], #64
         ret
 
+/*
+ * backend_session - ask the backend for this account's instance at startup.
+ * The editor is meant to open with somewhere to run things already attached;
+ * the backend decides whether that means starting one or reusing the one this
+ * account already has.
+ */
+        .globl  SYM(backend_session)
+SYM(backend_session):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+
+        LEA     x0, s_env_backend
+        bl      SYM(env_get)
+        mov     x19, x0
+        cbnz    x19, 1f
+        LEA     x19, s_default_backend
+1:      LEA     x0, s_env_key
+        bl      SYM(env_get)
+        mov     x20, x0
+        cbz     x20, .Lses_out          /* no key: the editor still opens */
+
+        LEA     x21, req
+        mov     x0, x19
+        add     x1, x21, #REQ_IP
+        add     x2, x21, #REQ_PORT
+        bl      SYM(net_parse_addr)
+        tbnz    w0, #31, .Lses_out
+
+        LEA     x0, hdrbuf
+        LEA     x1, s_hdr_key
+        bl      SYM(str_copy)
+        mov     x1, x20
+        bl      SYM(str_copy)
+        LEA     x1, s_hdr_tail
+        bl      SYM(str_copy)
+
+        LEA     x0, s_post
+        str     x0, [x21, #REQ_METHOD]
+        LEA     x0, s_path_session
+        str     x0, [x21, #REQ_PATH]
+        str     x19, [x21, #REQ_HOST]
+        LEA     x0, hdrbuf
+        str     x0, [x21, #REQ_HDRS]
+        LEA     x0, s_empty_body
+        str     x0, [x21, #REQ_BODY]
+        mov     w0, #0
+        str     w0, [x21, #REQ_BODYLEN]
+        LEA     x0, respbuf
+        str     x0, [x21, #REQ_OUT]
+        mov     w0, #RESP_SZ
+        str     w0, [x21, #REQ_OUTCAP]
+        mov     x0, x21
+        bl      SYM(http_request)
+        cmp     w0, #0
+        b.le    .Lses_none
+
+        LEA     x0, respbuf
+        bl      SYM(http_body)
+        LEA     x1, s_key_instance
+        bl      SYM(json_find)
+        cbz     x0, .Lses_none
+        mov     x1, x0
+        LEA     x0, replybuf
+        mov     w2, #REPLY_SZ
+        bl      SYM(json_unescape)
+        LEA     x9, replybuf
+        ldrb    w10, [x9]
+        cbz     w10, .Lses_none
+        LEA     x0, m_instance
+        bl      SYM(editor_insert_str)
+        LEA     x0, replybuf
+        bl      SYM(editor_insert_str)
+        LEA     x0, s_nl
+        bl      SYM(editor_insert_str)
+        b       .Lses_out
+.Lses_none:
+        LEA     x0, m_noinstance
+        bl      SYM(editor_insert_str)
+.Lses_out:
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
         CSTR
+s_path_session:     .asciz "/api/session"
+s_key_instance:     .asciz "\"instance\""
+s_empty_body:       .asciz ""
+m_instance:         .asciz "INSTANCE: "
+m_noinstance:       .asciz "NO INSTANCE. THE EDITOR WORKS; CMD+ENTER NEEDS THE BACKEND.\n"
 s_env_backend:      .asciz "ASMEDIT_BACKEND"
 s_env_key:          .asciz "ASMEDIT_KEY"
 s_default_backend:  .asciz "127.0.0.1:8080"
@@ -256,6 +353,7 @@ m_badreply:         .asciz "\nBACKEND REPLY HAD NO TEXT FIELD.\n"
         BSS
         .p2align 4
 req:        .space 80
+saved_cursor: .space 8
 ctxbuf:     .space CTX_SZ
 basebuf:    .space CTX_SZ
 bodybuf:    .space BODY_SZ
