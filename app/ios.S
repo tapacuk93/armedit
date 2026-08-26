@@ -24,6 +24,7 @@
  */
 #define MAX_W           1400            /* the widest surface we will render */
 #define MAX_H           1400
+#define KB_TOP_BP       5800    /* must match applet.S's keyboard geometry */
 #define CG_XRGB32_LE    0x2006  /* kCGImageAlphaNoneSkipFirst | ByteOrder32Little */
 
 .macro  MSG0 recv, selstr
@@ -72,6 +73,8 @@ _main:
         bl      SYM(editor_init)
         LEA     x0, seed_text
         bl      SYM(editor_insert_str)
+        mov     w0, #0                  /* our keyboard, not the system's */
+        bl      SYM(keyboard_build)
 
         bl      build_classes
 
@@ -125,19 +128,7 @@ build_classes:
         mov     x20, x0
         ADDM    x20, s_drawRect, view_draw_rect, t_drawRect
         ADDM    x20, s_touchesBegan, view_touches_began, t_void_id_id
-        ADDM    x20, s_canBecomeFirstResponder, view_yes, t_bool
-        ADDM    x20, s_insertText, view_insert_text, t_void_id
-        ADDM    x20, s_deleteBackward, view_delete_backward, t_void
-        ADDM    x20, s_hasText, view_yes, t_bool
-
-        LEA     x0, s_UIKeyInput        /* claim the protocol, so UIKit offers
-                                           this view a keyboard at all */
-        bl      _objc_getProtocol
-        cbz     x0, 1f
-        mov     x1, x0
         mov     x0, x20
-        bl      _class_addProtocol
-1:      mov     x0, x20
         bl      _objc_registerClassPair
 
         ldp     x19, x20, [sp, #16]
@@ -212,7 +203,6 @@ app_did_finish:
         MSG1    x22, s_setView, x21
         MSG1    x20, s_setRootViewController, x22
         MSG0    x20, s_makeKeyAndVisible
-        MSG0    x21, s_becomeFirstResponder
 
         LEA     x9, window_slot         /* the window must outlive this call */
         str     x20, [x9]
@@ -261,8 +251,11 @@ view_draw_rect:
         csel    w24, w24, w9, lo
         cbz     w23, .Ldraw_out
         cbz     w24, .Ldraw_out
-        LEA     x9, s_view_h            /* the flip needs the whole height */
+        LEA     x9, s_view_h            /* the flip and hit testing both need
+                                           the surface these were drawn on */
         str     w24, [x9]
+        LEA     x9, s_view_w
+        str     w23, [x9]
 
         LEA     x0, s_safeAreaInsets    /* keep clear of the island and the bar */
         bl      _sel_registerName
@@ -277,11 +270,31 @@ view_draw_rect:
         sub     w24, w24, w9            /* the height actually available */
 1:
 
+        mov     w9, #KB_TOP_BP          /* the text gets the space above the keys */
+        mul     w9, w24, w9
+        mov     w10, #10000
+        udiv    w28, w9, w10
+        LEA     x0, pixels
+        mov     w1, #MAX_W
+        mov     w2, w23
+        mov     w3, w28
+        bl      SYM(editor_render)
+
+        LEA     x0, pixels              /* clear the band the keys sit on */
+        mov     w1, #MAX_W
+        mov     w2, #0
+        mov     w3, w28
+        mov     w4, w23
+        sub     w5, w24, w28
+        mov     w6, #0x1618
+        movk    w6, #0xFF14, lsl #16
+        bl      SYM(fb_fill)
+
         LEA     x0, pixels
         mov     w1, #MAX_W
         mov     w2, w23
         mov     w3, w24
-        bl      SYM(editor_render)
+        bl      SYM(applet_render)
 
         bl      _CGColorSpaceCreateDeviceRGB
         mov     x20, x0
@@ -348,10 +361,12 @@ view_draw_rect:
  */
         .p2align 2
 view_touches_began:
-        stp     x29, x30, [sp, #-64]!
+        stp     x29, x30, [sp, #-96]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        str     x25, [sp, #64]
         mov     x19, x0                 /* self */
         mov     x20, x2                 /* touches */
 
@@ -370,16 +385,34 @@ view_touches_began:
         mov     x2, x19
         mov     x0, x21
         bl      _objc_msgSend           /* CGPoint in d0/d1 */
-        fcvtzu  w0, d0
-        fcvtzu  w1, d1
+        fcvtzu  w22, d0
+        fcvtzu  w23, d1
+
+        LEA     x9, s_view_w            /* the surface the layout was drawn on */
+        ldr     w24, [x9]
+        LEA     x9, s_view_h
+        ldr     w25, [x9]
+        mov     w0, w22
+        mov     w1, w23
+        mov     w2, w24
+        mov     w3, w25
+        bl      SYM(applet_hit)
+        tbnz    w0, #31, 2f
+        bl      SYM(applet_action)      /* a key: feed it in like any other */
+        bl      SYM(editor_key)
+        b       .Ltouch_redraw
+2:      mov     w0, w22                 /* no key there: place the caret */
+        mov     w1, w23
         bl      SYM(editor_click)
 
 .Ltouch_redraw:
         MSG0    x19, s_setNeedsDisplay
 .Ltouch_out:
+        ldr     x25, [sp, #64]
+        ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #64
+        ldp     x29, x30, [sp], #96
         ret
 
 /* - (void)insertText:(NSString *)text - the system keyboard, one string at a time */
@@ -466,7 +499,7 @@ view_yes:
         ret
 
         CSTR
-seed_text:              .asciz "ASMEDIT ON IPHONE\nTAP TO PLACE THE CARET\nTWO FINGERS TO PASTE\n\nTYPE HERE.\n"
+seed_text:              .asciz "ASMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nTWO FINGERS TO PASTE\n\n"
 s_delegate_cls:         .asciz "AsmeditDelegate"
 s_view_cls:             .asciz "AsmeditView"
 s_NSObject:             .asciz "NSObject"
@@ -511,5 +544,6 @@ t_bool_id_id:           .asciz "c@:@@"
 
         .zerofill __DATA,__bss,pixels,(MAX_W*MAX_H*4),4
         .zerofill __DATA,__bss,s_view_h,8,2
+        .zerofill __DATA,__bss,s_view_w,8,2
         .zerofill __DATA,__bss,window_slot,8,3
         .zerofill __DATA,__bss,view_slot,8,3
