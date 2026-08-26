@@ -50,6 +50,7 @@ SYM(aicoin_ask):
         mov     x22, x3                 /* baseline */
         mov     x23, x4                 /* out      */
         mov     w24, w5
+        mov     w28, w6                 /* caret    */
 
 /* ---- the request body --------------------------------------------------- */
         LEA     x25, ai_body
@@ -79,6 +80,16 @@ SYM(aicoin_ask):
         mov     x1, x22
         mov     w2, #(AI_BODY_SZ / 3)
         bl      SYM(json_escape)
+        mov     x25, x0
+        mov     x0, x28                 /* caret offset, as the daemon read it */
+        cbz     x0, 3f
+        mov     x0, x25
+        LEA     x1, s_caret_head
+        bl      SYM(str_copy)
+        mov     x25, x0
+        mov     x0, x25
+        mov     w1, w28
+        bl      SYM(u32_dec)
         mov     x25, x0
 3:      mov     x0, x25
         LEA     x1, s_cur_head
@@ -182,9 +193,10 @@ s_key_text:        .asciz "\"text\""
 s_hdr_head:        .asciz "Content-Type: application/json\r\nanthropic-version: 2023-06-01\r\nX-AI: anthropic\r\nX-Api-Key: "
 s_body_head:       .asciz "{\"model\":\"claude-opus-5\",\"max_tokens\":16000,\"messages\":[{\"role\":\"user\",\"content\":\""
 s_prompt_agent:    .asciz "You are inside asmedit, a text editor. The user pressed the ask key on this screen. Answer plainly. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
-s_prompt_aify:     .asciz "You are inside asmedit, a text editor. Rewrite this screen, carrying out whatever the user's latest edit asks for. Reply with the new screen contents and nothing else - no preamble, no fences. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
+s_prompt_aify:     .asciz "You are inside asmedit, a text editor. Your reply is inserted at the caret; everything else on the screen stays exactly as it is, so do not repeat it. Carry out whatever the user's latest edit asks for and reply with only the text that belongs at the caret - no preamble, no fences. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
 s_prev_head:       .asciz "PREVIOUS VERSION OF THIS SCREEN:\\n"
 s_cur_head:        .asciz "\\n\\nCURRENT SCREEN:\\n"
+s_caret_head:      .asciz "\\n\\nTHE CARET IS AT BYTE OFFSET "
 s_body_tail:       .asciz "\"}]}"
 
         BSS

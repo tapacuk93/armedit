@@ -291,14 +291,32 @@ SYM(str_find_ci):
  * colon, any whitespace, and the opening quote - real encoders differ on
  * spacing, and a matcher that only accepts one of them is a trap.
  */
+/*
+ * json_find     - x0 = document, x1 = quoted key; out x0 = first byte of the
+ *                 string value, or 0.
+ * json_find_num - the same, for a number: out x0 = its first digit, or 0.
+ * Both are the one scanner below, differing only in what they accept after
+ * the colon, so a key whose value is the wrong shape is skipped rather than
+ * misread.
+ */
         .globl  SYM(json_find)
 SYM(json_find):
+        mov     w2, #0
+        b       json_scan
+
+        .globl  SYM(json_find_num)
+SYM(json_find_num):
+        mov     w2, #1
+        b       json_scan
+
+json_scan:
         stp     x29, x30, [sp, #-48]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
-        str     x21, [sp, #32]
+        stp     x21, x22, [sp, #32]
         mov     x19, x0
         mov     x20, x1
+        mov     w22, w2                 /* 0 = want a string, 1 = want a number */
 .Lscan:
         ldrb    w9, [x19]
         cbz     w9, .Lmissing           /* end of document */
@@ -343,7 +361,14 @@ SYM(json_find):
         add     x21, x21, #1
         b       .Lpre_quote
 .Lquote:
-        cmp     w9, #'"'
+        cbz     w22, 1f
+        sub     w10, w9, #'0'           /* a number starts here, or it is not
+                                           the key we are looking for */
+        cmp     w10, #9
+        b.hi    .Lnext_pos
+        mov     x0, x21
+        b       .Lfind_out
+1:      cmp     w9, #'"'
         b.ne    .Lnext_pos
         add     x0, x21, #1
         b       .Lfind_out
@@ -353,7 +378,7 @@ SYM(json_find):
 .Lmissing:
         mov     x0, #0
 .Lfind_out:
-        ldr     x21, [sp, #32]
+        ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #48
         ret

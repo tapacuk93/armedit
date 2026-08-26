@@ -359,12 +359,24 @@ h_agent:
         mov     w3, #FIELD_SZ
         bl      SYM(json_get_str)
 
+        mov     x0, x22                 /* the caret offset, if it sent one */
+        LEA     x1, k_cursor
+        bl      SYM(json_find_num)
+        mov     w9, #0
+        cbz     x0, 1f
+        bl      SYM(str_to_u32)
+        mov     w9, w0
+1:      LEA     x10, f_cursor
+        str     w9, [x10]
+
         mov     x0, x21
         LEA     x1, f_mode
         LEA     x2, f_context
         LEA     x3, f_baseline
         LEA     x4, f_reply
         mov     w5, #FIELD_SZ
+        LEA     x6, f_cursor
+        ldr     w6, [x6]
         bl      SYM(aicoin_ask)
         tbnz    w0, #31, .Lag_upstream
 
@@ -584,6 +596,7 @@ k_region:       .asciz "\"region\""
 k_mode:         .asciz "\"mode\""
 k_context:      .asciz "\"context\""
 k_baseline:     .asciz "\"baseline\""
+k_cursor:       .asciz "\"cursor\""
 s_region_default: .asciz "us-east-1"
 j_ok:           .asciz "{\"ok\":true}"
 j_notfound:     .asciz "{\"error\":\"no such endpoint\"}"
@@ -610,6 +623,7 @@ f_secret:       .space 128
 f_region:       .space 32
 f_key:          .space 72
 f_mode:         .space 32
+f_cursor:       .space 8
 f_context:      .space FIELD_SZ
 f_baseline:     .space FIELD_SZ
 f_reply:        .space FIELD_SZ

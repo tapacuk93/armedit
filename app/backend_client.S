@@ -11,17 +11,19 @@
  *
  *   POST /api/agent
  *   X-Asmedit-Key: <the one key>
- *   {"mode":"agent"|"aify","screen":<n>,"scroll":<r>,"rows":<n>,
+ *   {"mode":"agent"|"aify","screen":<n>,"scroll":<r>,"rows":<n>,"cursor":<i>,
  *    "baseline":"<the text at the last sync>",
  *    "context":"<the whole current screen>"}
  * ->
  *   {"text":"<what came back>"}
  *
- * "agent" appends the answer below the text; "aify" replaces the screen with
- * it.  scroll/rows tell the backend which part of that text the user is
- * actually looking at, and baseline is what the text was the last time the
- * backend saw it - so the far side can reason about the edit, not just the
- * file.
+ * "agent" appends the answer under a marker; "aify" drops it straight in at
+ * the caret, where the user pressed the key.  Neither one removes text: an
+ * empty or missing reply leaves the screen exactly as it was.
+ *
+ * scroll/rows tell the backend which part of the text the user is actually
+ * looking at, and baseline is what the text was the last time the backend saw
+ * it - so the far side can reason about the edit, not just the file.
  *
  * Configuration comes from the environment: ASMEDIT_BACKEND (address:port,
  * default 127.0.0.1:8080) and ASMEDIT_KEY.  Neither is ever written to disk
@@ -135,6 +137,15 @@ SYM(backend_submit):
         mov     x0, x22
         bl      SYM(u32_dec)
         mov     x22, x0
+        mov     x0, x22                 /* where the caret is, in bytes */
+        LEA     x1, s_json_cursor
+        bl      SYM(str_copy)
+        mov     x22, x0
+        LEA     x9, saved_cursor
+        ldr     w1, [x9]
+        mov     x0, x22
+        bl      SYM(u32_dec)
+        mov     x22, x0
         mov     x0, x22                 /* what it looked like at last sync */
         LEA     x1, s_json_base
         bl      SYM(str_copy)
@@ -202,21 +213,29 @@ SYM(backend_submit):
         bl      SYM(http_body)
         LEA     x1, s_key_text
         bl      SYM(json_find)
-        cbnz    x0, 5f
+        cbnz    x0, 4f
         LEA     x0, m_badreply
         bl      SYM(editor_insert_str)
         b       .Lsub_out
-5:      mov     x1, x0
+4:      mov     x1, x0
         LEA     x0, replybuf
         mov     w2, #REPLY_SZ
         bl      SYM(json_unescape)
-        cmp     w23, #ED_AIFY
+        LEA     x9, replybuf            /* nothing came back: change nothing */
+        ldrb    w10, [x9]
+        cbnz    w10, 5f
+        LEA     x0, m_empty
+        bl      SYM(editor_insert_str)
+        b       .Lsub_out
+5:      cmp     w23, #ED_AIFY
         b.ne    6f
-        LEA     x0, replybuf            /* aify: the answer IS the screen */
-        bl      SYM(editor_screen_set)
-        LEA     x9, saved_cursor        /* put the caret back where it was */
-        ldr     w0, [x9]
+        LEA     x0, saved_cursor        /* aify: land it exactly where the key
+                                           was pressed, leaving the rest of the
+                                           screen alone */
+        ldr     w0, [x0]
         bl      SYM(editor_cursor_set)
+        LEA     x0, replybuf
+        bl      SYM(editor_insert_str)
         bl      SYM(editor_mark_synced)
         b       .Lsub_out
 6:      LEA     x0, m_reply_open        /* agent: append it below */
@@ -339,6 +358,7 @@ s_mode_aify:        .asciz "aify"
 s_json_head:        .asciz "\",\"screen\":"
 s_json_scroll:      .asciz ",\"scroll\":"
 s_json_rows:        .asciz ",\"rows\":"
+s_json_cursor:      .asciz ",\"cursor\":"
 s_json_base:        .asciz ",\"baseline\":\""
 s_json_ctx:         .asciz "\",\"context\":\""
 s_json_tail:        .asciz "\"}"
@@ -349,6 +369,7 @@ m_nokey:            .asciz "\nNO ASMEDIT KEY. REGISTER AT ASMEDIT.OEAIO.COM AND 
 m_badaddr:          .asciz "\nASMEDIT_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
 m_unreachable:      .asciz "\nBACKEND UNREACHABLE.\n"
 m_badreply:         .asciz "\nBACKEND REPLY HAD NO TEXT FIELD.\n"
+m_empty:            .asciz "\nEMPTY REPLY. NOTHING CHANGED.\n"
 
         BSS
         .p2align 4
