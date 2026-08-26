@@ -1,0 +1,17 @@
+# build output
+*.o
+*.elf
+*.bin
+*.img
+build/
+app/tty
+app/window
+backend/armeditd
+
+# secrets - never commit credentials of any kind
+*.token
+*.pem
+*.key
+.env
+.env.*
+secrets/
