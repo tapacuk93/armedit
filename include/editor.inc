@@ -18,8 +18,9 @@
 #define K_HOME          0x104
 #define K_END           0x105
 
-/* Modifier.  Cmd on macOS; Ctrl on the serial console, which has no Cmd. */
+/* Modifiers.  Cmd on macOS; Ctrl on the serial console, which has no Cmd. */
 #define MOD_CMD         0x1000
+#define MOD_SHIFT       0x2000
 
 /* What editor_key reports back to the front end. */
 #define ED_NONE         0
@@ -67,9 +68,25 @@
         movk    \reg, #\hi, lsl #16
 .endm
 
+/*
+ * Scale and colour are runtime state, not constants: Cmd +/- resizes the font
+ * and Cmd 0-9 recolours it.  These are the defaults and the limits.
+ */
 #define ED_SCALE        2
+#define ED_SCALE_MIN    1
+#define ED_SCALE_MAX    8
 #define ED_CELL_W       (GLYPH_ADV * ED_SCALE)
 #define ED_CELL_H       ((GLYPH_H + 2) * ED_SCALE)
 #define ED_BAR_H        (ED_CELL_H + 4 * ED_SCALE)
+
+/* ed_state layout */
+#define EDS_CURRENT     0
+#define EDS_COUNT       4
+#define EDS_SCROLL      8
+#define EDS_ROWS        12
+#define EDS_COLS        16
+#define EDS_SCALE       20
+#define EDS_COLOUR      24
+#define EDS_SZ          32
 
 #endif

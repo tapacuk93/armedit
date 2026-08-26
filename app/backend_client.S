@@ -45,9 +45,68 @@
 #define RESP_SZ         32768
 #define HDRS_SZ         512
 #define REPLY_SZ        8192
+#define KEY_SZ          128
 
         CODE
         .p2align 2
+
+/*
+ * resolve_backend - work out where to send things, and with what.
+ *   out x0 = address string ("a.b.c.d:port"), x1 = key, or x1 = 0 if unset
+ *
+ * A device is configured with exactly one value: ASMEDIT_KEY.  The key the
+ * backend issues carries the address to reach it at, as "<secret>@<addr>", so
+ * there is no second setting to get wrong and no endpoint baked into the
+ * binary.  A bare key falls back to the local default, and ASMEDIT_BACKEND
+ * overrides everything - both of those are for development, not for users.
+ */
+resolve_backend:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+
+        LEA     x0, s_env_key
+        bl      SYM(env_get)
+        mov     x19, x0
+        cbz     x19, .Lrb_nokey
+
+        LEA     x20, keybuf             /* copy the key, stopping at '@' */
+        mov     w9, #0
+1:      ldrb    w10, [x19, w9, uxtw]
+        cbz     w10, 2f
+        cmp     w10, #'@'
+        b.eq    2f
+        strb    w10, [x20, w9, uxtw]
+        add     w9, w9, #1
+        cmp     w9, #(KEY_SZ - 1)
+        b.lo    1b
+2:      strb    wzr, [x20, w9, uxtw]
+
+        ldrb    w10, [x19, w9, uxtw]    /* was there an address after it? */
+        cmp     w10, #'@'
+        b.ne    3f
+        add     w9, w9, #1
+        add     x21, x19, w9, uxtw
+        b       .Lrb_out
+3:      LEA     x0, s_env_backend       /* no: the override, then the default */
+        bl      SYM(env_get)
+        mov     x21, x0
+        cbnz    x21, .Lrb_out
+        LEA     x21, s_default_backend
+
+.Lrb_out:
+        mov     x0, x21
+        LEA     x1, keybuf
+        b       .Lrb_ret
+.Lrb_nokey:
+        LEA     x0, s_default_backend
+        mov     x1, #0
+.Lrb_ret:
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
 
 /*
  * backend_submit - hand the current screen to the backend, paste the answer.
@@ -66,19 +125,13 @@ SYM(backend_submit):
         LEA     x9, saved_cursor
         str     w0, [x9]
 
-/* ---- where is the backend, and what is our key? ------------------------- */
-        LEA     x0, s_env_backend
-        bl      SYM(env_get)
+/* ---- one property: the key, which carries where to reach the backend ---- */
+        bl      resolve_backend         /* x0 = address, x1 = key, or x1 = 0 */
         mov     x19, x0
-        cbnz    x19, 1f
-        LEA     x19, s_default_backend
-1:      LEA     x0, s_env_key
-        bl      SYM(env_get)
-        mov     x20, x0
+        mov     x20, x1
         cbnz    x20, 2f
-        LEA     x0, m_nokey
-        bl      SYM(editor_insert_str)
-        b       .Lsub_out
+        b       .Lsub_out               /* no key: these keys do nothing at all,
+                                           rather than writing into the buffer */
 2:
         LEA     x21, req
         mov     x0, x19
@@ -266,14 +319,9 @@ SYM(backend_session):
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
 
-        LEA     x0, s_env_backend
-        bl      SYM(env_get)
+        bl      resolve_backend         /* the key says where to go */
         mov     x19, x0
-        cbnz    x19, 1f
-        LEA     x19, s_default_backend
-1:      LEA     x0, s_env_key
-        bl      SYM(env_get)
-        mov     x20, x0
+        mov     x20, x1
         cbz     x20, .Lses_out          /* no key: the editor still opens */
 
         LEA     x21, req
@@ -375,6 +423,7 @@ m_empty:            .asciz "\nEMPTY REPLY. NOTHING CHANGED.\n"
         .p2align 4
 req:        .space 80
 saved_cursor: .space 8
+keybuf:     .space KEY_SZ           /* the key with any @address stripped off */
 ctxbuf:     .space CTX_SZ
 basebuf:    .space CTX_SZ
 bodybuf:    .space BODY_SZ

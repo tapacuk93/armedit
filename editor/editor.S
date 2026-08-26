@@ -27,6 +27,40 @@ ed_cur:
         add     x0, x0, w10, uxtw
         ret
 
+/*
+ * ed_metrics - the current cell geometry, derived from the font scale.
+ *   out w0 = cell width, w1 = cell height, w2 = bar height, w3 = scale
+ * Everything that lays anything out asks here, so Cmd +/- moves all of it at
+ * once rather than leaving the caret and the text disagreeing.
+ */
+        .globl  SYM(ed_metrics)
+SYM(ed_metrics):
+        LEA     x9, ed_state
+        ldr     w3, [x9, #EDS_SCALE]
+        cmp     w3, #ED_SCALE_MIN
+        b.hs    1f
+        mov     w3, #ED_SCALE
+1:      mov     w0, #GLYPH_ADV
+        mul     w0, w0, w3
+        mov     w1, #(GLYPH_H + 2)
+        mul     w1, w1, w3
+        lsl     w2, w3, #2              /* the bar is one row plus 4*scale */
+        add     w2, w2, w1
+        ret
+
+/* ed_fg - the ink colour the user last chose, as 0xAARRGGBB */
+        .globl  SYM(ed_fg)
+SYM(ed_fg):
+        LEA     x9, ed_state
+        ldr     w10, [x9, #EDS_COLOUR]
+        and     w10, w10, #0xF
+        cmp     w10, #9
+        b.ls    1f
+        mov     w10, #0
+1:      LEA     x11, ed_palette
+        ldr     w0, [x11, w10, uxtw #2]
+        ret
+
 /* editor_init - one empty screen, cursor at the top. */
         .globl  SYM(editor_init)
 SYM(editor_init):
@@ -34,6 +68,9 @@ SYM(editor_init):
         str     wzr, [x9, #0]           /* current = 0 */
         mov     w10, #1
         str     w10, [x9, #4]           /* count = 1  */
+        mov     w10, #ED_SCALE
+        str     w10, [x9, #EDS_SCALE]
+        str     wzr, [x9, #EDS_COLOUR]
         LEA     x0, ed_screens
         str     wzr, [x0, #SCR_LEN_OFF]
         str     wzr, [x0, #SCR_CUR_OFF]
@@ -184,6 +221,8 @@ ed_screen_step:
  *   Cmd + Backspace      close this screen
  *   Cmd + Enter          hand this screen to the backend
  *   Cmd + Up / Down      page up / page down
+ *   Cmd + Shift + Up     the very start of this screen
+ *   Cmd + Shift + Down   the very end of it
  *   Cmd + P              rewrite what is on screen, in place
  *
  * Returns ED_NONE, ED_SUBMIT or ED_AIFY.  The editor core does no I/O: the
@@ -201,6 +240,21 @@ SYM(editor_key):
         tst     w19, #MOD_CMD
         b.eq    .Lplain
 
+        tst     w19, #MOD_SHIFT         /* Cmd+Shift goes to the ends */
+        b.eq    .Lcmd_only
+        and     w19, w19, #0xFFF
+        mov     w9, #K_UP
+        cmp     w19, w9
+        b.ne    1f
+        bl      ed_home
+        b       .Lkey_out
+1:      mov     w9, #K_DOWN
+        cmp     w19, w9
+        b.ne    .Lkey_out
+        bl      ed_end
+        b       .Lkey_out
+
+.Lcmd_only:
         and     w19, w19, #0xFFF        /* strip the modifier */
         mov     w9, #K_LEFT
         cmp     w19, w9
@@ -235,8 +289,32 @@ SYM(editor_key):
 2:      cmp     w19, #'p'
         b.eq    .Laify
         cmp     w19, #'P'
-        b.ne    4f
+        b.ne    .Lappearance
 .Laify: mov     w20, #ED_AIFY
+        b       .Lkey_out
+
+.Lappearance:                           /* Cmd +/- resizes, Cmd 0-9 recolours */
+        cmp     w19, #'='
+        b.eq    .Lbigger
+        cmp     w19, #'+'
+        b.eq    .Lbigger
+        cmp     w19, #'-'
+        b.eq    .Lsmaller
+        cmp     w19, #'_'
+        b.eq    .Lsmaller
+        sub     w9, w19, #'0'
+        cmp     w9, #9
+        b.hi    4f                      /* not a digit either: keep looking */
+        LEA     x10, ed_state
+        str     w9, [x10, #EDS_COLOUR]
+        b       .Lkey_out
+.Lbigger:
+        mov     w0, #1
+        bl      ed_zoom
+        b       .Lkey_out
+.Lsmaller:
+        mov     w0, #-1
+        bl      ed_zoom
         b       .Lkey_out
 4:      cmp     w19, #K_ENTER
         b.eq    .Lsubmit
@@ -313,6 +391,43 @@ SYM(editor_key):
         mov     w0, w20
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #48
+        ret
+
+/* ed_zoom - w0 = +1 or -1; step the font scale, clamped to what is legible */
+ed_zoom:
+        LEA     x9, ed_state
+        ldr     w10, [x9, #EDS_SCALE]
+        cmp     w10, #ED_SCALE_MIN
+        b.hs    1f
+        mov     w10, #ED_SCALE
+1:      add     w10, w10, w0
+        cmp     w10, #ED_SCALE_MIN
+        b.hs    2f
+        mov     w10, #ED_SCALE_MIN
+2:      cmp     w10, #ED_SCALE_MAX
+        b.ls    3f
+        mov     w10, #ED_SCALE_MAX
+3:      str     w10, [x9, #EDS_SCALE]
+        ret
+
+/* ed_home - the very start of this screen, scrolled back to the top */
+ed_home:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      ed_cur
+        str     wzr, [x0, #SCR_CUR_OFF]
+        str     wzr, [x0, #SCR_SCROLL_OFF]
+        ldp     x29, x30, [sp], #16
+        ret
+
+/* ed_end - the very end of it; the render pass scrolls to follow the caret */
+ed_end:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      ed_cur
+        ldr     w9, [x0, #SCR_LEN_OFF]
+        str     w9, [x0, #SCR_CUR_OFF]
+        ldp     x29, x30, [sp], #16
         ret
 
 /*
@@ -441,19 +556,25 @@ SYM(editor_insert_str):
  */
         .globl  SYM(editor_click)
 SYM(editor_click):
-        stp     x29, x30, [sp, #-48]!
+        stp     x29, x30, [sp, #-80]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
-        str     x21, [sp, #32]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
         mov     w19, w0
         mov     w20, w1
+        bl      SYM(ed_metrics)         /* whatever size the font is now */
+        mov     w22, w0                 /* cell width  */
+        mov     w23, w1                 /* cell height */
+        mov     w24, w2                 /* bar height  */
 
-        cmp     w20, #ED_BAR_H
+        cmp     w20, w24
         b.hs    .Lclick_text
-        mov     w9, #(10 * ED_CELL_W)   /* the digits start after the brand */
+        mov     w9, #10                 /* the digits start after the brand */
+        mul     w9, w9, w22
         subs    w9, w19, w9
         b.mi    .Lclick_out
-        mov     w10, #(2 * ED_CELL_W)
+        lsl     w10, w22, #1
         udiv    w9, w9, w10             /* which digit was hit */
         bl      SYM(editor_screen_info) /* w0 = current, w1 = count */
         cmp     w9, w1
@@ -469,12 +590,10 @@ SYM(editor_click):
         ldr     w11, [x10, #8]          /* scroll */
         ldr     w12, [x10, #16]         /* columns */
         cbz     w12, .Lclick_out
-        sub     w13, w20, #ED_BAR_H
-        mov     w14, #ED_CELL_H
-        udiv    w13, w13, w14
+        sub     w13, w20, w24
+        udiv    w13, w13, w23
         add     w13, w13, w11           /* target row */
-        mov     w14, #ED_CELL_W
-        udiv    w14, w19, w14           /* target column */
+        udiv    w14, w19, w22           /* target column */
 
         ldr     w15, [x21, #SCR_LEN_OFF]
         add     x16, x21, #SCR_TEXT_OFF
@@ -507,9 +626,10 @@ SYM(editor_click):
 2:      str     w9, [x21, #SCR_CUR_OFF]
 
 .Lclick_out:
-        ldr     x21, [sp, #32]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #48
+        ldp     x29, x30, [sp], #80
         ret
 
 /*
@@ -683,6 +803,16 @@ SYM(editor_render):
         mov     w21, w2                 /* width  */
         mov     w22, w3                 /* height */
 
+        bl      SYM(ed_metrics)         /* stage the geometry: every register
+                                           this function has is spoken for, so
+                                           it lives in the frame */
+        str     w0, [sp, #132]          /* cell width  */
+        str     w1, [sp, #136]          /* cell height */
+        str     w2, [sp, #140]          /* bar height  */
+        str     w3, [sp, #144]          /* scale       */
+        bl      SYM(ed_fg)
+        str     w0, [sp, #148]          /* ink         */
+
         mov     x0, x19                 /* backdrop */
         mov     w1, w20
         mov     w2, #0
@@ -697,14 +827,15 @@ SYM(editor_render):
         mov     w2, #0
         mov     w3, #0
         mov     w4, w21
-        mov     w5, #ED_BAR_H
+        ldr     w5, [sp, #140]
         LDCOL   w6, COL_BAR_LO, COL_BAR_HI
         bl      SYM(fb_fill)
 
-        mov     w9, #ED_CELL_W          /* text grid that fits */
+        ldr     w9, [sp, #132]          /* text grid that fits */
         udiv    w23, w21, w9
-        sub     w10, w22, #ED_BAR_H
-        mov     w9, #ED_CELL_H
+        ldr     w9, [sp, #140]
+        sub     w10, w22, w9
+        ldr     w9, [sp, #136]
         udiv    w24, w10, w9
 
         bl      ed_cur
@@ -776,19 +907,20 @@ SYM(editor_render):
         cmp     w15, w24                /* everything above the scroll point  */
         b.hs    .Ldraw_adv
 
-        mov     w16, #ED_CELL_W
+        ldr     w16, [sp, #132]
         mul     w16, w11, w16
-        mov     w17, #ED_CELL_H
+        ldr     w17, [sp, #136]
         mul     w17, w15, w17
-        add     w17, w17, #ED_BAR_H
+        ldr     w13, [sp, #140]
+        add     w17, w17, w13
         strb    w12, [sp, #104]         /* a one-character string */
         strb    wzr, [sp, #105]
         mov     x0, x19
         mov     w1, w20
         mov     w2, w16
         mov     w3, w17
-        mov     w4, #ED_SCALE
-        LDCOL   w5, COL_FG_LO, COL_FG_HI
+        ldr     w4, [sp, #144]
+        ldr     w5, [sp, #148]
         add     x6, sp, #104
         bl      SYM(font_draw_text)
 
@@ -816,17 +948,19 @@ SYM(editor_render):
         sub     w15, w13, w28
         cmp     w15, w24
         b.hs    .Lbar
-        mov     w16, #ED_CELL_W
+        ldr     w16, [sp, #132]
         mul     w16, w14, w16
-        mov     w17, #ED_CELL_H
+        ldr     w17, [sp, #136]
         mul     w17, w15, w17
-        add     w17, w17, #ED_BAR_H
+        ldr     w13, [sp, #140]
+        add     w17, w17, w13
         mov     x0, x19
         mov     w1, w20
         mov     w2, w16
         mov     w3, w17
-        mov     w4, #(2 * ED_SCALE)
-        mov     w5, #ED_CELL_H
+        ldr     w4, [sp, #144]
+        lsl     w4, w4, #1              /* a caret two font pixels wide */
+        ldr     w5, [sp, #136]
         LDCOL   w6, COL_CURSOR_LO, COL_CURSOR_HI
         bl      SYM(fb_fill)
 
@@ -834,9 +968,10 @@ SYM(editor_render):
 .Lbar:
         mov     x0, x19
         mov     w1, w20
-        mov     w2, #(2 * ED_SCALE)
-        mov     w3, #(2 * ED_SCALE)
-        mov     w4, #ED_SCALE
+        ldr     w2, [sp, #144]
+        lsl     w2, w2, #1
+        mov     w3, w2
+        ldr     w4, [sp, #144]
         LDCOL   w5, COL_DIM_LO, COL_DIM_HI
         LEA     x6, s_brand
         bl      SYM(font_draw_text)
@@ -848,10 +983,11 @@ SYM(editor_render):
         ldr     w9, [sp, #128]
         cmp     w9, w1
         b.hs    .Lrender_out
-        mov     w10, #ED_CELL_W         /* x = brand width + slot */
-        mul     w10, w9, w10
+        ldr     w12, [sp, #132]         /* x = brand width + slot */
+        mul     w10, w9, w12
         lsl     w10, w10, #1
-        add     w10, w10, #(10 * ED_CELL_W)
+        mov     w13, #10
+        madd    w10, w12, w13, w10
         add     w11, w9, #'1'           /* screens are 1-based on screen */
         strb    w11, [sp, #104]
         strb    wzr, [sp, #105]
@@ -863,8 +999,9 @@ SYM(editor_render):
 9:      mov     x0, x19
         mov     w1, w20
         mov     w2, w10
-        mov     w3, #(2 * ED_SCALE)
-        mov     w4, #ED_SCALE
+        ldr     w3, [sp, #144]
+        lsl     w3, w3, #1
+        ldr     w4, [sp, #144]
         add     x6, sp, #104
         bl      SYM(font_draw_text)
         ldr     w9, [sp, #128]
@@ -889,4 +1026,23 @@ s_brand:        .asciz "ASMEDIT"
 ed_screens:                             /* private: the screens themselves */
         .space  (MAX_SCREENS * SCR_STRIDE)
 ed_state:
-        .space  16                      /* current index, screen count */
+        .space  EDS_SZ                  /* current, count, viewport, scale, colour */
+
+        RODATA
+        .p2align 2
+/*
+ * Ten inks, reachable with Cmd 0-9.  Green first because that is what the
+ * whole thing looked like on the first day; the rest are chosen to stay
+ * legible on the same dark ground.
+ */
+ed_palette:
+        .word   0xFF8AE2B8              /* 0 green   */
+        .word   0xFFE2E2E2              /* 1 white   */
+        .word   0xFFE2B85A              /* 2 amber   */
+        .word   0xFF8AB8E2              /* 3 blue    */
+        .word   0xFFE28A8A              /* 4 red     */
+        .word   0xFFC08AE2              /* 5 violet  */
+        .word   0xFF8AE2E2              /* 6 cyan    */
+        .word   0xFFE2E28A              /* 7 yellow  */
+        .word   0xFF7A8A82              /* 8 grey    */
+        .word   0xFFE28AC0              /* 9 pink    */

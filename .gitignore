@@ -15,3 +15,12 @@ backend/armeditd
 .env
 .env.*
 secrets/
+
+# gradle
+backend-java/.gradle/
+backend-java/build/
+backend-java/gradlew
+backend-java/gradle/
+
+# workspaces hold users' text and audit logs
+workspaces/

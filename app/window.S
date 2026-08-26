@@ -21,6 +21,7 @@
 #define WIN_H           600
 #define CG_XRGB32_LE    0x2006  /* kCGImageAlphaNoneSkipFirst | ByteOrder32Little */
 #define NS_CMD_FLAG     0x100000
+#define NS_SHIFT_FLAG   0x20000
 #define NS_KEY_UP       0xF700
 #define NS_KEY_DOWN     0xF701
 #define NS_KEY_LEFT     0xF702
@@ -354,6 +355,9 @@ handle_event:
         tst     x21, #NS_CMD_FLAG
         b.eq    5f
         orr     w23, w23, #MOD_CMD
+        tst     x21, #NS_SHIFT_FLAG     /* Cmd+Shift is its own binding */
+        b.eq    5f
+        orr     w23, w23, #MOD_SHIFT
 5:      mov     w0, w23
         bl      SYM(editor_key)
         cbz     w0, 6f                  /* ED_SUBMIT or ED_AIFY: go to the backend */

@@ -1,0 +1,71 @@
+plugins {
+    id 'application'
+    id 'org.graalvm.buildtools.native' version '0.10.3'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain {
+        // Lockstep with the Dockerfile's GraalVM tag and .java-version.
+        // GraalVM has not shipped a JDK 26 build, so 25 is the line all three
+        // sit on; move them together or the image fails at startup.
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+ext {
+    nettyVersion = '4.1.115.Final'
+}
+
+dependencies {
+    implementation "io.netty:netty-all:${nettyVersion}"
+}
+
+// Sources stay where they are rather than being shuffled into
+// src/main/java: this project is one flat package by design.
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src']
+        }
+    }
+}
+
+application {
+    mainClass = 'Asmeditd'
+}
+
+run {
+    // Environment configuration is the whole of this service's config, so let
+    // it through from whatever shell started the build.
+    environment System.getenv()
+}
+
+graalvmNative {
+    // Netty needs reflection and resource hints in a closed world. The
+    // upstream metadata repository already carries them, which is far better
+    // than maintaining a hand-written reflect-config that goes stale on every
+    // Netty bump.
+    metadataRepository {
+        enabled = true
+    }
+    binaries {
+        main {
+            imageName = 'asmeditd'
+            mainClass = 'Asmeditd'
+            // No fallback image: a "native" build that silently ships a JVM
+            // would defeat the point, so fail loudly instead.
+            buildArgs.add('--no-fallback')
+            buildArgs.add('-H:+ReportExceptionStackTraces')
+            // The HTTPS client talks to aicoin and to AWS, and the truststore
+            // is baked in at build time rather than read from the container.
+            buildArgs.add('--enable-url-protocols=http,https')
+            // Netty's native transports are not used - NIO only - so keep
+            // their initialisers out of the image heap.
+            buildArgs.add('--initialize-at-run-time=io.netty.channel.epoll,io.netty.channel.kqueue,io.netty.channel.unix')
+        }
+    }
+}
