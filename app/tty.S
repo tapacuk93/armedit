@@ -91,6 +91,6 @@ _main:
         CSTR
 default_msg:    .asciz "ASMEDIT"
 
-        .section __DATA,__bss
+        BSS
         .p2align 4
 outbuf:         .space OUTBUF_SZ

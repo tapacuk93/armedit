@@ -15,11 +15,13 @@
 # define RODATA     .section __TEXT,__const
 # define CSTR       .section __TEXT,__cstring
 # define CODE       .section __TEXT,__text
+# define BSS        .section __DATA,__bss
 #else
 # define SYM(name)  name
 # define RODATA     .section .rodata
 # define CSTR       .section .rodata
 # define CODE       .section .text
+# define BSS        .section .bss
 #endif
 
 /* LEA reg, sym - put the address of `sym` in `reg`. */

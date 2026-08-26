@@ -24,7 +24,8 @@ FONT_SRC   := font/font.S font/render.S
 KERNEL_SRC := kernel/boot.S kernel/uart.S kernel/fwcfg.S kernel/console.S kernel/main.S
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
-WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S $(FONT_SRC))
+NET_SRC    := net/str.S net/http.S
+WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/backend_client.S editor/editor.S $(NET_SRC) $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 
 QEMU      := qemu-system-aarch64

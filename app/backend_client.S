@@ -1,0 +1,264 @@
+#include "asm.inc"
+#include "editor.inc"
+/*
+ * backend_client.S - the editor's entire view of the outside world.
+ *
+ * The editor knows one server and one credential: its own backend, and the
+ * asmedit key issued by asmedit.oeaio.com.  It does not know that Claude
+ * exists, does not know what an aicoin wallet is, and holds no AWS
+ * credentials - the backend owns all of that.  What travels on this wire is
+ * the screen's text out, and text back.
+ *
+ *   POST /api/agent
+ *   X-Asmedit-Key: <the one key>
+ *   {"mode":"agent"|"aify","screen":<n>,"scroll":<r>,"rows":<n>,
+ *    "baseline":"<the text at the last sync>",
+ *    "context":"<the whole current screen>"}
+ * ->
+ *   {"text":"<what came back>"}
+ *
+ * "agent" appends the answer below the text; "aify" replaces the screen with
+ * it.  scroll/rows tell the backend which part of that text the user is
+ * actually looking at, and baseline is what the text was the last time the
+ * backend saw it - so the far side can reason about the edit, not just the
+ * file.
+ *
+ * Configuration comes from the environment: ASMEDIT_BACKEND (address:port,
+ * default 127.0.0.1:8080) and ASMEDIT_KEY.  Neither is ever written to disk
+ * by us, and neither appears anywhere in this repository.
+ */
+#define REQ_IP          0
+#define REQ_PORT        4
+#define REQ_METHOD      8
+#define REQ_PATH        16
+#define REQ_HOST        24
+#define REQ_HDRS        32
+#define REQ_BODY        40
+#define REQ_BODYLEN     48
+#define REQ_OUT         56
+#define REQ_OUTCAP      64
+
+#define CTX_SZ          8192
+#define BODY_SZ         16384
+#define RESP_SZ         32768
+#define HDRS_SZ         512
+#define REPLY_SZ        8192
+
+        CODE
+        .p2align 2
+
+/*
+ * backend_submit - hand the current screen to the backend, paste the answer.
+ * Called when the editor reports Cmd+Enter.  Any failure is reported into the
+ * buffer itself rather than silently swallowed.
+ */
+        .globl  SYM(backend_submit)
+SYM(backend_submit):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        str     x23, [sp, #48]
+        mov     w23, w0                 /* ED_SUBMIT or ED_AIFY */
+
+/* ---- where is the backend, and what is our key? ------------------------- */
+        LEA     x0, s_env_backend
+        bl      SYM(env_get)
+        mov     x19, x0
+        cbnz    x19, 1f
+        LEA     x19, s_default_backend
+1:      LEA     x0, s_env_key
+        bl      SYM(env_get)
+        mov     x20, x0
+        cbnz    x20, 2f
+        LEA     x0, m_nokey
+        bl      SYM(editor_insert_str)
+        b       .Lsub_out
+2:
+        LEA     x21, req
+        mov     x0, x19
+        add     x1, x21, #REQ_IP
+        add     x2, x21, #REQ_PORT
+        bl      SYM(net_parse_addr)
+        tbz     w0, #31, 3f
+        LEA     x0, m_badaddr
+        bl      SYM(editor_insert_str)
+        b       .Lsub_out
+3:
+
+/* ---- {"screen":N,"context":"..."} --------------------------------------- */
+        LEA     x0, ctxbuf
+        mov     w1, #CTX_SZ
+        bl      SYM(editor_context)
+
+        LEA     x22, bodybuf
+        mov     x0, x22
+        LEA     x1, s_json_mode
+        bl      SYM(str_copy)
+        mov     x22, x0
+        cmp     w23, #ED_AIFY
+        b.ne    10f
+        LEA     x1, s_mode_aify
+        b       11f
+10:     LEA     x1, s_mode_agent
+11:     mov     x0, x22
+        bl      SYM(str_copy)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_head
+        bl      SYM(str_copy)
+        mov     x22, x0
+        bl      SYM(editor_screen_info) /* w0 = current screen */
+        mov     w1, w0
+        add     w1, w1, #1              /* 1-based, as shown in the bar */
+        mov     x0, x22
+        bl      SYM(u32_dec)
+        mov     x22, x0
+        mov     x0, x22                 /* which rows the user can see */
+        LEA     x1, s_json_scroll
+        bl      SYM(str_copy)
+        mov     x22, x0
+        bl      SYM(editor_view)        /* w0 = scroll, w1 = rows */
+        mov     w9, w1
+        mov     w1, w0
+        mov     x0, x22
+        bl      SYM(u32_dec)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_rows
+        bl      SYM(str_copy)
+        mov     x22, x0
+        bl      SYM(editor_view)
+        mov     x0, x22
+        bl      SYM(u32_dec)
+        mov     x22, x0
+        mov     x0, x22                 /* what it looked like at last sync */
+        LEA     x1, s_json_base
+        bl      SYM(str_copy)
+        mov     x22, x0
+        LEA     x0, basebuf
+        mov     w1, #CTX_SZ
+        bl      SYM(editor_baseline)
+        mov     x0, x22
+        LEA     x1, basebuf
+        mov     w2, #(BODY_SZ / 2 - 256)
+        bl      SYM(json_escape)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_ctx
+        bl      SYM(str_copy)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, ctxbuf
+        mov     w2, #(BODY_SZ / 2 - 256)
+        bl      SYM(json_escape)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_tail
+        bl      SYM(str_copy)
+        mov     x22, x0
+
+/* ---- X-Asmedit-Key: <key> ---------------------------------------------- */
+        LEA     x0, hdrbuf
+        LEA     x1, s_hdr_key
+        bl      SYM(str_copy)
+        mov     x1, x20
+        bl      SYM(str_copy)
+        LEA     x1, s_hdr_tail
+        bl      SYM(str_copy)
+
+/* ---- send ---------------------------------------------------------------- */
+        LEA     x0, s_post
+        str     x0, [x21, #REQ_METHOD]
+        LEA     x0, s_path_agent
+        str     x0, [x21, #REQ_PATH]
+        str     x19, [x21, #REQ_HOST]
+        LEA     x0, hdrbuf
+        str     x0, [x21, #REQ_HDRS]
+        LEA     x0, bodybuf
+        str     x0, [x21, #REQ_BODY]
+        LEA     x0, bodybuf
+        bl      SYM(str_len)
+        str     w0, [x21, #REQ_BODYLEN]
+        LEA     x0, respbuf
+        str     x0, [x21, #REQ_OUT]
+        mov     w0, #RESP_SZ
+        str     w0, [x21, #REQ_OUTCAP]
+
+        mov     x0, x21
+        bl      SYM(http_request)
+        cmp     w0, #0
+        b.gt    4f
+        LEA     x0, m_unreachable
+        bl      SYM(editor_insert_str)
+        b       .Lsub_out
+4:
+
+/* ---- {"text":"..."} back into the buffer -------------------------------- */
+        LEA     x0, respbuf
+        bl      SYM(http_body)
+        LEA     x1, s_key_text
+        bl      SYM(json_find)
+        cbnz    x0, 5f
+        LEA     x0, m_badreply
+        bl      SYM(editor_insert_str)
+        b       .Lsub_out
+5:      mov     x1, x0
+        LEA     x0, replybuf
+        mov     w2, #REPLY_SZ
+        bl      SYM(json_unescape)
+        cmp     w23, #ED_AIFY
+        b.ne    6f
+        LEA     x0, replybuf            /* aify: the answer IS the screen */
+        bl      SYM(editor_screen_set)
+        bl      SYM(editor_mark_synced)
+        b       .Lsub_out
+6:      LEA     x0, m_reply_open        /* agent: append it below */
+        bl      SYM(editor_insert_str)
+        LEA     x0, replybuf
+        bl      SYM(editor_insert_str)
+        LEA     x0, s_nl
+        bl      SYM(editor_insert_str)
+        bl      SYM(editor_mark_synced)
+
+.Lsub_out:
+        ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+        CSTR
+s_env_backend:      .asciz "ASMEDIT_BACKEND"
+s_env_key:          .asciz "ASMEDIT_KEY"
+s_default_backend:  .asciz "127.0.0.1:8080"
+s_post:             .asciz "POST"
+s_path_agent:       .asciz "/api/agent"
+s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Asmedit-Key: "
+s_hdr_tail:         .asciz "\r\n"
+s_json_mode:        .asciz "{\"mode\":\""
+s_mode_agent:       .asciz "agent"
+s_mode_aify:        .asciz "aify"
+s_json_head:        .asciz "\",\"screen\":"
+s_json_scroll:      .asciz ",\"scroll\":"
+s_json_rows:        .asciz ",\"rows\":"
+s_json_base:        .asciz ",\"baseline\":\""
+s_json_ctx:         .asciz "\",\"context\":\""
+s_json_tail:        .asciz "\"}"
+s_key_text:         .asciz "\"text\""
+s_nl:               .asciz "\n"
+m_reply_open:       .asciz "\n--- REPLY ---\n"
+m_nokey:            .asciz "\nNO ASMEDIT KEY. REGISTER AT ASMEDIT.OEAIO.COM AND SET ASMEDIT_KEY.\n"
+m_badaddr:          .asciz "\nASMEDIT_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
+m_unreachable:      .asciz "\nBACKEND UNREACHABLE.\n"
+m_badreply:         .asciz "\nBACKEND REPLY HAD NO TEXT FIELD.\n"
+
+        BSS
+        .p2align 4
+req:        .space 80
+ctxbuf:     .space CTX_SZ
+basebuf:    .space CTX_SZ
+bodybuf:    .space BODY_SZ
+hdrbuf:     .space HDRS_SZ
+respbuf:    .space RESP_SZ
+replybuf:   .space REPLY_SZ
