@@ -183,6 +183,7 @@ ed_screen_step:
  *   Cmd + T              new screen
  *   Cmd + Backspace      close this screen
  *   Cmd + Enter          hand this screen to the backend
+ *   Cmd + Up / Down      page up / page down
  *   Cmd + P              rewrite what is on screen, in place
  *
  * Returns ED_NONE, ED_SUBMIT or ED_AIFY.  The editor core does no I/O: the
@@ -209,9 +210,21 @@ SYM(editor_key):
         b       .Lkey_out
 1:      mov     w9, #K_RIGHT
         cmp     w19, w9
-        b.ne    2f
+        b.ne    1f
         mov     w0, #1
         bl      ed_screen_step
+        b       .Lkey_out
+1:      mov     w9, #K_UP
+        cmp     w19, w9
+        b.ne    1f
+        mov     w0, #-1
+        bl      ed_page
+        b       .Lkey_out
+1:      mov     w9, #K_DOWN
+        cmp     w19, w9
+        b.ne    2f
+        mov     w0, #1
+        bl      ed_page
         b       .Lkey_out
 2:      cmp     w19, #'t'
         b.eq    3f
@@ -299,6 +312,31 @@ SYM(editor_key):
 .Lkey_out:
         mov     w0, w20
         ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
+ * ed_page - move the cursor a screenful, w0 = -1 (up) or +1 (down).
+ * A page is however many rows the last render fitted, less one line of
+ * overlap so the reader keeps their place.
+ */
+ed_page:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+        LEA     x9, ed_state
+        ldr     w20, [x9, #12]          /* visible rows */
+        cmp     w20, #2
+        b.hs    1f
+        mov     w20, #2
+1:      sub     w20, w20, #1
+2:      cbz     w20, 3f
+        mov     w0, w19
+        bl      ed_cursor_line
+        sub     w20, w20, #1
+        b       2b
+3:      ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #48
         ret
 
