@@ -61,6 +61,7 @@ public final class Asmeditd {
     private final Workspace workspace;
     private final AwsAgent agent;
     private final Journal journal;
+    private final Runner runner;
     private final String publicAddr;
 
     private Asmeditd() {
@@ -77,6 +78,12 @@ public final class Asmeditd {
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
         this.publicAddr = env("ASMEDIT_PUBLIC_ADDR", "");
+        // Machines post their output back here, so they need an address that
+        // works from outside this host.
+        this.runner = new Runner(aws, root,
+                env("ASMEDIT_CALLBACK", publicAddr.isBlank()
+                        ? "http://127.0.0.1:" + env("ASMEDIT_PORT", "8080")
+                        : "https://" + publicAddr));
     }
 
     /* ------------------------------------------------------------ transport */
@@ -200,6 +207,7 @@ public final class Asmeditd {
             case "/api/clouds" -> routeClouds(r);
             case "/api/otp" -> routeOtp(r);
             case "/api/otp/reserve" -> routeOtpReserve(r);
+            case "/api/run/result" -> routeRunResult(r);
             default -> Res.json(404, Json.obj("error", "no such endpoint"));
         };
     }
@@ -333,7 +341,9 @@ public final class Asmeditd {
             prompt.append("THE CARET IS AT BYTE OFFSET ").append(cursor).append("\n\n");
         }
         prompt.append(journal.briefing(account, screen));
+        prompt.append(runner.briefing(account));
         prompt.append(account.clouds().briefing()).append('\n');
+        prompt.append(Machines.briefing(account.clouds().available()));
         prompt.append(AwsAgent.briefing(account.region())).append('\n');
         prompt.append("CURRENT SCREEN:\n").append(context);
 
@@ -361,9 +371,11 @@ public final class Asmeditd {
             // Anything the model asked a cloud for runs here, signed with this
             // account's credentials, and only the results go back upstream.
             var outcome = agent.run(account, text);
-            if (!outcome.transcript().isBlank()) {
+            var runs = runner.run(account, text);
+            String results = outcome.transcript() + runs.transcript();
+            if (!results.isBlank()) {
                 String followUp = base + "\n\nYOUR REPLY:\n" + text
-                        + "\n\nRESULTS:\n" + outcome.transcript()
+                        + "\n\nRESULTS:\n" + results
                         + "\nNow answer the user with what you found. Do not repeat the raw output.";
                 text = AwsAgent.redact(aicoin.ask(account.wallet(), tier, followUp, 16000));
             }
@@ -405,6 +417,24 @@ public final class Asmeditd {
                     parseInt(in.getOrDefault("dy", "0"), 0))));
         }
         return Res.json(200, Json.obj("ok", true));
+    }
+
+    /**
+     * A provisioned machine reporting what its command did.
+     *
+     * Authenticated by the one-time token baked into its cloud-init and
+     * nothing else: a machine can report one result and has no other authority
+     * here. No account key ever reaches a provisioned machine.
+     */
+    private Res routeRunResult(Req r) {
+        if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
+        var in = Json.parse(r.body());
+        String token = in.getOrDefault("token", "");
+        int code = parseInt(in.getOrDefault("code", "-1"), -1);
+        String output = in.getOrDefault("output", "");
+        boolean known = runner.result(token, code, output);
+        return known ? Res.json(200, Json.obj("ok", true))
+                     : Res.json(404, Json.obj("error", "unknown run"));
     }
 
     private Res routeSession(Req r, boolean up) {
