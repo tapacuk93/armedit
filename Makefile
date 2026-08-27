@@ -41,7 +41,7 @@ KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 QEMU      := qemu-system-aarch64
 QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
 
-.PHONY: all tty window kernel backend app ios ios-run run win boot boot-tty serve clean
+.PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve clean
 all: tty window kernel backend
 tty: $(B)/asmedit-tty
 window: $(B)/asmedit-window
@@ -100,6 +100,43 @@ ios-run: $(B)/asmedit-ios.app
 	@xcrun simctl install "$(SIM)" $(B)/asmedit-ios.app
 	@xcrun simctl launch "$(SIM)" com.oeaio.asmedit
 	@open -a Simulator
+
+# --- iOS, on a real phone ----------------------------------------------
+# Needs a development identity and a profile that lists the device.  The
+# wildcard "iOS Team Provisioning Profile: *" covers any bundle id on the
+# team, which is why no per-app profile has to be created for this.
+IOSDEV_SDK  := $(shell xcrun --sdk iphoneos --show-sdk-path)
+IOSDEV_ARCH := arm64-apple-ios16.0
+IOSDEV_OBJ  := $(patsubst %.S,$(B)/iosdev/%.o,$(IOS_SRC))
+SIGN_ID     ?= Apple Development: Taras Maslov (F5CZZWQ82V)
+PROFILE     ?= $(HOME)/Library/Developer/Xcode/UserData/Provisioning Profiles/1f5ff73a-ead8-4c1c-8acb-a40656c79a1c.mobileprovision
+DEVICE      ?= 00008150-0010748636B9401C
+
+$(B)/iosdev/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(INC) -target $(IOSDEV_ARCH) -isysroot $(IOSDEV_SDK) -c $< -o $@
+
+ios-device: $(IOSDEV_OBJ) app/ios/Info.plist
+	@rm -rf $(B)/asmedit-device.app && mkdir -p $(B)/asmedit-device.app
+	$(CC) -target $(IOSDEV_ARCH) -isysroot $(IOSDEV_SDK) \
+	  -framework UIKit -framework CoreGraphics -framework Foundation \
+	  -o $(B)/asmedit-device.app/asmedit $(IOSDEV_OBJ)
+	@cp app/ios/Info.plist $(B)/asmedit-device.app/Info.plist
+	@cp "$(PROFILE)" $(B)/asmedit-device.app/embedded.mobileprovision
+	@security cms -D -i "$(PROFILE)" | plutil -extract Entitlements xml1 -o $(B)/ent.plist -
+	@plutil -replace application-identifier -string "HTS38ZPRVH.com.oeaio.asmedit" $(B)/ent.plist
+	@codesign --force --sign "$(SIGN_ID)" --entitlements $(B)/ent.plist --timestamp=none $(B)/asmedit-device.app
+	@xcrun devicectl device install app --device $(DEVICE) $(B)/asmedit-device.app
+	@echo "installed on $(DEVICE) - unlock the phone, then tap asmedit"
+
+# --- the agent ----------------------------------------------------------
+# A machine volunteering itself to an account.  Access is a ceiling, not a
+# grant: a refused list applies whatever is set here.
+ACCESS ?= confirmed
+agent:
+	@mkdir -p $(B)/agent
+	javac -d $(B)/agent agent/src/*.java
+	@echo "run: java -cp $(B)/agent AsmeditAgent --key <key> --access $(ACCESS)"
 
 # A double-clickable Mac app: the same binary, in the bundle layout Finder
 # and the Dock expect.
