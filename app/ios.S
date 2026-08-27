@@ -75,6 +75,10 @@ _main:
         bl      SYM(editor_insert_str)
         mov     w0, #0                  /* our keyboard, not the system's */
         bl      SYM(keyboard_build)
+        LEA     x9, press_offset        /* zero is a real offset, so start at
+                                           "nothing is being pressed" */
+        mov     w10, #-1
+        str     w10, [x9]
 
         bl      build_classes
 
@@ -128,6 +132,8 @@ build_classes:
         mov     x20, x0
         ADDM    x20, s_drawRect, view_draw_rect, t_drawRect
         ADDM    x20, s_touchesBegan, view_touches_began, t_void_id_id
+        ADDM    x20, s_touchesMoved, view_touches_moved, t_void_id_id
+        ADDM    x20, s_touchesEnded, view_touches_ended, t_void_id_id
         mov     x0, x20
         bl      _objc_registerClassPair
 
@@ -353,12 +359,27 @@ view_draw_rect:
         ret
 
 /*
- * - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+ * The gesture layer.
  *
- * One finger places the caret where you touched.  Two fingers paste, because
- * a phone has no Cmd+V and a long-press menu is a worse first answer than a
- * gesture that always works.
+ * A phone has one input and five meanings, so nothing acts on touch-down:
+ * what a touch was is decided when the finger lifts, from how long it stayed
+ * and how far it went.
+ *
+ *   tap on a key        type it
+ *   tap on a button     the action it names
+ *   tap on text         place the caret
+ *   long press          open a screen about whatever was under the finger
+ *   swipe over words    hand them to the model
+ *   swipe left / right  the previous or next screen
+ *
+ * Keys firing on release rather than on contact is what makes a long press on
+ * one possible at all.
  */
+#define LONG_PRESS_MS   450
+#define FLING_NUM       4       /* a fling crosses 4/10 of the width ... */
+#define FLING_DEN       10
+#define FLING_SLOP      6       /* ... without wandering 1/6 of the height */
+
         .p2align 2
 view_touches_began:
         stp     x29, x30, [sp, #-96]!
@@ -367,28 +388,37 @@ view_touches_began:
         stp     x21, x22, [sp, #32]
         stp     x23, x24, [sp, #48]
         str     x25, [sp, #64]
-        mov     x19, x0                 /* self */
+        mov     x19, x0                 /* self  */
         mov     x20, x2                 /* touches */
 
-        MSG0    x20, s_count
+        MSG0    x20, s_count            /* two fingers still means paste */
         cmp     x0, #2
         b.lo    1f
         bl      paste_from_board
-        b       .Ltouch_redraw
+        MSG0    x19, s_setNeedsDisplay
+        b       .Lbegan_out
 
-1:      MSG0    x20, s_anyObject
-        mov     x21, x0
-        cbz     x21, .Ltouch_out
-        LEA     x0, s_locationInView
-        bl      _sel_registerName
-        mov     x1, x0
-        mov     x2, x19
-        mov     x0, x21
-        bl      _objc_msgSend           /* CGPoint in d0/d1 */
-        fcvtzu  w22, d0
-        fcvtzu  w23, d1
+1:      LEA     x9, press_menu          /* a new touch dismisses any menu */
+        ldr     w0, [x9]
+        cbz     w0, 2f
+        bl      SYM(applet_truncate)
+        LEA     x9, press_menu
+        str     wzr, [x9]
+2:
+        mov     x0, x20
+        mov     x1, x19
+        bl      touch_point             /* w0 = x, w1 = y */
+        mov     w22, w0
+        mov     w23, w1
+        LEA     x9, press_x
+        str     w22, [x9]
+        LEA     x9, press_y
+        str     w23, [x9]
+        bl      SYM(now_millis)
+        LEA     x9, press_ms
+        str     x0, [x9]
 
-        LEA     x9, s_view_w            /* the surface the layout was drawn on */
+        LEA     x9, s_view_w
         ldr     w24, [x9]
         LEA     x9, s_view_h
         ldr     w25, [x9]
@@ -397,22 +427,289 @@ view_touches_began:
         mov     w2, w24
         mov     w3, w25
         bl      SYM(applet_hit)
-        tbnz    w0, #31, 2f
-        bl      SYM(applet_action)      /* a key: feed it in like any other */
-        bl      SYM(editor_key)
-        b       .Ltouch_redraw
-2:      mov     w0, w22                 /* no key there: place the caret */
-        mov     w1, w23
-        bl      SYM(editor_click)
+        LEA     x9, press_applet
+        str     w0, [x9]
+        tbz     w0, #31, 3f             /* on an applet: nothing else to find */
 
-.Ltouch_redraw:
-        MSG0    x19, s_setNeedsDisplay
-.Ltouch_out:
+        mov     w0, w22                 /* on the text: remember where */
+        mov     w1, w23
+        bl      SYM(editor_offset_at)
+        LEA     x9, press_offset
+        str     w0, [x9]
+        bl      SYM(editor_selection_clear)
+        b       .Lbegan_out
+3:      LEA     x9, press_offset
+        mov     w10, #-1
+        str     w10, [x9]
+
+.Lbegan_out:
         ldr     x25, [sp, #64]
         ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #96
+        ret
+
+/* touch_point - x0 = touches, x1 = view; out w0 = x, w1 = y */
+        .p2align 2
+touch_point:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     x19, x1
+        mov     x20, x0
+        MSG0    x20, s_anyObject
+        cbz     x0, 1f
+        mov     x20, x0
+        LEA     x0, s_locationInView
+        bl      _sel_registerName
+        mov     x1, x0
+        mov     x2, x19
+        mov     x0, x20
+        bl      _objc_msgSend
+        fcvtzu  w0, d0
+        fcvtzu  w1, d1
+        b       2f
+1:      mov     w0, #0
+        mov     w1, #0
+2:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
+ * - (void)touchesMoved:withEvent: - the span grows as the finger travels.
+ *
+ * Drawing it as it goes is the point: the user is choosing words, and should
+ * see which ones they have before letting go.  Whether this was a selection
+ * or a fling across screens is not decided here - that waits for the lift.
+ */
+        .p2align 2
+view_touches_moved:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     x19, x0
+        mov     x20, x2
+        LEA     x9, press_offset
+        ldr     w21, [x9]
+        tbnz    w21, #31, .Lmoved_out   /* did not start on text */
+
+        mov     x0, x20
+        mov     x1, x19
+        bl      touch_point
+        mov     w22, w0
+        bl      SYM(editor_offset_at)
+        tbnz    w0, #31, .Lmoved_out
+        mov     w1, w0
+        mov     w0, w21
+        bl      SYM(editor_select)
+        MSG0    x19, s_setNeedsDisplay
+.Lmoved_out:
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * - (void)touchesEnded:withEvent: - work out what that was.
+ */
+        .p2align 2
+view_touches_ended:
+        stp     x29, x30, [sp, #-112]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        str     x27, [sp, #80]
+        mov     x19, x0
+        mov     x20, x2
+
+        mov     x0, x20
+        mov     x1, x19
+        bl      touch_point
+        mov     w21, w0                 /* where it ended */
+        mov     w22, w1
+        LEA     x9, press_x
+        ldr     w23, [x9]
+        LEA     x9, press_y
+        ldr     w24, [x9]
+        LEA     x9, s_view_w
+        ldr     w25, [x9]
+        LEA     x9, s_view_h
+        ldr     w26, [x9]
+
+        subs    w9, w21, w23            /* travel */
+        cneg    w9, w9, mi              /* |dx| */
+        subs    w10, w22, w24
+        cneg    w10, w10, mi            /* |dy| */
+
+        mov     w11, #FLING_NUM         /* a fling: far across, straight */
+        mul     w11, w25, w11
+        mov     w12, #FLING_DEN
+        udiv    w11, w11, w12
+        cmp     w9, w11
+        b.lo    .Lended_press
+        mov     w12, #FLING_SLOP
+        udiv    w12, w26, w12
+        cmp     w10, w12
+        b.hs    .Lended_press
+
+        bl      SYM(editor_selection_clear)
+        cmp     w21, w23                /* leftwards is forwards */
+        mov     w0, #1
+        mov     w1, #-1
+        csel    w0, w1, w0, gt
+        bl      SYM(editor_screen_step)
+        b       .Lended_redraw
+
+.Lended_press:
+        bl      SYM(now_millis)
+        LEA     x9, press_ms
+        ldr     x10, [x9]
+        sub     x27, x0, x10            /* how long it was held */
+
+        LEA     x9, press_offset
+        ldr     w9, [x9]
+        tbnz    w9, #31, .Lended_applet
+
+        bl      SYM(editor_selection)   /* did the finger cover words? */
+        cmp     w0, w1
+        b.hs    1f
+        mov     w0, #ED_SWIPE
+        bl      SYM(backend_submit)
+        bl      SYM(editor_selection_clear)
+        b       .Lended_redraw
+
+1:      cmp     x27, #LONG_PRESS_MS     /* held on the text: open its screen */
+        b.lo    2f
+        LEA     x9, press_offset
+        ldr     w0, [x9]
+        bl      open_for_offset
+        b       .Lended_redraw
+2:      LEA     x9, press_offset        /* a tap: just the caret */
+        ldr     w0, [x9]
+        bl      SYM(editor_cursor_set)
+        b       .Lended_redraw
+
+.Lended_applet:
+        LEA     x9, press_applet
+        ldr     w0, [x9]
+        tbnz    w0, #31, .Lended_redraw
+        cmp     x27, #LONG_PRESS_MS
+        b.lo    3f
+        LEA     x0, s_subj_keyboard     /* held on a key: what it can become */
+        bl      open_subject_screen
+        b       .Lended_redraw
+
+3:      LEA     x9, press_applet
+        ldr     w0, [x9]
+        bl      SYM(applet_kind)
+        mov     w9, w0
+        LEA     x10, press_applet
+        ldr     w0, [x10]
+        bl      SYM(applet_action)
+        cmp     w9, #2                  /* AP_KIND_BUTTON */
+        b.ne    4f
+        mov     w9, #0x2000             /* AP_ACT_ASK */
+        cmp     w0, w9
+        mov     w0, #ED_SUBMIT
+        mov     w1, #ED_AIFY
+        csel    w0, w0, w1, eq
+        bl      SYM(backend_submit)
+        LEA     x9, press_menu          /* the menu goes once it is used */
+        ldr     w0, [x9]
+        cbz     w0, .Lended_redraw
+        bl      SYM(applet_truncate)
+        LEA     x9, press_menu
+        str     wzr, [x9]
+        b       .Lended_redraw
+4:      bl      SYM(editor_key)         /* an ordinary key */
+
+.Lended_redraw:
+        MSG0    x19, s_setNeedsDisplay
+        LEA     x9, press_offset
+        mov     w10, #-1
+        str     w10, [x9]
+        ldr     x27, [sp, #80]
+        ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #112
+        ret
+
+/*
+ * open_for_offset - w0 = byte offset the finger was held on.
+ *
+ * A word opens a screen about that word.  Empty space offers the two things
+ * the desktop has keys for, under the finger that asked for them.
+ */
+        .p2align 2
+open_for_offset:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     w19, w0
+
+        LEA     x1, wordbuf
+        mov     w2, #32
+        bl      SYM(editor_word_at)
+        cbz     w0, .Lopen_menu
+
+        LEA     x0, subjbuf             /* "word:build", and the screen for it */
+        LEA     x1, s_subj_word
+        bl      SYM(str_copy)
+        LEA     x1, wordbuf
+        bl      SYM(str_copy)
+        LEA     x0, subjbuf
+        bl      SYM(editor_screen_open)
+        bl      SYM(editor_length)
+        cbnz    w0, .Lopen_out          /* already has something in it */
+        LEA     x0, s_seed_word
+        bl      SYM(editor_insert_str)
+        LEA     x0, wordbuf
+        bl      SYM(editor_insert_str)
+        LEA     x0, s_seed_word2
+        bl      SYM(editor_insert_str)
+        b       .Lopen_out
+
+.Lopen_menu:
+        bl      SYM(applet_mark)
+        LEA     x9, press_menu
+        str     w0, [x9]
+        LEA     x9, press_x
+        ldr     w0, [x9]
+        LEA     x9, press_y
+        ldr     w1, [x9]
+        LEA     x9, s_view_w
+        ldr     w2, [x9]
+        LEA     x9, s_view_h
+        ldr     w3, [x9]
+        bl      SYM(menu_build)
+
+.Lopen_out:
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/* open_subject_screen - x0 = subject; seed it if it is new */
+        .p2align 2
+open_subject_screen:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+        bl      SYM(editor_screen_open)
+        bl      SYM(editor_length)
+        cbnz    w0, 1f
+        LEA     x0, s_seed_kb
+        bl      SYM(editor_insert_str)
+1:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
         ret
 
 /* - (void)insertText:(NSString *)text - the system keyboard, one string at a time */
@@ -499,7 +796,7 @@ view_yes:
         ret
 
         CSTR
-seed_text:              .asciz "ARMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nTWO FINGERS TO PASTE\n\n"
+seed_text:              .asciz "ARMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nSWIPE OVER WORDS TO ASK ABOUT THEM\nTWO FINGERS TO PASTE\n\n"
 s_delegate_cls:         .asciz "ArmeditDelegate"
 s_view_cls:             .asciz "ArmeditView"
 s_NSObject:             .asciz "NSObject"
@@ -513,6 +810,8 @@ s_UIKeyInput:           .asciz "UIKeyInput"
 s_didFinishLaunching:   .asciz "application:didFinishLaunchingWithOptions:"
 s_drawRect:             .asciz "drawRect:"
 s_touchesBegan:         .asciz "touchesBegan:withEvent:"
+s_touchesMoved:         .asciz "touchesMoved:withEvent:"
+s_touchesEnded:         .asciz "touchesEnded:withEvent:"
 s_canBecomeFirstResponder: .asciz "canBecomeFirstResponder"
 s_insertText:           .asciz "insertText:"
 s_deleteBackward:       .asciz "deleteBackward"
@@ -534,6 +833,11 @@ s_count:                .asciz "count"
 s_generalPasteboard:    .asciz "generalPasteboard"
 s_string:               .asciz "string"
 s_UTF8String:           .asciz "UTF8String"
+s_subj_word:            .asciz "word:"
+s_subj_keyboard:        .asciz "keyboard"
+s_seed_word:            .asciz "ABOUT: "
+s_seed_word2:           .asciz "\n\nSAY WHAT TO DO WITH IT, THEN ASK.\n"
+s_seed_kb:              .asciz "ABOUT THE KEYBOARD\n\nSAY HOW IT SHOULD LOOK OR BEHAVE,\nTHEN ASK. FOR EXAMPLE:\nMAKE THE KEYS RED\nHIGHLIGHT A KEY WHILE IT IS TOUCHED\n\n"
 s_stringWithUTF8String: .asciz "stringWithUTF8String:"
 t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
 t_void_id:              .asciz "v@:@"
@@ -545,5 +849,13 @@ t_bool_id_id:           .asciz "c@:@@"
         .zerofill __DATA,__bss,pixels,(MAX_W*MAX_H*4),4
         .zerofill __DATA,__bss,s_view_h,8,2
         .zerofill __DATA,__bss,s_view_w,8,2
+        .zerofill __DATA,__bss,press_ms,8,3
+        .zerofill __DATA,__bss,press_x,8,2
+        .zerofill __DATA,__bss,press_y,8,2
+        .zerofill __DATA,__bss,press_applet,8,2
+        .zerofill __DATA,__bss,press_offset,8,2
+        .zerofill __DATA,__bss,press_menu,8,2
+        .zerofill __DATA,__bss,wordbuf,64,2
+        .zerofill __DATA,__bss,subjbuf,96,2
         .zerofill __DATA,__bss,window_slot,8,3
         .zerofill __DATA,__bss,view_slot,8,3

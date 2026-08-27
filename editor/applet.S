@@ -60,6 +60,26 @@ SYM(applet_clear):
         str     wzr, [x9]
         ret
 
+/*
+ * applet_mark / applet_truncate - a menu is applets that come and go.
+ * Mark the count before adding one, truncate back to it to take it away,
+ * and the keyboard underneath is untouched either way.
+ */
+        .globl  SYM(applet_mark)
+SYM(applet_mark):
+        LEA     x9, ap_count
+        ldr     w0, [x9]
+        ret
+
+        .globl  SYM(applet_truncate)
+SYM(applet_truncate):
+        LEA     x9, ap_count
+        ldr     w10, [x9]
+        cmp     w0, w10
+        b.hs    1f
+        str     w0, [x9]
+1:      ret
+
 /* applet_count - how many there are */
         .globl  SYM(applet_count)
 SYM(applet_count):
@@ -421,7 +441,60 @@ SYM(keyboard_build):
         ldp     x29, x30, [sp], #96
         ret
 
+/*
+ * menu_build - the two things a long press on empty space offers.
+ *   w0 = x, w1 = y in pixels, w2 = surface width, w3 = surface height
+ *
+ * Cmd+Enter and Cmd+P are the two AI actions, and a phone has neither key, so
+ * a long press on nothing in particular puts them under the finger that asked.
+ */
+        .globl  SYM(menu_build)
+SYM(menu_build):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+
+        mov     w19, #BP                /* pixels back into basis points */
+        mul     w9, w0, w19
+        udiv    w19, w9, w2             /* x  */
+        mov     w9, #BP
+        mul     w9, w1, w9
+        udiv    w20, w9, w3             /* y  */
+
+        mov     w9, #(BP - 4800)        /* keep both buttons on the surface */
+        cmp     w19, w9
+        csel    w19, w19, w9, lo
+        mov     w9, #(BP - 900)
+        cmp     w20, w9
+        csel    w20, w20, w9, lo
+
+        mov     w0, #AP_KIND_BUTTON
+        mov     w1, w19
+        mov     w2, w20
+        mov     w3, #2200
+        mov     w4, #800
+        mov     w5, #AP_ACT_ASK
+        LEA     x6, m_ask
+        bl      SYM(applet_add)
+
+        add     w1, w19, #2400
+        mov     w0, #AP_KIND_BUTTON
+        mov     w2, w20
+        mov     w3, #2400
+        mov     w4, #800
+        mov     w5, #AP_ACT_REWRITE
+        LEA     x6, m_rewrite
+        bl      SYM(applet_add)
+
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
         RODATA
+m_ask:      .asciz "ASK"
+m_rewrite:  .asciz "REWRITE"
         .p2align 3
 /*
  * Row descriptors: the characters, then the left inset and key width in basis

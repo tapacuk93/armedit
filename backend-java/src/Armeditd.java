@@ -322,6 +322,7 @@ public final class Armeditd {
         String context = in.getOrDefault("context", "");
         String baseline = in.getOrDefault("baseline", "");
         String cursor = in.getOrDefault("cursor", "");
+        String selection = in.getOrDefault("selection", "");
         int screen = parseInt(in.getOrDefault("screen", "1"), 1);
 
         // Memory to disk to cloud: handed to the writer thread, not waited on.
@@ -332,7 +333,26 @@ public final class Armeditd {
         account.otp().account((long) (context.length() + baseline.length()) * 8);
 
         var prompt = new StringBuilder();
+        // A swipe is a gesture, and the history should say the user made it:
+        // "they swiped over these words" is a different record from "the text
+        // changed", and only one of them survives in the file itself.
+        if ("swipe".equals(mode) && !selection.isBlank()) {
+            journal.gestures(account, screen, java.util.List.of(new Journal.Gesture(
+                    System.currentTimeMillis(), "swipe-select",
+                    parseInt(cursor.isBlank() ? "0" : cursor, 0),
+                    selection.length() > 80 ? selection.substring(0, 80) + "..." : selection,
+                    0, 0)));
+        }
+
         prompt.append(switch (mode) {
+            case "swipe" -> """
+                    You are inside armedit, a text editor. The user swiped across some words \
+                    and wants something done with them - they did not say what, and the gesture \
+                    is the whole request. Work out from the words themselves, the surrounding \
+                    screen and what they have been doing what would actually help: explain it, \
+                    fix it, look it up, run it, rewrite it. Do that thing. If the only honest \
+                    answer is that it is not clear, say so in one line rather than guessing at \
+                    length.""";
             case "aify" -> """
                     You are inside armedit, a text editor. Your reply is inserted at the caret; \
                     everything else on the screen stays exactly as it is, so do not repeat it. \
@@ -352,6 +372,9 @@ public final class Armeditd {
         }
         if (!cursor.isBlank()) {
             prompt.append("THE CARET IS AT BYTE OFFSET ").append(cursor).append("\n\n");
+        }
+        if (!selection.isBlank()) {
+            prompt.append("THE USER SWIPED OVER THIS:\n").append(selection).append("\n\n");
         }
         prompt.append(journal.briefing(account, screen));
         prompt.append(runner.briefing(account));
@@ -396,6 +419,12 @@ public final class Armeditd {
             }
 
             account.otp().account((long) text.length() * 8);
+            if ("swipe".equals(mode) && !selection.isBlank()) {
+                journal.edits(account, screen, java.util.List.of(new Journal.Edit(
+                        System.currentTimeMillis(), "ai-swipe",
+                        parseInt(cursor.isBlank() ? "0" : cursor, 0),
+                        text.length() > 200 ? text.substring(0, 200) + "..." : text)));
+            }
             return Res.json(200, Json.obj("text", text, "model", tier.name()));
         } catch (Exception x) {
             return Res.json(502, Json.obj("error", "aicoin: " + x.getMessage()));

@@ -26,6 +26,11 @@
 #define ED_NONE         0
 #define ED_SUBMIT       1               /* Cmd+Enter: hand the screen over    */
 #define ED_AIFY         2               /* Cmd+P: rewrite what is on screen   */
+#define ED_SWIPE        3               /* a swipe: do something with this    */
+
+/* Applet actions above this are front-end commands rather than key codes. */
+#define AP_ACT_ASK      0x2000          /* what Cmd+Enter does */
+#define AP_ACT_REWRITE  0x2001          /* what Cmd+P does     */
 
 /* Screens */
 #define MAX_SCREENS     8
@@ -36,6 +41,8 @@
 #define SCR_CUR_OFF     4
 #define SCR_SCROLL_OFF  8
 #define SCR_BASELEN_OFF 12              /* length of the last synced snapshot */
+#define SCR_SUBJ_OFF    16              /* what this screen is about, if anything */
+#define SCR_SUBJ_MAX    40
 #define SCR_TEXT_OFF    SCR_HDR
 /* Each screen carries a second copy of its text: what it looked like the last
    time the backend saw it.  Sending both is what lets the far side reason
@@ -48,6 +55,7 @@
 #define COL_DIM         0xFF3A4048
 #define COL_BAR         0xFF1D2228
 #define COL_CURSOR      0xFFE2B85A
+#define COL_SEL         0xFF2E4A3E      /* the swiped span, behind the text */
 
 /* Colours as movz/movk halves: a 32-bit constant needs two instructions, and
    spelling it out beats relying on a literal pool that only one of our two
@@ -62,6 +70,8 @@
 #define COL_BAR_HI      0xFF1D
 #define COL_CURSOR_LO   0xB85A
 #define COL_CURSOR_HI   0xFFE2
+#define COL_SEL_LO      0x4A3E
+#define COL_SEL_HI      0xFF2E
 
 .macro  LDCOL reg, lo, hi
         mov     \reg, #\lo
@@ -87,6 +97,8 @@
 #define EDS_COLS        16
 #define EDS_SCALE       20
 #define EDS_COLOUR      24
-#define EDS_SZ          32
+#define EDS_SEL_A       28      /* what the user swiped over: first byte  */
+#define EDS_SEL_B       32      /* ... and one past the last              */
+#define EDS_SZ          48
 
 #endif

@@ -158,7 +158,11 @@ SYM(backend_submit):
         b.ne    10f
         LEA     x1, s_mode_aify
         b       11f
-10:     LEA     x1, s_mode_agent
+10:     cmp     w23, #ED_SWIPE
+        b.ne    12f
+        LEA     x1, s_mode_swipe
+        b       11f
+12:     LEA     x1, s_mode_agent
 11:     mov     x0, x22
         bl      SYM(str_copy)
         mov     x22, x0
@@ -199,6 +203,25 @@ SYM(backend_submit):
         mov     x0, x22
         bl      SYM(u32_dec)
         mov     x22, x0
+        cmp     w23, #ED_SWIPE          /* a swipe carries what it covered */
+        b.ne    13f
+        mov     x0, x22
+        LEA     x1, s_json_sel
+        bl      SYM(str_copy)
+        mov     x22, x0
+        LEA     x0, selbuf
+        mov     w1, #CTX_SZ
+        bl      SYM(editor_selection_text)
+        mov     x0, x22
+        LEA     x1, selbuf
+        mov     w2, #(BODY_SZ / 4)
+        bl      SYM(json_escape)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_quote
+        bl      SYM(str_copy)
+        mov     x22, x0
+13:
         mov     x0, x22                 /* what it looked like at last sync */
         LEA     x1, s_json_base
         bl      SYM(str_copy)
@@ -403,6 +426,9 @@ s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
 s_mode_agent:       .asciz "agent"
 s_mode_aify:        .asciz "aify"
+s_mode_swipe:       .asciz "swipe"
+s_json_sel:         .asciz ",\"selection\":\""
+s_json_quote:       .asciz "\""
 s_json_head:        .asciz "\",\"screen\":"
 s_json_scroll:      .asciz ",\"scroll\":"
 s_json_rows:        .asciz ",\"rows\":"
@@ -426,6 +452,7 @@ saved_cursor: .space 8
 keybuf:     .space KEY_SZ           /* the key with any @address stripped off */
 ctxbuf:     .space CTX_SZ
 basebuf:    .space CTX_SZ
+selbuf:     .space CTX_SZ
 bodybuf:    .space BODY_SZ
 hdrbuf:     .space HDRS_SZ
 respbuf:    .space RESP_SZ

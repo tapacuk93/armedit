@@ -35,7 +35,7 @@ BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S
-WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/backend_client.S editor/editor.S editor/applet.S $(NET_SRC) $(FONT_SRC))
+WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/backend_client.S editor/editor.S editor/applet.S gfx/image.S $(NET_SRC) $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 
 QEMU      := qemu-system-aarch64
@@ -74,8 +74,8 @@ $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
 # business knowing about.
 IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 IOS_ARCH  := arm64-apple-ios16.0-simulator
-IOS_SRC   := app/ios.S app/env.S app/backend_client.S editor/editor.S \
-             editor/applet.S net/str.S net/http.S $(FONT_SRC)
+IOS_SRC   := app/ios.S app/env.S app/clock.S app/backend_client.S editor/editor.S \
+             editor/applet.S gfx/image.S net/str.S net/http.S $(FONT_SRC)
 IOS_OBJ   := $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
 
 $(B)/ios/%.o: %.S

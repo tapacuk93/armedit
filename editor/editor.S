@@ -20,7 +20,7 @@
 /* cur_screen_ptr -> x0 */
 ed_cur:
         LEA     x9, ed_state
-        ldr     w10, [x9, #0]           /* current screen index */
+        ldr     w10, [x9, #EDS_CURRENT] /* current screen index */
         mov     w11, #SCR_STRIDE
         mul     w10, w10, w11
         LEA     x0, ed_screens
@@ -76,6 +76,7 @@ SYM(editor_init):
         str     wzr, [x0, #SCR_CUR_OFF]
         str     wzr, [x0, #SCR_SCROLL_OFF]
         str     wzr, [x0, #SCR_BASELEN_OFF]
+        strb    wzr, [x0, #SCR_SUBJ_OFF]
         ret
 
 /* editor_screen_info - w0 = current index, w1 = count */
@@ -158,6 +159,7 @@ ed_screen_new:
         str     wzr, [x13, #SCR_CUR_OFF]
         str     wzr, [x13, #SCR_SCROLL_OFF]
         str     wzr, [x13, #SCR_BASELEN_OFF]
+        strb    wzr, [x13, #SCR_SUBJ_OFF]
         str     w10, [x9, #0]           /* make it current */
         add     w10, w10, #1
         str     w10, [x9, #4]
@@ -195,6 +197,15 @@ ed_screen_close:
         sub     w0, w1, #1
 4:      str     w0, [x9, #0]
 9:      ret
+
+/*
+ * editor_screen_step - w0 = +1 or -1; the next or previous screen.
+ * A swipe across the surface means this, so it is part of the interface
+ * rather than an internal detail of the Cmd+arrow keys.
+ */
+        .globl  SYM(editor_screen_step)
+SYM(editor_screen_step):
+        b       ed_screen_step
 
 /* ed_screen_step - w0 = +1 or -1, wrapping */
 ed_screen_step:
@@ -584,15 +595,208 @@ SYM(editor_click):
         b       .Lclick_out
 
 .Lclick_text:
+        mov     w0, w19
+        mov     w1, w20
+        bl      SYM(editor_offset_at)
+        tbnz    w0, #31, .Lclick_out
+        mov     w9, w0
+        bl      ed_cur
+        str     w9, [x0, #SCR_CUR_OFF]
+
+.Lclick_out:
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #80
+        ret
+
+/*
+ * editor_screen_open - go to the screen about this subject, making it if there
+ * is none.
+ *   x0 = subject, a short tag like "word:build" or "applet:key-q"
+ *
+ * Long-pressing a thing opens a screen bound to that thing.  The subject is
+ * what makes it bound: it travels with every request from that screen, so
+ * "make it faster" typed there is understood to be about the build, and the
+ * user never has to restate the context they just pointed at.
+ */
+        .globl  SYM(editor_screen_open)
+SYM(editor_screen_open):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     x19, x0
+
+        LEA     x9, ed_state            /* is one already open for it? */
+        ldr     w20, [x9, #EDS_COUNT]
+        mov     w21, #0
+1:      cmp     w21, w20
+        b.hs    2f
+        mov     w9, #SCR_STRIDE
+        mul     w9, w21, w9
+        LEA     x22, ed_screens
+        add     x22, x22, w9, uxtw
+        add     x0, x22, #SCR_SUBJ_OFF
+        mov     x1, x19
+        bl      SYM(str_eq)
+        cbnz    w0, 3f
+        add     w21, w21, #1
+        b       1b
+
+2:      bl      ed_screen_new           /* none: take a fresh one */
+        LEA     x9, ed_state
+        ldr     w21, [x9, #EDS_CURRENT]
+        mov     w9, #SCR_STRIDE
+        mul     w9, w21, w9
+        LEA     x22, ed_screens
+        add     x22, x22, w9, uxtw
+        add     x0, x22, #SCR_SUBJ_OFF  /* remember what it is about */
+        mov     x1, x19
+        mov     w2, #SCR_SUBJ_MAX
+        bl      ed_copy_bounded
+        b       4f
+
+3:      LEA     x9, ed_state            /* switch to the one that exists */
+        str     w21, [x9, #EDS_CURRENT]
+4:      bl      SYM(editor_selection_clear)
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/* ed_copy_bounded - x0 = dst, x1 = src, w2 = capacity including the NUL */
+ed_copy_bounded:
+        sub     w2, w2, #1
+        mov     w3, #0
+1:      cmp     w3, w2
+        b.hs    2f
+        ldrb    w4, [x1, w3, uxtw]
+        strb    w4, [x0, w3, uxtw]
+        cbz     w4, 3f
+        add     w3, w3, #1
+        b       1b
+2:      strb    wzr, [x0, w3, uxtw]
+3:      ret
+
+/* editor_length - how much text this screen holds */
+        .globl  SYM(editor_length)
+SYM(editor_length):
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      ed_cur
+        ldr     w0, [x0, #SCR_LEN_OFF]
+        ldp     x29, x30, [sp], #16
+        ret
+
+/* editor_subject - x0 = destination, w1 = capacity.  Empty when unbound. */
+        .globl  SYM(editor_subject)
+SYM(editor_subject):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     x19, x0
+        mov     w20, w1
+        bl      ed_cur
+        add     x1, x0, #SCR_SUBJ_OFF
+        mov     x0, x19
+        mov     w2, w20
+        bl      ed_copy_bounded
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
+ * editor_word_at - the word under a byte offset.
+ *   w0 = offset, x1 = destination, w2 = capacity; out w0 = length
+ * What a long press landed on, so the screen it opens can be about it.
+ */
+        .globl  SYM(editor_word_at)
+SYM(editor_word_at):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     w19, w0
+        mov     x20, x1
+        mov     w21, w2
+        bl      ed_cur
+        ldr     w9, [x0, #SCR_LEN_OFF]
+        add     x10, x0, #SCR_TEXT_OFF
+        cmp     w19, w9
+        b.hs    .Lword_none
+        ldrb    w12, [x10, w19, uxtw]
+        bl      ed_is_word
+        cbz     w0, .Lword_none         /* pressed on a space or punctuation */
+
+        mov     w22, w19                /* find where the word starts */
+1:      cbz     w22, 2f
+        sub     w11, w22, #1
+        ldrb    w12, [x10, w11, uxtw]
+        bl      ed_is_word
+        cbz     w0, 2f
+        sub     w22, w22, #1
+        b       1b
+2:      sub     w11, w21, #1            /* copy it out */
+        mov     w13, #0
+3:      cmp     w22, w9
+        b.hs    4f
+        cmp     w13, w11
+        b.hs    4f
+        ldrb    w12, [x10, w22, uxtw]
+        bl      ed_is_word
+        cbz     w0, 4f
+        ldrb    w12, [x10, w22, uxtw]
+        strb    w12, [x20, w13, uxtw]
+        add     w22, w22, #1
+        add     w13, w13, #1
+        b       3b
+4:      strb    wzr, [x20, w13, uxtw]
+        mov     w0, w13
+        b       .Lword_out
+.Lword_none:
+        strb    wzr, [x20]
+        mov     w0, #0
+.Lword_out:
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * editor_offset_at - which byte of the text is under this point?
+ *   w0 = x, w1 = y in pixels; out w0 = byte offset, or -1 above the text
+ *
+ * The same walk the renderer does, stopped early: characters are laid out in
+ * order, wrapping at the column count, so the position of the nth byte is
+ * whatever the layout says it is.  A click and a swipe both need this, which
+ * is why it is not buried inside the click handler any more.
+ */
+        .globl  SYM(editor_offset_at)
+SYM(editor_offset_at):
+        stp     x29, x30, [sp, #-80]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        mov     w19, w0
+        mov     w20, w1
+        bl      SYM(ed_metrics)
+        mov     w22, w0                 /* cell width  */
+        mov     w23, w1                 /* cell height */
+        mov     w24, w2                 /* bar height  */
+        cmp     w20, w24
+        b.lo    .Loff_none              /* that is the screen bar, not text */
+
         bl      ed_cur
         mov     x21, x0
         LEA     x10, ed_state
-        ldr     w11, [x10, #8]          /* scroll */
+        ldr     w11, [x10, #8]          /* scroll  */
         ldr     w12, [x10, #16]         /* columns */
-        cbz     w12, .Lclick_out
+        cbz     w12, .Loff_none
         sub     w13, w20, w24
         udiv    w13, w13, w23
-        add     w13, w13, w11           /* target row */
+        add     w13, w13, w11           /* target row    */
         udiv    w14, w19, w22           /* target column */
 
         ldr     w15, [x21, #SCR_LEN_OFF]
@@ -612,7 +816,7 @@ SYM(editor_click):
         cmp     w0, #'\n'
         b.ne    4f
         cmp     w10, w13
-        b.eq    5f                      /* line ended before that column */
+        b.eq    5f                      /* the line ended before that column */
         add     w10, w10, #1
         mov     w17, #0
         b       1b
@@ -623,13 +827,136 @@ SYM(editor_click):
         add     w10, w10, #1
         b       1b
 5:      sub     w9, w9, #1              /* park before the newline */
-2:      str     w9, [x21, #SCR_CUR_OFF]
-
-.Lclick_out:
+2:      mov     w0, w9
+        b       .Loff_out
+.Loff_none:
+        mov     w0, #-1
+.Loff_out:
         ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #80
+        ret
+
+/*
+ * editor_select - w0 = one end, w1 = the other, in byte offsets.
+ *
+ * Ends are sorted, clamped, and then grown outwards to whole words, because
+ * a swipe is a gesture and gestures are not precise: the user meant the words
+ * they dragged across, not the two characters their finger happened to start
+ * and stop on.
+ */
+        .globl  SYM(editor_select)
+SYM(editor_select):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+        mov     w20, w1
+        cmp     w19, w20                /* sort them */
+        b.ls    1f
+        mov     w9, w19
+        mov     w19, w20
+        mov     w20, w9
+1:      bl      ed_cur
+        ldr     w9, [x0, #SCR_LEN_OFF]
+        cmp     w19, w9
+        csel    w19, w19, w9, lo
+        cmp     w20, w9
+        csel    w20, w20, w9, lo
+        add     x10, x0, #SCR_TEXT_OFF
+
+2:      cbz     w19, 3f                 /* back up to the start of a word */
+        sub     w11, w19, #1
+        ldrb    w12, [x10, w11, uxtw]
+        bl      ed_is_word
+        cbz     w0, 3f
+        sub     w19, w19, #1
+        b       2b
+3:      cmp     w20, w9                 /* run on to the end of one */
+        b.hs    4f
+        ldrb    w12, [x10, w20, uxtw]
+        bl      ed_is_word
+        cbz     w0, 4f
+        add     w20, w20, #1
+        b       3b
+4:      LEA     x13, ed_state
+        str     w19, [x13, #EDS_SEL_A]
+        str     w20, [x13, #EDS_SEL_B]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/* ed_is_word - w12 = byte; out w0 = 1 when it is part of a word */
+ed_is_word:
+        sub     w0, w12, #'0'
+        cmp     w0, #9
+        b.ls    1f
+        orr     w0, w12, #0x20          /* fold case, then test a-z */
+        sub     w0, w0, #'a'
+        cmp     w0, #25
+        b.ls    1f
+        cmp     w12, #'_'
+        b.eq    1f
+        mov     w0, #0
+        ret
+1:      mov     w0, #1
+        ret
+
+/* editor_selection - w0 = first byte, w1 = one past the last */
+        .globl  SYM(editor_selection)
+SYM(editor_selection):
+        LEA     x9, ed_state
+        ldr     w0, [x9, #EDS_SEL_A]
+        ldr     w1, [x9, #EDS_SEL_B]
+        ret
+
+/* editor_selection_clear - nothing is selected any more */
+        .globl  SYM(editor_selection_clear)
+SYM(editor_selection_clear):
+        LEA     x9, ed_state
+        str     wzr, [x9, #EDS_SEL_A]
+        str     wzr, [x9, #EDS_SEL_B]
+        ret
+
+/*
+ * editor_selection_text - x0 = destination, w1 = capacity.
+ *   out w0 = bytes copied.  What the user swiped over, and nothing else.
+ */
+        .globl  SYM(editor_selection_text)
+SYM(editor_selection_text):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+        mov     x19, x0
+        mov     w20, w1
+        bl      ed_cur                  /* first: ed_cur uses w10 and w11 as
+                                           scratch, so reading the bounds
+                                           before this loses them */
+        LEA     x9, ed_state
+        ldr     w10, [x9, #EDS_SEL_A]
+        ldr     w11, [x9, #EDS_SEL_B]
+        add     x21, x0, #SCR_TEXT_OFF
+        ldr     w12, [x0, #SCR_LEN_OFF]
+        cmp     w11, w12
+        csel    w11, w11, w12, lo
+        sub     w12, w20, #1            /* leave room for the NUL */
+        mov     w13, #0
+1:      cmp     w10, w11
+        b.hs    2f
+        cmp     w13, w12
+        b.hs    2f
+        ldrb    w14, [x21, w10, uxtw]
+        strb    w14, [x19, w13, uxtw]
+        add     w10, w10, #1
+        add     w13, w13, #1
+        b       1b
+2:      strb    wzr, [x19, w13, uxtw]
+        mov     w0, w13
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /*
@@ -812,6 +1139,9 @@ SYM(editor_render):
         str     w3, [sp, #144]          /* scale       */
         bl      SYM(ed_fg)
         str     w0, [sp, #148]          /* ink         */
+        bl      SYM(editor_selection)   /* the swiped span, if any */
+        str     w0, [sp, #152]
+        str     w1, [sp, #156]
 
         mov     x0, x19                 /* backdrop */
         mov     w1, w20
@@ -913,6 +1243,28 @@ SYM(editor_render):
         mul     w17, w15, w17
         ldr     w13, [sp, #140]
         add     w17, w17, w13
+
+        ldr     w9, [sp, #112]          /* is this byte inside the swipe? */
+        sub     w9, w9, #1              /* the index before it advanced */
+        ldr     w10, [sp, #152]
+        ldr     w11, [sp, #156]
+        cmp     w10, w11
+        b.hs    6f                      /* nothing selected */
+        cmp     w9, w10
+        b.lo    6f
+        cmp     w9, w11
+        b.hs    6f
+        stp     x16, x17, [sp, #96]     /* the fill clobbers the scratch */
+        mov     x0, x19
+        mov     w1, w20
+        mov     w2, w16
+        mov     w3, w17
+        ldr     w4, [sp, #132]
+        ldr     w5, [sp, #136]
+        LDCOL   w6, COL_SEL_LO, COL_SEL_HI
+        bl      SYM(fb_fill)
+        ldp     x16, x17, [sp, #96]
+6:
         strb    w12, [sp, #104]         /* a one-character string */
         strb    wzr, [sp, #105]
         mov     x0, x19
