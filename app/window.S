@@ -74,6 +74,30 @@ _main:
         bl      SYM(env_init)           /* ARMEDIT_BACKEND / ARMEDIT_KEY */
         mov     x0, x27
         bl      SYM(editor_init)
+        bl      SYM(applet_clear)
+
+        /* One video widget, so there is something to double-click. In a real
+           session these arrive with the content; here it is a fixed clip so
+           the drag path can be exercised at all. */
+        LEA     x0, SYM(demo_clip)
+        LEA     x9, SYM(demo_clip_end)
+        sub     x9, x9, x0
+        mov     w1, w9
+        bl      SYM(video_open)
+        cmn     w0, #1
+        b.eq    1f
+        bl      SYM(video_next)
+        mov     w0, #AP_KIND_VIDEO
+        mov     w1, #6200               /* right of centre, upper half */
+        mov     w2, #1200
+        mov     w3, #3200
+        mov     w4, #3200
+        mov     w5, #0
+        LEA     x6, s_no_label
+        bl      SYM(applet_add)
+1:
+        /* What everyone else decided about objects like these. */
+        bl      SYM(behaviour_sync)
         LEA     x0, seed_text
         bl      SYM(editor_insert_str)
         bl      SYM(backend_session)    /* open with an instance attached */
@@ -92,6 +116,10 @@ _main:
         mov     x2, #0
         mov     x0, x27
         bl      _objc_allocateClassPair
+        LEA     x9, drag_index          /* nothing is held to begin with, and */
+        mov     w10, #-1                /* zero would mean applet zero */
+        str     w10, [x9]
+
         mov     x27, x0
         ADDM    x27, s_drawRect, view_draw_rect, t_drawRect
         ADDM    x27, s_keyDown, view_key_down, t_void_id
@@ -100,6 +128,8 @@ _main:
         ADDM    x27, s_armeditFinish, view_armedit_finish, t_void
         ADDM    x27, s_armeditBlink, view_armedit_blink, t_void_id
         ADDM    x27, s_mouseDown, view_mouse_down, t_void_id
+        ADDM    x27, s_mouseDragged, view_mouse_dragged, t_void_id
+        ADDM    x27, s_mouseUp, view_mouse_up, t_void_id
         mov     x0, x27
         bl      _objc_registerClassPair
         MSG0    x27, s_alloc
@@ -208,6 +238,12 @@ view_draw_rect:
         mov     w3, #WIN_H
         bl      SYM(editor_render)
 
+        LEA     x0, pixels              /* widgets sit on top of the text */
+        mov     w1, #WIN_W
+        mov     w2, #WIN_W
+        mov     w3, #WIN_H
+        bl      SYM(applet_render)
+
         bl      _CGColorSpaceCreateDeviceRGB
         mov     x19, x0
         LEA     x0, pixels
@@ -294,19 +330,147 @@ view_perform_key_equiv:
  */
         .p2align 2
 view_mouse_down:
-        stp     x29, x30, [sp, #-48]!
+        stp     x29, x30, [sp, #-80]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
         mov     x19, x0                 /* self  */
         mov     x20, x2                 /* event */
         MSG0    x20, s_locationInWindow
+        fcvtzu  w21, d0
+        fcvtzu  w22, d1
+        mov     w2, #WIN_H
+        sub     w22, w2, w22
+
+        MSG0    x20, s_clickCount
+        str     w0, [sp, #56]
+
+        mov     w0, w21                 /* did it land on an applet? */
+        mov     w1, w22
+        mov     w2, #WIN_W
+        mov     w3, #WIN_H
+        bl      SYM(applet_hit)
+        cmn     w0, #1
+        b.eq    .Lmd_text
+        str     w0, [sp, #60]
+
+        ldr     w9, [sp, #56]           /* twice: open what it stands for */
+        cmp     w9, #2
+        b.lo    1f
+        ldr     w0, [sp, #60]
+        bl      SYM(open_applet_screen)
+        b       .Lmd_draw
+
+1:      ldr     w0, [sp, #60]           /* once, and draggable: pick it up */
+        bl      SYM(applet_flags)
+        tbz     w0, #0, .Lmd_draw       /* AP_F_DRAG */
+        ldr     w9, [sp, #60]
+        LEA     x10, drag_index
+        str     w9, [x10]
+
+        mov     w0, w9                  /* remember where inside it we grabbed, */
+        bl      SYM(applet_pos)         /* so it does not jump under the cursor */
+        mov     w9, #WIN_W
+        mul     w0, w0, w9
+        mov     w9, #10000
+        udiv    w0, w0, w9
+        sub     w0, w21, w0
+        LEA     x10, drag_dx
+        str     w0, [x10]
+        mov     w9, #WIN_H
+        mul     w1, w1, w9
+        mov     w9, #10000
+        udiv    w1, w1, w9
+        sub     w1, w22, w1
+        LEA     x10, drag_dy
+        str     w1, [x10]
+        b       .Lmd_draw
+
+.Lmd_text:
+        mov     w0, w21
+        mov     w1, w22
+        bl      SYM(editor_click)
+.Lmd_draw:
+        MSG1    x19, s_setNeedsDisplay, #1
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #80
+        ret
+
+/*
+ * - (void)mouseDragged: - carry a widget with the pointer.
+ *
+ * Only ever moves something already marked draggable, and nothing is by
+ * default. The position goes straight back into basis points rather than
+ * being kept in pixels, so a widget dragged in a window lands in the same
+ * relative place on a phone: the drag edits the layout, not the screen.
+ */
+        .p2align 2
+view_mouse_dragged:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     x19, x0                 /* self  */
+        mov     x21, x2                 /* event */
+        LEA     x9, drag_index
+        ldr     w20, [x9]
+        cmn     w20, #1
+        b.eq    9f
+
+        MSG0    x21, s_locationInWindow
         fcvtzu  w0, d0
         fcvtzu  w1, d1
         mov     w2, #WIN_H
         sub     w1, w2, w1
-        bl      SYM(editor_click)
+
+        LEA     x9, drag_dx             /* keep the grab point under the cursor */
+        ldr     w10, [x9]
+        subs    w0, w0, w10
+        csel    w0, w0, wzr, pl
+        LEA     x9, drag_dy
+        ldr     w10, [x9]
+        subs    w1, w1, w10
+        csel    w1, w1, wzr, pl
+
+        mov     w9, #10000              /* pixels back into basis points */
+        mul     w0, w0, w9
+        mov     w10, #WIN_W
+        udiv    w0, w0, w10
+        mul     w1, w1, w9
+        mov     w10, #WIN_H
+        udiv    w1, w1, w10
+
+        mov     w2, w1
+        mov     w1, w0
+        mov     w0, w20
+        bl      SYM(applet_set_pos)
         MSG1    x19, s_setNeedsDisplay, #1
+9:      ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * - (void)mouseUp: - the drag is over.
+ *
+ * The position stays on this device. What travels to the server is the rule
+ * that made the thing draggable in the first place, not where this particular
+ * person happened to put it - one is a decision about how video widgets work,
+ * the other is where somebody's window happened to be.
+ */
+        .p2align 2
+view_mouse_up:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        LEA     x19, drag_index
+        ldr     w20, [x19]
+        cmn     w20, #1
+        b.eq    9f
+        mov     w9, #-1
+        str     w9, [x19]
+9:      ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #48
         ret
 
@@ -367,15 +531,25 @@ view_armedit_finish:
  */
         .p2align 2
 view_armedit_blink:
-        stp     x29, x30, [sp, #-32]!
+        stp     x29, x30, [sp, #-48]!
         mov     x29, sp
-        str     x19, [sp, #16]
+        stp     x19, x20, [sp, #16]
         mov     x19, x0
         bl      SYM(editor_caret_blink)
+        mov     w20, w0
+
+        /* The same timer advances the clip. It is slower than the clip's own
+           frame rate, which makes playback slow rather than jerky - the right
+           way round for a widget that is scenery, and honest about the fact
+           that nothing here is scheduling frames properly yet. */
+        bl      SYM(video_ok)
         cbz     w0, 1f
+        bl      SYM(video_next)
+        mov     w20, #1
+1:      cbz     w20, 2f
         MSG1    x19, s_setNeedsDisplay, #1
-1:      ldr     x19, [sp, #16]
-        ldp     x29, x30, [sp], #32
+2:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /*
@@ -515,7 +689,17 @@ s_length:               .asciz "length"
 s_characterAtIndex:     .asciz "characterAtIndex:"
 s_setNeedsDisplay:      .asciz "setNeedsDisplay:"
 s_mouseDown:            .asciz "mouseDown:"
+s_mouseDragged:         .asciz "mouseDragged:"
+s_mouseUp:              .asciz "mouseUp:"
+s_clickCount:           .asciz "clickCount"
 s_locationInWindow:     .asciz "locationInWindow"
+/* No label: a video answers to its kind, which is what a shared rule
+   about videos has to be written against. */
+s_no_label:             .asciz ""
 
         .zerofill __DATA,__bss,pixels,(WIN_W*WIN_H*4),4
         .zerofill __DATA,__bss,view_slot,8,3
+/* Which applet the mouse has hold of, -1 for none, and where inside it. */
+        .zerofill __DATA,__bss,drag_index,4,2
+        .zerofill __DATA,__bss,drag_dx,4,2
+        .zerofill __DATA,__bss,drag_dy,4,2

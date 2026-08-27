@@ -819,7 +819,8 @@ public final class Armeditd {
         if (subject == null || subject.isBlank()) return false;
         String s = subject.toLowerCase(java.util.Locale.ROOT);
         return s.startsWith("image") || s.startsWith("key") || s.startsWith("applet")
-                || s.startsWith("button") || s.equals("keyboard");
+                || s.startsWith("button") || s.equals("keyboard")
+                || s.startsWith("video") || s.startsWith("widget");
     }
 
     private static int parseInt(String s, int fallback) {

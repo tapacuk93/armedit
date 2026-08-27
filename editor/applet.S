@@ -16,7 +16,7 @@
  * is correct on the next one without anybody recomputing it.
  */
 #define AP_MAX          72
-#define AP_SZ           32
+#define AP_SZ           40
 
 #define AP_ID           0
 #define AP_KIND         4
@@ -26,10 +26,10 @@
 #define AP_H            14
 #define AP_ACTION       16
 #define AP_LABEL        20      /* up to 11 characters and a NUL */
+#define AP_FLAGS        32
+#define AP_DATA         36      /* whose picture, whose video */
 
-#define AP_KIND_NONE    0
-#define AP_KIND_KEY     1       /* action is a key code for editor_key */
-#define AP_KIND_BUTTON  2       /* action is an id the front end reports */
+/* Kinds and flags live in editor.inc: both front ends build and hit-test these. */
 
 #define BP              10000
 
@@ -109,6 +109,8 @@ SYM(applet_add):
         strh    w3, [x12, #AP_W]
         strh    w4, [x12, #AP_H]
         str     w5, [x12, #AP_ACTION]
+        str     wzr, [x12, #AP_FLAGS]   /* nothing is draggable until said so */
+        str     wzr, [x12, #AP_DATA]
         add     x13, x12, #AP_LABEL
         mov     w14, #0
 1:      cmp     w14, #11
@@ -180,6 +182,19 @@ SYM(applet_render):
         cbz     w28, .Lap_step
         cbz     w9, .Lap_step
 
+        ldr     w10, [x25, #AP_KIND]    /* a video draws itself */
+        cmp     w10, #AP_KIND_VIDEO
+        b.ne    .Lap_face
+        mov     x0, x19
+        mov     w1, w20
+        mov     w2, w26
+        mov     w3, w27
+        mov     w4, w28
+        ldr     w5, [sp, #128]
+        bl      SYM(video_present)
+        b       .Lap_step
+
+.Lap_face:
         mov     x0, x19                 /* the face */
         mov     w1, w20
         mov     w2, w26
@@ -297,6 +312,90 @@ SYM(applet_hit):
 .Lhit_step:
         cbnz    w9, .Lhit_next
 9:      mov     w0, #-1
+        ret
+
+/*
+ * applet_pos / applet_set_pos - where it is, in basis points.
+ *   applet_pos:     w0 = index, out w0 = x, w1 = y
+ *   applet_set_pos: w0 = index, w1 = x, w2 = y
+ *
+ * Positions were read-only while a layout was something authored once. They
+ * are not any more: a dragged widget is a layout being edited, and the basis
+ * points are what makes that survive the trip to a different screen.
+ */
+        .globl  SYM(applet_pos)
+SYM(applet_pos):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        ldrh    w0, [x10, #AP_X]
+        ldrh    w1, [x10, #AP_Y]
+        ret
+
+        .globl  SYM(applet_set_pos)
+SYM(applet_set_pos):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        ldrh    w11, [x10, #AP_W]       /* keep it on the surface: a widget */
+        mov     w12, #BP                /* dragged off the edge is a widget */
+        sub     w12, w12, w11           /* nobody can get back */
+        cmp     w1, w12
+        csel    w1, w1, w12, ls
+        tbz     w1, #31, 1f
+        mov     w1, #0
+1:      ldrh    w11, [x10, #AP_H]
+        mov     w12, #BP
+        sub     w12, w12, w11
+        cmp     w2, w12
+        csel    w2, w2, w12, ls
+        tbz     w2, #31, 2f
+        mov     w2, #0
+2:      strh    w1, [x10, #AP_X]
+        strh    w2, [x10, #AP_Y]
+        ldr     w11, [x10, #AP_FLAGS]
+        orr     w11, w11, #AP_F_MOVED
+        str     w11, [x10, #AP_FLAGS]
+        ret
+
+/* applet_flags / applet_set_flags - what it may do. w0 = index. */
+        .globl  SYM(applet_flags)
+SYM(applet_flags):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        ldr     w0, [x10, #AP_FLAGS]
+        ret
+
+        .globl  SYM(applet_set_flags)
+SYM(applet_set_flags):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        str     w1, [x10, #AP_FLAGS]
+        ret
+
+/* applet_data / applet_set_data - which object this applet stands for. */
+        .globl  SYM(applet_data)
+SYM(applet_data):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        ldr     w0, [x10, #AP_DATA]
+        ret
+
+        .globl  SYM(applet_set_data)
+SYM(applet_set_data):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        str     w1, [x10, #AP_DATA]
         ret
 
 /* applet_kind / applet_action - what a hit means. w0 = index. */
@@ -523,3 +622,123 @@ kb_enter: .asciz "ENTER"
 ap_table:       .space (AP_MAX * AP_SZ)
 ap_count:       .space 8
 kb_label:       .space 8
+
+        CODE
+        .p2align 2
+/*
+ * open_applet_screen - w0 = applet index.
+ *
+ * Double-clicking a widget opens a screen about that widget, the same way
+ * long-pressing a word opens a screen about the word. What binds the screen is
+ * its subject, and the subject here is deliberately the *kind* of thing rather
+ * than this particular one: "video", not "video number three". Somebody who
+ * writes "draggable" on that screen is saying something about video widgets,
+ * which is what makes the answer worth sharing with anyone else who has one.
+ * A subject naming the instance would make every such lesson unrepeatable.
+ */
+        .globl  SYM(open_applet_screen)
+SYM(open_applet_screen):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+
+        mov     w9, #AP_SZ
+        mul     w9, w19, w9
+        LEA     x20, ap_table
+        add     x20, x20, w9, uxtw
+
+        ldrb    w9, [x20, #AP_LABEL]    /* what it calls itself, if anything */
+        cbz     w9, 1f
+        add     x0, x20, #AP_LABEL
+        b       2f
+1:      ldr     w9, [x20, #AP_KIND]     /* otherwise, what kind of thing it is */
+        cmp     w9, #AP_KIND_VIDEO
+        b.ne    3f
+        LEA     x0, s_kind_video
+        b       2f
+3:      cmp     w9, #AP_KIND_KEY
+        b.ne    4f
+        LEA     x0, s_kind_key
+        b       2f
+4:      LEA     x0, s_kind_widget
+2:      bl      SYM(editor_screen_open)
+
+        bl      SYM(editor_length)      /* a blank screen says nothing about */
+        cbnz    w0, 5f                  /* what it is for */
+        LEA     x0, s_seed_widget
+        bl      SYM(editor_insert_str)
+5:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+        RODATA
+s_kind_video:   .asciz "video"
+s_kind_key:     .asciz "key"
+s_kind_widget:  .asciz "widget"
+s_seed_widget:  .asciz "say what this should do, then ask.\nfor example: draggable\n\n"
+
+        CODE
+        .p2align 2
+/*
+ * applet_name - w0 = index, out x0 = what this applet answers to.
+ *
+ * Its label if it has one, otherwise the name of its kind. This is the name a
+ * shared behaviour rule is written against, which is why it has to be the same
+ * on every device: "video" is a thing everybody has, "the third applet" is not.
+ */
+        .globl  SYM(applet_name)
+SYM(applet_name):
+        mov     w9, #AP_SZ
+        mul     w9, w0, w9
+        LEA     x10, ap_table
+        add     x10, x10, w9, uxtw
+        add     x11, x10, #AP_LABEL
+        ldrb    w12, [x11]
+        cbz     w12, 1f
+        mov     x0, x11
+        ret
+1:      ldr     w12, [x10, #AP_KIND]
+        cmp     w12, #AP_KIND_VIDEO
+        b.ne    2f
+        LEA     x0, s_kind_video
+        ret
+2:      cmp     w12, #AP_KIND_KEY
+        b.ne    3f
+        LEA     x0, s_kind_key
+        ret
+3:      LEA     x0, s_kind_widget
+        ret
+
+/*
+ * applet_mark_draggable - x0 = a target name; mark everything that answers to
+ * it. A rule names a kind of object, so it applies to all of them or none.
+ */
+        .globl  SYM(applet_mark_draggable)
+SYM(applet_mark_draggable):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+        mov     x19, x0
+        bl      SYM(applet_count)
+        mov     w20, w0
+        mov     w21, #0
+1:      cmp     w21, w20
+        b.hs    9f
+        mov     w0, w21
+        bl      SYM(applet_name)
+        mov     x1, x19
+        bl      SYM(str_eq)
+        cbz     w0, 2f
+        mov     w0, w21
+        bl      SYM(applet_flags)
+        orr     w1, w0, #AP_F_DRAG
+        mov     w0, w21
+        bl      SYM(applet_set_flags)
+2:      add     w21, w21, #1
+        b       1b
+9:      ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret

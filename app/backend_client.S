@@ -487,6 +487,116 @@ SYM(backend_apply):
  * the backend decides whether that means starting one or reusing the one this
  * account already has.
  */
+
+/*
+ * behaviour_sync - fetch what everyone decided, and apply it here.
+ *
+ * The server keeps one table of rules of the form "target trigger verb weight"
+ * - "video drag move 3" means three people, between them, have said a video
+ * should follow the pointer. The weight is why this is a table rather than a
+ * setting: one person writing "draggable" on a video screen is a suggestion,
+ * and the same sentence from enough people is how video widgets work.
+ *
+ * The client's half is deliberately dumb. It cannot interpret a rule, only
+ * recognise one: the verbs are a closed set, and a line it does not know the
+ * shape of is skipped rather than guessed at. That is what stops a server -
+ * or a model talking through one - from describing behaviour this program has
+ * no way to perform.
+ *
+ * Failing is silent and total: no key, no server, no answer, and the editor
+ * carries on with whatever it already knew. A device that cannot reach the
+ * server is not a device that should forget how its widgets work.
+ */
+        .globl  SYM(behaviour_sync)
+SYM(behaviour_sync):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+
+        bl      resolve_backend
+        mov     x19, x0
+        mov     x20, x1
+        cbz     x20, .Lbs_out
+
+        LEA     x0, hdrbuf
+        LEA     x1, s_hdr_key
+        bl      SYM(str_copy)
+        mov     x1, x20
+        bl      SYM(str_copy)
+        LEA     x1, s_hdr_tail
+        bl      SYM(str_copy)
+
+        LEA     x21, req
+        mov     x0, x19
+        add     x1, x21, #REQ_IP
+        add     x2, x21, #REQ_PORT
+        bl      SYM(net_parse_addr)
+        tbnz    w0, #31, .Lbs_out
+
+        LEA     x0, s_get
+        str     x0, [x21, #REQ_METHOD]
+        LEA     x0, s_path_behav
+        str     x0, [x21, #REQ_PATH]
+        str     x19, [x21, #REQ_HOST]
+        LEA     x0, hdrbuf
+        str     x0, [x21, #REQ_HDRS]
+        str     xzr, [x21, #REQ_BODY]
+        str     wzr, [x21, #REQ_BODYLEN]
+        LEA     x0, respbuf
+        str     x0, [x21, #REQ_OUT]
+        mov     w0, #RESP_SZ
+        str     w0, [x21, #REQ_OUTCAP]
+
+        mov     x0, x21
+        bl      SYM(http_request)
+        cmp     w0, #0
+        b.le    .Lbs_out
+
+        LEA     x0, respbuf
+        bl      SYM(http_body)
+        mov     x19, x0
+
+/* Each line is "<target> <trigger> <verb> <weight>". */
+.Lbs_line:
+        ldrb    w9, [x19]
+        cbz     w9, .Lbs_out
+
+        LEA     x22, targetbuf          /* the target word */
+        mov     w9, #0
+1:      cmp     w9, #31
+        b.hs    2f
+        ldrb    w10, [x19, w9, uxtw]
+        cbz     w10, 2f
+        cmp     w10, #' '
+        b.ls    2f
+        strb    w10, [x22, w9, uxtw]
+        add     w9, w9, #1
+        b       1b
+2:      strb    wzr, [x22, w9, uxtw]
+        add     x21, x19, w9, uxtw      /* what follows it on the line */
+
+        mov     x0, x21                 /* the one rule shape we know */
+        LEA     x1, s_rule_dragmove
+        bl      SYM(str_starts)
+        cbz     w0, .Lbs_next
+        LEA     x0, targetbuf
+        bl      SYM(applet_mark_draggable)
+
+.Lbs_next:
+        ldrb    w9, [x19]
+        cbz     w9, .Lbs_out
+        add     x19, x19, #1
+        cmp     w9, #'\n'
+        b.ne    .Lbs_next
+        b       .Lbs_line
+
+.Lbs_out:
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
         .globl  SYM(backend_session)
 SYM(backend_session):
         stp     x29, x30, [sp, #-64]!
@@ -573,6 +683,9 @@ s_env_key:          .asciz "ARMEDIT_KEY"
 s_default_backend:  .asciz "127.0.0.1:8080"
 s_post:             .asciz "POST"
 s_path_agent:       .asciz "/api/agent"
+s_get:              .asciz "GET"
+s_path_behav:       .asciz "/api/behaviours"
+s_rule_dragmove:    .asciz " drag move"
 s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
@@ -612,6 +725,7 @@ region_a:   .space 8
 region_b:   .space 8
 fetch_status: .space 8
 subjtext:   .space 64
+targetbuf:  .space 32
 bodybuf:    .space BODY_SZ
 hdrbuf:     .space HDRS_SZ
 respbuf:    .space RESP_SZ

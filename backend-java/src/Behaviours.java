@@ -35,7 +35,8 @@ final class Behaviours {
 
     /** What a rule can be about. */
     enum Target {
-        IMAGE("image"), KEY("key"), WORD("word"), BUTTON("button"), SCREEN("screen"), ANY("any");
+        IMAGE("image"), VIDEO("video"), KEY("key"), WORD("word"), BUTTON("button"),
+        WIDGET("widget"), SCREEN("screen"), ANY("any");
 
         final String id;
 

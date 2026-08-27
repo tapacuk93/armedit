@@ -32,6 +32,24 @@
 #define AP_ACT_ASK      0x2000          /* what Cmd+Enter does */
 #define AP_ACT_REWRITE  0x2001          /* what Cmd+P does     */
 
+/* What an applet is.  Shared, because both front ends build and hit-test them. */
+#define AP_KIND_NONE    0
+#define AP_KIND_KEY     1               /* action is a key code for editor_key */
+#define AP_KIND_BUTTON  2               /* action is an id the front end reports */
+#define AP_KIND_VIDEO   3               /* a frame of the clip that is open */
+
+/*
+ * What an applet is allowed to do, as opposed to what it is.
+ *
+ * Nothing sets AP_F_DRAG at build time.  It arrives because somebody said so -
+ * a user who opened the thing and wrote "draggable", or the server telling this
+ * device what other people decided about the same kind of object.  That is why
+ * it is a flag and not a property of the kind: a video is not draggable because
+ * videos are draggable, it is draggable because of something a person did.
+ */
+#define AP_F_DRAG       1               /* the mouse may move it */
+#define AP_F_MOVED      2               /* no longer where it was authored */
+
 /* Screens */
 #define MAX_SCREENS     8
 #define SCR_BUF_SZ      8192

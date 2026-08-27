@@ -29,7 +29,7 @@ KERNEL_ARCH ?= aarch64
 # difference: OS mode is the same program with the machine underneath it
 # removed, not a cut-down version of it.
 KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S \
-              editor/editor.S editor/applet.S gfx/image.S gfx/video.S \
+              editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
@@ -40,7 +40,7 @@ BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S
-WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S editor/editor.S editor/applet.S gfx/image.S $(NET_SRC) $(FONT_SRC))
+WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 
 QEMU      := qemu-system-aarch64
