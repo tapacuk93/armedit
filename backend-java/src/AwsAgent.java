@@ -200,7 +200,7 @@ final class AwsAgent {
             Files.writeString(dir.resolve("aws-audit.log"), line,
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception x) {
-            System.out.printf("asmedit: audit write failed for %s: %s%n", account.id(), x.getMessage());
+            System.out.printf("armedit: audit write failed for %s: %s%n", account.id(), x.getMessage());
         }
     }
 

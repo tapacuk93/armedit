@@ -1,10 +1,10 @@
-# asmeditd
+# armeditd
 
-The asmedit backend: Java 25 on Netty, matching the stack aicoin-proxy runs.
+The armedit backend: Java 25 on Netty, matching the stack aicoin-proxy runs.
 
 ## Building
 
-The server is Netty, so unlike the rest of asmedit this half has a dependency
+The server is Netty, so unlike the rest of armedit this half has a dependency
 and needs a build tool. Gradle 9.6.1, same as aicoin-proxy:
 
 ```
@@ -31,24 +31,24 @@ belongs in this repository.
 
 | variable | meaning |
 |---|---|
-| `ASMEDIT_PORT` | listen port (default 8080) |
-| `ASMEDIT_PUBLIC_ADDR` | the address baked into issued keys |
-| `ASMEDIT_AICOIN` | aicoin proxy base URL |
-| `ASMEDIT_PROVIDER` | default provider aicoin routes to |
-| `ASMEDIT_MODEL` | default model override |
-| `ASMEDIT_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
-| `ASMEDIT_AMI` | image the account's instance runs |
-| `ASMEDIT_INSTANCE_TYPE` | default `t4g.small` |
-| `ASMEDIT_WORKSPACE` | where accounts' folders live |
-| `ASMEDIT_S3_BUCKET` | third tier of persistence |
-| `ASMEDIT_IDLE_MINUTES` | terminate an idle account's instance (0 disables) |
-| `ASMEDIT_REAP_SECONDS` | how often to sweep |
+| `ARMEDIT_PORT` | listen port (default 8080) |
+| `ARMEDIT_PUBLIC_ADDR` | the address baked into issued keys |
+| `ARMEDIT_AICOIN` | aicoin proxy base URL |
+| `ARMEDIT_PROVIDER` | default provider aicoin routes to |
+| `ARMEDIT_MODEL` | default model override |
+| `ARMEDIT_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
+| `ARMEDIT_AMI` | image the account's instance runs |
+| `ARMEDIT_INSTANCE_TYPE` | default `t4g.small` |
+| `ARMEDIT_WORKSPACE` | where accounts' folders live |
+| `ARMEDIT_S3_BUCKET` | third tier of persistence |
+| `ARMEDIT_IDLE_MINUTES` | terminate an idle account's instance (0 disables) |
+| `ARMEDIT_REAP_SECONDS` | how often to sweep |
 
 ## Shape
 
 | file | what it does |
 |---|---|
-| `Asmeditd.java` | Netty transport and routing; every route on a virtual thread |
+| `Armeditd.java` | Netty transport and routing; every route on a virtual thread |
 | `Accounts.java` | the account store and the one key that leaves the process |
 | `Aicoin.java` | the route to a model, through the account's wallet |
 | `Router.java` | which model answers, and model-to-model handoff |

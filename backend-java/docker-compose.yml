@@ -1,5 +1,5 @@
 services:
-  asmeditd:
+  armeditd:
     build: .
     restart: unless-stopped
     ports:
@@ -7,19 +7,19 @@ services:
     volumes:
       # Everything typed lives here. Without this, a container restart loses
       # every screen the disk tier was holding.
-      - asmedit-workspaces:/opt/asmedit/workspaces
+      - armedit-workspaces:/opt/armedit/workspaces
     environment:
       # Every one of these is optional; none of them has a credential in it.
       # Credentials arrive at registration and stay in the process.
-      ASMEDIT_PORT: "8080"
-      ASMEDIT_PUBLIC_ADDR: "${ASMEDIT_PUBLIC_ADDR:-}"
-      ASMEDIT_AICOIN: "${ASMEDIT_AICOIN:-http://host.docker.internal:8080}"
-      ASMEDIT_PROVIDER: "${ASMEDIT_PROVIDER:-anthropic}"
-      ASMEDIT_MODEL: "${ASMEDIT_MODEL:-}"
-      ASMEDIT_AMI: "${ASMEDIT_AMI:-}"
-      ASMEDIT_INSTANCE_TYPE: "${ASMEDIT_INSTANCE_TYPE:-t4g.small}"
-      ASMEDIT_S3_BUCKET: "${ASMEDIT_S3_BUCKET:-}"
-      ASMEDIT_IDLE_MINUTES: "${ASMEDIT_IDLE_MINUTES:-30}"
+      ARMEDIT_PORT: "8080"
+      ARMEDIT_PUBLIC_ADDR: "${ARMEDIT_PUBLIC_ADDR:-}"
+      ARMEDIT_AICOIN: "${ARMEDIT_AICOIN:-http://host.docker.internal:8080}"
+      ARMEDIT_PROVIDER: "${ARMEDIT_PROVIDER:-anthropic}"
+      ARMEDIT_MODEL: "${ARMEDIT_MODEL:-}"
+      ARMEDIT_AMI: "${ARMEDIT_AMI:-}"
+      ARMEDIT_INSTANCE_TYPE: "${ARMEDIT_INSTANCE_TYPE:-t4g.small}"
+      ARMEDIT_S3_BUCKET: "${ARMEDIT_S3_BUCKET:-}"
+      ARMEDIT_IDLE_MINUTES: "${ARMEDIT_IDLE_MINUTES:-30}"
 
 volumes:
-  asmedit-workspaces:
+  armedit-workspaces:

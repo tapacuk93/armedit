@@ -5,7 +5,7 @@
  *
  * The proxy takes the same path the provider would (POST /v1/messages), picks
  * the upstream from X-AI, bills the wallet named by X-Api-Key and injects its
- * own provider key - so no Anthropic credential exists anywhere in asmedit,
+ * own provider key - so no Anthropic credential exists anywhere in armedit,
  * and the per-account secret is the wallet token the user bound at
  * registration.
  *
@@ -183,7 +183,7 @@ SYM(aicoin_ask):
         ret
 
         CSTR
-s_env_aicoin:      .asciz "ASMEDIT_AICOIN"
+s_env_aicoin:      .asciz "ARMEDIT_AICOIN"
 s_aicoin_default:  .asciz "127.0.0.1:8081"
 s_post:            .asciz "POST"
 s_path_messages:   .asciz "/v1/messages"
@@ -192,8 +192,8 @@ s_crlf:            .asciz "\r\n"
 s_key_text:        .asciz "\"text\""
 s_hdr_head:        .asciz "Content-Type: application/json\r\nanthropic-version: 2023-06-01\r\nX-AI: anthropic\r\nX-Api-Key: "
 s_body_head:       .asciz "{\"model\":\"claude-opus-5\",\"max_tokens\":16000,\"messages\":[{\"role\":\"user\",\"content\":\""
-s_prompt_agent:    .asciz "You are inside asmedit, a text editor. The user pressed the ask key on this screen. Answer plainly. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
-s_prompt_aify:     .asciz "You are inside asmedit, a text editor. Your reply is inserted at the caret; everything else on the screen stays exactly as it is, so do not repeat it. Carry out whatever the user's latest edit asks for and reply with only the text that belongs at the caret - no preamble, no fences. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
+s_prompt_agent:    .asciz "You are inside armedit, a text editor. The user pressed the ask key on this screen. Answer plainly. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
+s_prompt_aify:     .asciz "You are inside armedit, a text editor. Your reply is inserted at the caret; everything else on the screen stays exactly as it is, so do not repeat it. Carry out whatever the user's latest edit asks for and reply with only the text that belongs at the caret - no preamble, no fences. Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 bitmap font and cannot draw anything else.\\n\\n"
 s_prev_head:       .asciz "PREVIOUS VERSION OF THIS SCREEN:\\n"
 s_cur_head:        .asciz "\\n\\nCURRENT SCREEN:\\n"
 s_caret_head:      .asciz "\\n\\nTHE CARET IS AT BYTE OFFSET "

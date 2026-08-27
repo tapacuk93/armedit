@@ -93,7 +93,7 @@ final class Runner {
             }
 
             String token = UUID.randomUUID().toString().replace("-", "");
-            String name = "asmedit-" + token.substring(0, 8);
+            String name = "armedit-" + token.substring(0, 8);
             try {
                 var machine = impl.create(cred, spec, name, cloudInit(command, token));
                 var run = new Run(token, account.id(), provider, size, command,
@@ -123,7 +123,7 @@ final class Runner {
     private String cloudInit(String command, String token) {
         return """
                 #!/bin/bash
-                exec > /var/log/asmedit-run.log 2>&1
+                exec > /var/log/armedit-run.log 2>&1
                 set -x
                 OUT=$( { %s ; } 2>&1 )
                 CODE=$?
@@ -184,7 +184,7 @@ final class Runner {
                     "%s  %s%n".formatted(Instant.now(), line),
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception x) {
-            System.out.printf("asmedit: could not record run for %s: %s%n", accountId, x.getMessage());
+            System.out.printf("armedit: could not record run for %s: %s%n", accountId, x.getMessage());
         }
     }
 }

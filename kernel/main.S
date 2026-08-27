@@ -37,7 +37,7 @@ kmain:
         ret
 
         .section .rodata
-m_boot:   .asciz "asmedit: boot\n"
-m_ready:  .asciz "asmedit: display up\n"
-m_nofb:   .asciz "asmedit: no framebuffer on this machine, serial only\n"
-m_banner: .asciz "ASMEDIT KERNEL\nHELLO WORLD\nBARE METAL AARCH64.\nNO OS UNDER THIS."
+m_boot:   .asciz "armedit: boot\n"
+m_ready:  .asciz "armedit: display up\n"
+m_nofb:   .asciz "armedit: no framebuffer on this machine, serial only\n"
+m_banner: .asciz "ARMEDIT KERNEL\nHELLO WORLD\nBARE METAL AARCH64.\nNO OS UNDER THIS."

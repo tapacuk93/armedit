@@ -1,4 +1,4 @@
-## asmeditd, ahead-of-time compiled.
+## armeditd, ahead-of-time compiled.
 ##
 ## Two stages: GraalVM's native-image toolchain runs the Gradle build and
 ## produces a real executable, then only that executable is copied onto a
@@ -32,15 +32,15 @@ RUN ./gradlew nativeCompile --no-daemon
 ## the image for anything else to use. The JDK truststore is compiled into the
 ## binary, so outbound TLS to aicoin and AWS needs nothing from the OS.
 FROM gcr.io/distroless/base-debian12 AS runtime
-WORKDIR /opt/asmedit
+WORKDIR /opt/armedit
 
-COPY --from=build /workspace/build/native/nativeCompile/asmeditd /usr/local/bin/asmeditd
+COPY --from=build /workspace/build/native/nativeCompile/armeditd /usr/local/bin/armeditd
 
 # Where accounts' folders live. Mount a volume here or everything typed is
 # lost with the container.
-VOLUME ["/opt/asmedit/workspaces"]
-ENV ASMEDIT_WORKSPACE=/opt/asmedit/workspaces
+VOLUME ["/opt/armedit/workspaces"]
+ENV ARMEDIT_WORKSPACE=/opt/armedit/workspaces
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/asmeditd"]
+ENTRYPOINT ["/usr/local/bin/armeditd"]

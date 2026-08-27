@@ -44,7 +44,7 @@ final class Aws {
             #!/bin/bash
             dnf install -y docker
             systemctl enable --now docker
-            docker run -d --restart=always --name asmedit alpine:3 sleep infinity
+            docker run -d --restart=always --name armedit alpine:3 sleep infinity
             """;
 
     private final HttpClient http = HttpClient.newBuilder()
@@ -67,7 +67,7 @@ final class Aws {
     /** Bring up this account's instance, or return the one it already has. */
     String provision(Accounts.Account a) throws Exception {
         if (!a.instance().isBlank()) return a.instance();
-        if (!configured()) throw new IllegalStateException("ASMEDIT_AMI is not set");
+        if (!configured()) throw new IllegalStateException("ARMEDIT_AMI is not set");
         String body = "Action=RunInstances&Version=%s&MinCount=1&MaxCount=1&ImageId=%s&InstanceType=%s&UserData=%s"
                 .formatted(EC2_VERSION, enc(ami), enc(instanceType),
                         enc(Base64.getEncoder().encodeToString(USER_DATA.getBytes(StandardCharsets.UTF_8))));

@@ -70,7 +70,7 @@ _main:
 s_post:   .asciz "POST"
 s_path:   .asciz "/echo"
 s_host:   .asciz "127.0.0.1:8099"
-s_hdrs:   .asciz "X-Asmedit-Test: 1\r\nContent-Type: application/json\r\n"
+s_hdrs:   .asciz "X-Armedit-Test: 1\r\nContent-Type: application/json\r\n"
 s_body:   .asciz "{\"hello\":\"from assembly\"}"
 s_failed: .asciz "http_request failed\n"
 

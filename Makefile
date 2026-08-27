@@ -1,4 +1,4 @@
-# asmedit - every line of this project is assembled from .S sources.
+# armedit - every line of this project is assembled from .S sources.
 #
 #   make            build everything buildable on this host
 #   make tty        hosted mode, terminal
@@ -43,10 +43,10 @@ QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
 
 .PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve clean
 all: tty window kernel backend
-tty: $(B)/asmedit-tty
-window: $(B)/asmedit-window
+tty: $(B)/armedit-tty
+window: $(B)/armedit-window
 kernel: $(B)/kernel.elf
-backend: $(B)/asmeditd
+backend: $(B)/armeditd
 
 $(B)/macho/%.o: %.S
 	@mkdir -p $(dir $@)
@@ -56,13 +56,13 @@ $(B)/elf/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(AS_ELF) $< -o $@
 
-$(B)/asmedit-tty: $(TTY_OBJ)
+$(B)/armedit-tty: $(TTY_OBJ)
 	$(LD_MACHO) -o $@ $^
 
-$(B)/asmedit-window: $(WIN_OBJ)
+$(B)/armedit-window: $(WIN_OBJ)
 	$(LD_MACHO) -framework AppKit -framework CoreGraphics -o $@ $^
 
-$(B)/asmeditd: $(BACKEND_OBJ)
+$(B)/armeditd: $(BACKEND_OBJ)
 	$(LD_MACHO) -o $@ $^
 
 $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
@@ -82,23 +82,23 @@ $(B)/ios/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(INC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) -c $< -o $@
 
-ios: $(B)/asmedit-ios.app
+ios: $(B)/armedit-ios.app
 
-$(B)/asmedit-ios.app: $(IOS_OBJ) app/ios/Info.plist
+$(B)/armedit-ios.app: $(IOS_OBJ) app/ios/Info.plist
 	@rm -rf $@ && mkdir -p $@
 	$(CC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) \
 	  -framework UIKit -framework CoreGraphics -framework Foundation \
-	  -o $@/asmedit $(IOS_OBJ)
+	  -o $@/armedit $(IOS_OBJ)
 	@cp app/ios/Info.plist $@/Info.plist
 	@codesign --force --sign - $@ 2>/dev/null || true
 	@echo "built $@"
 
 # Boot a simulator, install, launch.  SIM overrides the device.
 SIM ?= iPhone 17 Pro
-ios-run: $(B)/asmedit-ios.app
+ios-run: $(B)/armedit-ios.app
 	@xcrun simctl boot "$(SIM)" 2>/dev/null || true
-	@xcrun simctl install "$(SIM)" $(B)/asmedit-ios.app
-	@xcrun simctl launch "$(SIM)" com.oeaio.asmedit
+	@xcrun simctl install "$(SIM)" $(B)/armedit-ios.app
+	@xcrun simctl launch "$(SIM)" com.oeaio.armedit
 	@open -a Simulator
 
 # --- iOS, on a real phone ----------------------------------------------
@@ -117,17 +117,17 @@ $(B)/iosdev/%.o: %.S
 	$(CC) $(INC) -target $(IOSDEV_ARCH) -isysroot $(IOSDEV_SDK) -c $< -o $@
 
 ios-device: $(IOSDEV_OBJ) app/ios/Info.plist
-	@rm -rf $(B)/asmedit-device.app && mkdir -p $(B)/asmedit-device.app
+	@rm -rf $(B)/armedit-device.app && mkdir -p $(B)/armedit-device.app
 	$(CC) -target $(IOSDEV_ARCH) -isysroot $(IOSDEV_SDK) \
 	  -framework UIKit -framework CoreGraphics -framework Foundation \
-	  -o $(B)/asmedit-device.app/asmedit $(IOSDEV_OBJ)
-	@cp app/ios/Info.plist $(B)/asmedit-device.app/Info.plist
-	@cp "$(PROFILE)" $(B)/asmedit-device.app/embedded.mobileprovision
+	  -o $(B)/armedit-device.app/armedit $(IOSDEV_OBJ)
+	@cp app/ios/Info.plist $(B)/armedit-device.app/Info.plist
+	@cp "$(PROFILE)" $(B)/armedit-device.app/embedded.mobileprovision
 	@security cms -D -i "$(PROFILE)" | plutil -extract Entitlements xml1 -o $(B)/ent.plist -
-	@plutil -replace application-identifier -string "HTS38ZPRVH.com.oeaio.asmedit" $(B)/ent.plist
-	@codesign --force --sign "$(SIGN_ID)" --entitlements $(B)/ent.plist --timestamp=none $(B)/asmedit-device.app
-	@xcrun devicectl device install app --device $(DEVICE) $(B)/asmedit-device.app
-	@echo "installed on $(DEVICE) - unlock the phone, then tap asmedit"
+	@plutil -replace application-identifier -string "HTS38ZPRVH.com.oeaio.armedit" $(B)/ent.plist
+	@codesign --force --sign "$(SIGN_ID)" --entitlements $(B)/ent.plist --timestamp=none $(B)/armedit-device.app
+	@xcrun devicectl device install app --device $(DEVICE) $(B)/armedit-device.app
+	@echo "installed on $(DEVICE) - unlock the phone, then tap armedit"
 
 # --- the agent ----------------------------------------------------------
 # A machine volunteering itself to an account.  Access is a ceiling, not a
@@ -136,29 +136,29 @@ ACCESS ?= confirmed
 agent:
 	@mkdir -p $(B)/agent
 	javac -d $(B)/agent agent/src/*.java
-	@echo "run: java -cp $(B)/agent AsmeditAgent --key <key> --access $(ACCESS)"
+	@echo "run: java -cp $(B)/agent ArmeditAgent --key <key> --access $(ACCESS)"
 
 # A double-clickable Mac app: the same binary, in the bundle layout Finder
 # and the Dock expect.
-app: $(B)/asmedit.app
+app: $(B)/armedit.app
 
-$(B)/asmedit.app: $(B)/asmedit-window app/macos/Info.plist
+$(B)/armedit.app: $(B)/armedit-window app/macos/Info.plist
 	@rm -rf $@
 	@mkdir -p $@/Contents/MacOS
 	@cp app/macos/Info.plist $@/Contents/Info.plist
-	@cp $(B)/asmedit-window $@/Contents/MacOS/asmedit
+	@cp $(B)/armedit-window $@/Contents/MacOS/armedit
 	@printf 'APPL????' > $@/Contents/PkgInfo
 	@codesign --force --sign - $@ 2>/dev/null || true
 	@echo "built $@"
 
-run: $(B)/asmedit-tty
-	@$(B)/asmedit-tty $(TEXT)
+run: $(B)/armedit-tty
+	@$(B)/armedit-tty $(TEXT)
 
-win: $(B)/asmedit-window
-	@$(B)/asmedit-window $(TEXT)
+win: $(B)/armedit-window
+	@$(B)/armedit-window $(TEXT)
 
-serve: $(B)/asmeditd
-	@$(B)/asmeditd
+serve: $(B)/armeditd
+	@$(B)/armeditd
 
 boot: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) -device ramfb -display cocoa

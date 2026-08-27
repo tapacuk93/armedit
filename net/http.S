@@ -300,7 +300,7 @@ SYM(http_body):
 
         CSTR
 s_proto:        .asciz " HTTP/1.1\r\nHost: "
-s_fixed_hdrs:   .asciz "\r\nConnection: close\r\nUser-Agent: asmedit/0.1\r\n"
+s_fixed_hdrs:   .asciz "\r\nConnection: close\r\nUser-Agent: armedit/0.1\r\n"
 s_clen:         .asciz "Content-Length: "
 s_crlf:         .asciz "\r\n"
 

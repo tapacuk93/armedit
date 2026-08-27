@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>asmedit</string>
+	<string>armedit</string>
 	<key>CFBundleDisplayName</key>
-	<string>asmedit</string>
+	<string>armedit</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.oeaio.asmedit</string>
+	<string>com.oeaio.armedit</string>
 	<key>CFBundleExecutable</key>
-	<string>asmedit</string>
+	<string>armedit</string>
 	<key>CFBundleVersion</key>
 	<string>0.1</string>
 	<key>CFBundleShortVersionString</key>

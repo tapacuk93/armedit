@@ -1,7 +1,7 @@
 #include "asm.inc"
 #include "editor.inc"
 /*
- * ios.S - asmedit on iPhone.
+ * ios.S - armedit on iPhone.
  *
  * The same editor core, the same rasterizer, the same pixels.  UIKit appears
  * only to obtain a window and a touch stream; it draws no glyph and lays out
@@ -69,7 +69,7 @@ _main:
         mov     x20, x1                 /* argv */
 
         mov     x0, x2
-        bl      SYM(env_init)           /* ASMEDIT_KEY, when there is one */
+        bl      SYM(env_init)           /* ARMEDIT_KEY, when there is one */
         bl      SYM(editor_init)
         LEA     x0, seed_text
         bl      SYM(editor_insert_str)
@@ -90,7 +90,7 @@ _main:
         mov     x22, x0
 
         mov     w0, w19                 /* UIApplicationMain(argc, argv, nil,   */
-        mov     x1, x20                 /*                   AsmeditDelegate)   */
+        mov     x1, x20                 /*                   ArmeditDelegate)   */
         mov     x2, #0
         mov     x3, x22
         bl      _UIApplicationMain
@@ -499,9 +499,9 @@ view_yes:
         ret
 
         CSTR
-seed_text:              .asciz "ASMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nTWO FINGERS TO PASTE\n\n"
-s_delegate_cls:         .asciz "AsmeditDelegate"
-s_view_cls:             .asciz "AsmeditView"
+seed_text:              .asciz "ARMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nTWO FINGERS TO PASTE\n\n"
+s_delegate_cls:         .asciz "ArmeditDelegate"
+s_view_cls:             .asciz "ArmeditView"
 s_NSObject:             .asciz "NSObject"
 s_NSString:             .asciz "NSString"
 s_UIView:               .asciz "UIView"

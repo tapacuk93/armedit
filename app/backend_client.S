@@ -4,13 +4,13 @@
  * backend_client.S - the editor's entire view of the outside world.
  *
  * The editor knows one server and one credential: its own backend, and the
- * asmedit key issued by asmedit.oeaio.com.  It does not know that Claude
+ * armedit key issued by armedit.oeaio.com.  It does not know that Claude
  * exists, does not know what an aicoin wallet is, and holds no AWS
  * credentials - the backend owns all of that.  What travels on this wire is
  * the screen's text out, and text back.
  *
  *   POST /api/agent
- *   X-Asmedit-Key: <the one key>
+ *   X-Armedit-Key: <the one key>
  *   {"mode":"agent"|"aify","screen":<n>,"scroll":<r>,"rows":<n>,"cursor":<i>,
  *    "baseline":"<the text at the last sync>",
  *    "context":"<the whole current screen>"}
@@ -25,8 +25,8 @@
  * looking at, and baseline is what the text was the last time the backend saw
  * it - so the far side can reason about the edit, not just the file.
  *
- * Configuration comes from the environment: ASMEDIT_BACKEND (address:port,
- * default 127.0.0.1:8080) and ASMEDIT_KEY.  Neither is ever written to disk
+ * Configuration comes from the environment: ARMEDIT_BACKEND (address:port,
+ * default 127.0.0.1:8080) and ARMEDIT_KEY.  Neither is ever written to disk
  * by us, and neither appears anywhere in this repository.
  */
 #define REQ_IP          0
@@ -54,10 +54,10 @@
  * resolve_backend - work out where to send things, and with what.
  *   out x0 = address string ("a.b.c.d:port"), x1 = key, or x1 = 0 if unset
  *
- * A device is configured with exactly one value: ASMEDIT_KEY.  The key the
+ * A device is configured with exactly one value: ARMEDIT_KEY.  The key the
  * backend issues carries the address to reach it at, as "<secret>@<addr>", so
  * there is no second setting to get wrong and no endpoint baked into the
- * binary.  A bare key falls back to the local default, and ASMEDIT_BACKEND
+ * binary.  A bare key falls back to the local default, and ARMEDIT_BACKEND
  * overrides everything - both of those are for development, not for users.
  */
 resolve_backend:
@@ -225,7 +225,7 @@ SYM(backend_submit):
         bl      SYM(str_copy)
         mov     x22, x0
 
-/* ---- X-Asmedit-Key: <key> ---------------------------------------------- */
+/* ---- X-Armedit-Key: <key> ---------------------------------------------- */
         LEA     x0, hdrbuf
         LEA     x1, s_hdr_key
         bl      SYM(str_copy)
@@ -393,12 +393,12 @@ s_key_instance:     .asciz "\"instance\""
 s_empty_body:       .asciz ""
 m_instance:         .asciz "INSTANCE: "
 m_noinstance:       .asciz "NO INSTANCE. THE EDITOR WORKS; CMD+ENTER NEEDS THE BACKEND.\n"
-s_env_backend:      .asciz "ASMEDIT_BACKEND"
-s_env_key:          .asciz "ASMEDIT_KEY"
+s_env_backend:      .asciz "ARMEDIT_BACKEND"
+s_env_key:          .asciz "ARMEDIT_KEY"
 s_default_backend:  .asciz "127.0.0.1:8080"
 s_post:             .asciz "POST"
 s_path_agent:       .asciz "/api/agent"
-s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Asmedit-Key: "
+s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
 s_mode_agent:       .asciz "agent"
@@ -413,8 +413,8 @@ s_json_tail:        .asciz "\"}"
 s_key_text:         .asciz "\"text\""
 s_nl:               .asciz "\n"
 m_reply_open:       .asciz "\n--- REPLY ---\n"
-m_nokey:            .asciz "\nNO ASMEDIT KEY. REGISTER AT ASMEDIT.OEAIO.COM AND SET ASMEDIT_KEY.\n"
-m_badaddr:          .asciz "\nASMEDIT_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
+m_nokey:            .asciz "\nNO ARMEDIT KEY. REGISTER AT ARMEDIT.OEAIO.COM AND SET ARMEDIT_KEY.\n"
+m_badaddr:          .asciz "\nARMEDIT_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
 m_unreachable:      .asciz "\nBACKEND UNREACHABLE.\n"
 m_badreply:         .asciz "\nBACKEND REPLY HAD NO TEXT FIELD.\n"
 m_empty:            .asciz "\nEMPTY REPLY. NOTHING CHANGED.\n"

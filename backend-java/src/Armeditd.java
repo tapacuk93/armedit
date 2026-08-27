@@ -26,7 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.function.Function;
 
 /**
- * asmeditd - the asmedit backend, on Netty.
+ * armeditd - the armedit backend, on Netty.
  *
  * The only process in the system that holds credentials. It serves the
  * registration page, issues the one key a device carries, spends the account's
@@ -43,15 +43,15 @@ import java.util.function.Function;
  *   GET  /                 registration page
  *   GET  /api/health
  *   POST /api/register     {wallet, aws_key, aws_secret, region, password} -> {key}
- *   POST /api/agent        X-Asmedit-Key; {mode, context, baseline, cursor} -> {text}
- *   POST /api/session      X-Asmedit-Key -> {instance}
- *   POST /api/teardown     X-Asmedit-Key -> {instance:""}
- *   POST /api/journal      X-Asmedit-Key; one edit or one gesture
- *   GET/POST /api/clouds   X-Asmedit-Key; bind or list cloud credentials
- *   GET  /api/otp          X-Asmedit-Key -> pad accounting for this account
- *   POST /api/otp/reserve  X-Asmedit-Key -> {pad, bits, window}
+ *   POST /api/agent        X-Armedit-Key; {mode, context, baseline, cursor} -> {text}
+ *   POST /api/session      X-Armedit-Key -> {instance}
+ *   POST /api/teardown     X-Armedit-Key -> {instance:""}
+ *   POST /api/journal      X-Armedit-Key; one edit or one gesture
+ *   GET/POST /api/clouds   X-Armedit-Key; bind or list cloud credentials
+ *   GET  /api/otp          X-Armedit-Key -> pad accounting for this account
+ *   POST /api/otp/reserve  X-Armedit-Key -> {pad, bits, window}
  */
-public final class Asmeditd {
+public final class Armeditd {
 
     private static final int MAX_BODY = 1 << 20;
 
@@ -65,26 +65,26 @@ public final class Asmeditd {
     private final Agents agents;
     private final String publicAddr;
 
-    private Asmeditd() {
+    private Armeditd() {
         this.aicoin = new Aicoin(
-                env("ASMEDIT_AICOIN", "http://127.0.0.1:8081"),
-                env("ASMEDIT_PROVIDER", "anthropic"),
-                env("ASMEDIT_MODEL", ""));
+                env("ARMEDIT_AICOIN", "http://127.0.0.1:8081"),
+                env("ARMEDIT_PROVIDER", "anthropic"),
+                env("ARMEDIT_MODEL", ""));
         this.aws = new Aws(
-                env("ASMEDIT_AWS_ADDR", ""),
-                env("ASMEDIT_AMI", ""),
-                env("ASMEDIT_INSTANCE_TYPE", ""));
-        var root = java.nio.file.Path.of(env("ASMEDIT_WORKSPACE", "workspaces"));
-        this.workspace = new Workspace(root, aws, env("ASMEDIT_S3_BUCKET", ""));
+                env("ARMEDIT_AWS_ADDR", ""),
+                env("ARMEDIT_AMI", ""),
+                env("ARMEDIT_INSTANCE_TYPE", ""));
+        var root = java.nio.file.Path.of(env("ARMEDIT_WORKSPACE", "workspaces"));
+        this.workspace = new Workspace(root, aws, env("ARMEDIT_S3_BUCKET", ""));
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
         this.agents = new Agents(root);
-        this.publicAddr = env("ASMEDIT_PUBLIC_ADDR", "");
+        this.publicAddr = env("ARMEDIT_PUBLIC_ADDR", "");
         // Machines post their output back here, so they need an address that
         // works from outside this host.
         this.runner = new Runner(aws, root,
-                env("ASMEDIT_CALLBACK", publicAddr.isBlank()
-                        ? "http://127.0.0.1:" + env("ASMEDIT_PORT", "8080")
+                env("ARMEDIT_CALLBACK", publicAddr.isBlank()
+                        ? "http://127.0.0.1:" + env("ARMEDIT_PORT", "8080")
                         : "https://" + publicAddr));
     }
 
@@ -107,8 +107,8 @@ public final class Asmeditd {
     }
 
     public static void main(String[] args) throws Exception {
-        int port = Integer.parseInt(env("ASMEDIT_PORT", "8080"));
-        var app = new Asmeditd();
+        int port = Integer.parseInt(env("ARMEDIT_PORT", "8080"));
+        var app = new Armeditd();
         app.startReaper();
 
         // One thread accepting, a small pool reading and writing, and virtual
@@ -134,7 +134,7 @@ public final class Asmeditd {
                     });
 
             var channel = b.bind(port).sync().channel();
-            System.out.printf("asmedit backend on :%d - register at / to bind a wallet and cloud access%n",
+            System.out.printf("armedit backend on :%d - register at / to bind a wallet and cloud access%n",
                     port);
             channel.closeFuture().sync();
         } finally {
@@ -150,10 +150,10 @@ public final class Asmeditd {
      */
     private static final class Gate extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-        private final Asmeditd app;
+        private final Armeditd app;
         private final ExecutorService jobs;
 
-        Gate(Asmeditd app, ExecutorService jobs) {
+        Gate(Armeditd app, ExecutorService jobs) {
             this.app = app;
             this.jobs = jobs;
         }
@@ -172,7 +172,7 @@ public final class Asmeditd {
                     res = app.dispatch(req);
                 } catch (Exception x) {
                     // Never let a handler's failure become a hung connection.
-                    System.out.printf("asmedit: %s %s failed: %s%n", req.method(), req.path(), x);
+                    System.out.printf("armedit: %s %s failed: %s%n", req.method(), req.path(), x);
                     res = Res.json(500, Json.obj("error", "internal error"));
                 }
                 write(ctx, res);
@@ -228,20 +228,20 @@ public final class Asmeditd {
      * account by definition sends none.
      */
     private void startReaper() {
-        long idleMinutes = Long.parseLong(env("ASMEDIT_IDLE_MINUTES", "30"));
-        long everySeconds = Long.parseLong(env("ASMEDIT_REAP_SECONDS", "60"));
+        long idleMinutes = Long.parseLong(env("ARMEDIT_IDLE_MINUTES", "30"));
+        long everySeconds = Long.parseLong(env("ARMEDIT_REAP_SECONDS", "60"));
         if (idleMinutes <= 0) {
-            System.out.println("asmedit: idle reaping disabled");
+            System.out.println("armedit: idle reaping disabled");
             return;
         }
         var reaper = Executors.newSingleThreadScheduledExecutor(r -> {
-            var t = new Thread(r, "asmedit-reaper");
+            var t = new Thread(r, "armedit-reaper");
             t.setDaemon(true);
             return t;
         });
         reaper.scheduleWithFixedDelay(() -> sweep(idleMinutes), everySeconds, everySeconds,
                 java.util.concurrent.TimeUnit.SECONDS);
-        System.out.printf("asmedit: reaping instances idle for %d minutes%n", idleMinutes);
+        System.out.printf("armedit: reaping instances idle for %d minutes%n", idleMinutes);
     }
 
     private void sweep(long idleMinutes) {
@@ -249,7 +249,7 @@ public final class Asmeditd {
         // the model's picture of what is reachable is never older than a
         // sweep: an agent that stopped calling in is reported gone.
         for (var a : agents.stale()) {
-            System.out.printf("asmedit: agent %s has not called in for %ds%n",
+            System.out.printf("armedit: agent %s has not called in for %ds%n",
                     a.name, a.idleMillis() / 1000);
         }
         long limit = idleMinutes * 60_000L;
@@ -258,12 +258,12 @@ public final class Asmeditd {
             try {
                 String was = account.instance();
                 aws.deprovision(account);
-                System.out.printf("asmedit: %s idle %d min, terminated %s%n",
+                System.out.printf("armedit: %s idle %d min, terminated %s%n",
                         account.id(), account.idleMillis() / 60_000L, was);
             } catch (Exception x) {
                 // Leave it for the next sweep rather than forgetting an
                 // instance that is still running and still costing money.
-                System.out.printf("asmedit: %s could not be reaped: %s%n", account.id(), x.getMessage());
+                System.out.printf("armedit: %s could not be reaped: %s%n", account.id(), x.getMessage());
             }
         }
     }
@@ -334,12 +334,12 @@ public final class Asmeditd {
         var prompt = new StringBuilder();
         prompt.append(switch (mode) {
             case "aify" -> """
-                    You are inside asmedit, a text editor. Your reply is inserted at the caret; \
+                    You are inside armedit, a text editor. Your reply is inserted at the caret; \
                     everything else on the screen stays exactly as it is, so do not repeat it. \
                     Carry out whatever the user's latest edit asks for and reply with only the text \
                     that belongs at the caret - no preamble, no fences.""";
             default -> """
-                    You are inside asmedit, a text editor. The user asked about this screen. \
+                    You are inside armedit, a text editor. The user asked about this screen. \
                     Answer plainly.""";
         });
         prompt.append("""
@@ -374,7 +374,7 @@ public final class Asmeditd {
 
                 var handoff = Router.requested(text);
                 if (handoff == null || hop == Router.MAX_HANDOFFS) break;
-                System.out.printf("asmedit: %s handing %s -> %s (%s)%n",
+                System.out.printf("armedit: %s handing %s -> %s (%s)%n",
                         account.id(), tier.name(), handoff.to().name(), handoff.reason());
                 base = base + "\n\n" + "%s looked at this and handed it to you: %s"
                         .formatted(tier.name(), handoff.reason());
@@ -469,7 +469,7 @@ public final class Asmeditd {
                 in.getOrDefault("os", "?"),
                 in.getOrDefault("arch", "?"),
                 Agents.Access.of(in.get("access")));
-        System.out.printf("asmedit: %s registered agent %s (%s %s, %s)%n",
+        System.out.printf("armedit: %s registered agent %s (%s %s, %s)%n",
                 account.id(), agent.name, agent.os, agent.arch, agent.access.id);
         return Res.json(200, Json.obj("agent", agent.id, "token", agent.token,
                 "access", agent.access.id));
@@ -598,7 +598,7 @@ public final class Asmeditd {
      * a device carry one property - so match on the part before the '@'.
      */
     private Accounts.Account authorise(Req r) {
-        String key = r.header().apply("X-Asmedit-Key");
+        String key = r.header().apply("X-Armedit-Key");
         if (key != null) {
             int at = key.indexOf('@');
             if (at >= 0) key = key.substring(0, at);
@@ -609,7 +609,7 @@ public final class Asmeditd {
     }
 
     private static Res unauthorised() {
-        return Res.json(401, Json.obj("error", "unknown or missing asmedit key"));
+        return Res.json(401, Json.obj("error", "unknown or missing armedit key"));
     }
 
     private static int parseInt(String s, int fallback) {

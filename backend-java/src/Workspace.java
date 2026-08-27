@@ -44,7 +44,7 @@ final class Workspace {
         this.aws = aws;
         this.bucket = bucket == null ? "" : bucket.trim();
         this.writer = Executors.newSingleThreadExecutor(r -> {
-            var t = new Thread(r, "asmedit-workspace");
+            var t = new Thread(r, "armedit-workspace");
             t.setDaemon(true);
             return t;
         });
@@ -70,7 +70,7 @@ final class Workspace {
                 Files.writeString(file, text, StandardCharsets.UTF_8);
                 toCloud(a, screen, file, text);
             } catch (Exception x) {
-                System.out.printf("asmedit: could not persist %s screen %d: %s%n",
+                System.out.printf("armedit: could not persist %s screen %d: %s%n",
                         a.id(), screen, x.getMessage());
             }
         });
@@ -100,7 +100,7 @@ final class Workspace {
             aws.putObject(a, bucket, key, text.getBytes(StandardCharsets.UTF_8));
         } catch (Exception x) {
             // Disk already has it; the cloud copy can catch up on the next save.
-            System.out.printf("asmedit: cloud copy of %s deferred: %s%n", key(a, screen), x.getMessage());
+            System.out.printf("armedit: cloud copy of %s deferred: %s%n", key(a, screen), x.getMessage());
         }
     }
 

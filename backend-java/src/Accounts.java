@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * under. Registration refuses anything less - issuing a key for half an
  * account would only fail later, further from the cause.
  *
- * The asmedit key is the one credential that ever leaves this process, and the
+ * The armedit key is the one credential that ever leaves this process, and the
  * only one a device holds. It is the map key here and is never logged.
  */
 final class Accounts {

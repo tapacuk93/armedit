@@ -4,8 +4,8 @@
  * macOS, a byte off the UART on bare metal) but agree on what it means once
  * translated into these codes.
  */
-#ifndef ASMEDIT_EDITOR_INC
-#define ASMEDIT_EDITOR_INC
+#ifndef ARMEDIT_EDITOR_INC
+#define ARMEDIT_EDITOR_INC
 
 /* Keys.  Printable characters are themselves; these fill in the rest. */
 #define K_BS            0x08

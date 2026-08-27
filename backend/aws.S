@@ -10,7 +10,7 @@
  * the account that asked for it.
  *
  * Transport note: this speaks plain HTTP to whatever address
- * ASMEDIT_AWS_ADDR names, which today means an endpoint that terminates TLS
+ * ARMEDIT_AWS_ADDR names, which today means an endpoint that terminates TLS
  * for us or a local EC2-compatible one.  Reaching ec2.amazonaws.com directly
  * needs the TLS client, which is the next milestone - see the README.  The
  * signing, the request and the parsing are all real.
@@ -346,10 +346,10 @@ url_encode:
 hexdigits:      .ascii "0123456789ABCDEF"
 
         CSTR
-s_env_addr:     .asciz "ASMEDIT_AWS_ADDR"
+s_env_addr:     .asciz "ARMEDIT_AWS_ADDR"
 s_addr_default: .asciz "127.0.0.1:4566"
-s_env_ami:      .asciz "ASMEDIT_AMI"
-s_env_type:     .asciz "ASMEDIT_INSTANCE_TYPE"
+s_env_ami:      .asciz "ARMEDIT_AMI"
+s_env_type:     .asciz "ARMEDIT_INSTANCE_TYPE"
 s_type_default: .asciz "t4g.small"
 s_service:      .asciz "ec2"
 s_post:         .asciz "POST"
@@ -367,7 +367,7 @@ s_run_head:     .asciz "Action=RunInstances&Version=2016-11-15&MinCount=1&MaxCou
 s_run_type:     .asciz "&InstanceType="
 s_run_tail:     .asciz "&UserData="
 s_term_head:    .asciz "Action=TerminateInstances&Version=2016-11-15&InstanceId.1="
-s_userdata:     .asciz "#!/bin/bash\ndnf install -y docker\nsystemctl enable --now docker\ndocker run -d --restart=always --name asmedit alpine:3 sleep infinity\n"
+s_userdata:     .asciz "#!/bin/bash\ndnf install -y docker\nsystemctl enable --now docker\ndocker run -d --restart=always --name armedit alpine:3 sleep infinity\n"
 
         BSS
         .p2align 4

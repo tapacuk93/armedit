@@ -35,7 +35,7 @@ sourceSets {
 }
 
 application {
-    mainClass = 'Asmeditd'
+    mainClass = 'Armeditd'
 }
 
 run {
@@ -54,8 +54,8 @@ graalvmNative {
     }
     binaries {
         main {
-            imageName = 'asmeditd'
-            mainClass = 'Asmeditd'
+            imageName = 'armeditd'
+            mainClass = 'Armeditd'
             // No fallback image: a "native" build that silently ships a JVM
             // would defeat the point, so fail loudly instead.
             buildArgs.add('--no-fallback')

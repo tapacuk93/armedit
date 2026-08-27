@@ -3,7 +3,7 @@
  * sha256.S - SHA-256, FIPS 180-4, in software.
  *
  * The backend needs this twice over: AWS SigV4 hashes the request and derives
- * its signing key through HMAC-SHA256, and asmedit keys are hashed rather than
+ * its signing key through HMAC-SHA256, and armedit keys are hashed rather than
  * stored.  Written out longhand rather than using the ARMv8 SHA extensions, so
  * the same object code runs on the bare-metal target too.
  *

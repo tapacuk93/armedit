@@ -71,7 +71,7 @@ _main:
 
         mov     x27, x0                 /* argc/argv are unused; envp is not */
         mov     x0, x2
-        bl      SYM(env_init)           /* ASMEDIT_BACKEND / ASMEDIT_KEY */
+        bl      SYM(env_init)           /* ARMEDIT_BACKEND / ARMEDIT_KEY */
         mov     x0, x27
         bl      SYM(editor_init)
         LEA     x0, seed_text
@@ -372,10 +372,10 @@ handle_event:
         ret
 
         CSTR
-s_title:                .asciz "asmedit"
-seed_text:              .asciz "ASMEDIT SCREEN 1\nCMD+T NEW SCREEN   CMD+LEFT/RIGHT SWITCH\nCMD+DELETE CLOSE   CLICK TO PLACE THE CARET\nCMD+ENTER ASK       CMD+P REWRITE\n\nTYPE HERE.\n"
-s_view_cls:             .asciz "AsmeditView"
-s_delegate_cls:         .asciz "AsmeditDelegate"
+s_title:                .asciz "armedit"
+seed_text:              .asciz "ARMEDIT SCREEN 1\nCMD+T NEW SCREEN   CMD+LEFT/RIGHT SWITCH\nCMD+DELETE CLOSE   CLICK TO PLACE THE CARET\nCMD+ENTER ASK       CMD+P REWRITE\n\nTYPE HERE.\n"
+s_view_cls:             .asciz "ArmeditView"
+s_delegate_cls:         .asciz "ArmeditDelegate"
 t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
 t_void_id:              .asciz "v@:@"
 t_bool_id:              .asciz "c@:@"

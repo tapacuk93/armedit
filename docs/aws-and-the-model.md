@@ -9,7 +9,7 @@ it does so without ever holding the credential.
 
 ## Why a key in a prompt is a published key
 
-asmedit reaches models through aicoin, and aicoin multiplexes many users onto
+armedit reaches models through aicoin, and aicoin multiplexes many users onto
 **one shared provider API key**. That is the right design for billing — it is
 why you never need your own Anthropic key — but it has a consequence worth
 being blunt about:
@@ -47,7 +47,7 @@ loop worth intercepting: the interesting half never leaves the machine holding
 the keys.
 
 This is the same trick aicoin itself plays one level down. The proxy injects
-its own provider key so the client never has one; asmedit injects the account's
+its own provider key so the client never has one; armedit injects the account's
 AWS key so the model never has one.
 
 A plain-text action line rather than a provider's native tool-use format,
@@ -95,7 +95,7 @@ Worth stating plainly:
   repository containing instructions, those instructions can propose AWS
   actions. That is precisely why reads are the only thing that runs unattended,
   and why the deny list is absolute rather than advisory.
-- **The shared upstream key is still shared.** asmedit can keep secrets out of
+- **The shared upstream key is still shared.** armedit can keep secrets out of
   the prompt; it cannot make someone else's provider account private. Treat
   everything in a prompt as disclosed and the model's access as scoped, and
   neither assumption depends on the proxy behaving.

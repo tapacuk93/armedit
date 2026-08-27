@@ -329,7 +329,7 @@ final class Agents {
                     "%s  %s%n".formatted(Instant.now(), line),
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception x) {
-            System.out.printf("asmedit: could not record agent event: %s%n", x.getMessage());
+            System.out.printf("armedit: could not record agent event: %s%n", x.getMessage());
         }
     }
 }

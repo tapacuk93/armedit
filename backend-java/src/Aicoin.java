@@ -11,7 +11,7 @@ import java.util.Map;
  * aicoin is a proxy in front of several providers, not a Claude-only path: the
  * request keeps the provider's own path and body shape, an X-AI header names
  * which upstream to use, and the proxy injects its own paid credential and
- * bills the wallet in X-Api-Key. So asmedit holds no provider API key of any
+ * bills the wallet in X-Api-Key. So armedit holds no provider API key of any
  * kind - the per-account secret is the wallet token bound at registration.
  *
  * Claude is the default because it is what the editor is tuned for, but any

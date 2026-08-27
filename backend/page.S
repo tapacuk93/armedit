@@ -1,6 +1,6 @@
 #include "asm.inc"
 /*
- * page.S - the registration page, served at asmedit.oeaio.com.
+ * page.S - the registration page, served at armedit.oeaio.com.
  *
  * One page, no build step, no framework: it collects the two accesses an
  * account requires and shows the single key the editor will carry.  It is a
@@ -12,7 +12,7 @@ SYM(page):
         .ascii  "<!doctype html>\n"
         .ascii  "<meta charset=\"utf-8\">\n"
         .ascii  "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
-        .ascii  "<title>asmedit</title>\n"
+        .ascii  "<title>armedit</title>\n"
         .ascii  "<style>\n"
         .ascii  ":root{color-scheme:dark}\n"
         .ascii  "body{background:#141618;color:#8ae2b8;font:15px/1.6 ui-monospace,Menlo,monospace;margin:0;padding:48px 20px;display:flex;justify-content:center}\n"
@@ -33,7 +33,7 @@ SYM(page):
         .ascii  "small{color:#4a5a52;display:block;margin-top:10px;line-height:1.7}\n"
         .ascii  "</style>\n"
         .ascii  "<main>\n"
-        .ascii  "<h1>ASMEDIT</h1>\n"
+        .ascii  "<h1>ARMEDIT</h1>\n"
         .ascii  "<p class=\"sub\">A text editor in assembly. Bind your accesses once; the editor carries a single key.</p>\n"
         .ascii  "<form id=\"f\">\n"
         .ascii  "<fieldset>\n"
@@ -55,7 +55,7 @@ SYM(page):
         .ascii  "<button id=\"b\" type=\"submit\">ISSUE KEY</button>\n"
         .ascii  "</form>\n"
         .ascii  "<div id=\"out\"></div>\n"
-        .ascii  "<small>Nothing here is stored in the asmedit repository, and the key below is the only credential that ever reaches a device.</small>\n"
+        .ascii  "<small>Nothing here is stored in the armedit repository, and the key below is the only credential that ever reaches a device.</small>\n"
         .ascii  "</main>\n"
         .ascii  "<script>\n"
         .ascii  "const $=i=>document.getElementById(i),out=$(\"out\");\n"
@@ -66,7 +66,7 @@ SYM(page):
         .ascii  "   body:JSON.stringify({wallet:$(\"w\").value.trim(),aws_key:$(\"k\").value.trim(),aws_secret:$(\"s\").value.trim(),region:$(\"r\").value.trim()})});\n"
         .ascii  "  const j=await r.json();\n"
         .ascii  "  if(j.key){out.innerHTML='<span class=\"key\">'+j.key+'</span>'+\n"
-        .ascii  "   \"\\n\\nRun the editor with:\\n  export ASMEDIT_KEY=\"+j.key+\"\\n  make win\\n\\nThis key is shown once.\";}\n"
+        .ascii  "   \"\\n\\nRun the editor with:\\n  export ARMEDIT_KEY=\"+j.key+\"\\n  make win\\n\\nThis key is shown once.\";}\n"
         .ascii  "  else{out.innerHTML='<span class=\"err\">'+(j.error||\"registration failed\")+\"</span>\";}\n"
         .ascii  " }catch(x){out.innerHTML='<span class=\"err\">'+x+\"</span>\";}\n"
         .ascii  " $(\"b\").disabled=false;\n"

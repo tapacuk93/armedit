@@ -7,8 +7,8 @@
  * naming, section names and the address-of-a-symbol idiom differ.  Those three
  * differences live here and nowhere else.
  */
-#ifndef ASMEDIT_ASM_INC
-#define ASMEDIT_ASM_INC
+#ifndef ARMEDIT_ASM_INC
+#define ARMEDIT_ASM_INC
 
 #ifdef __MACH__
 # define SYM(name)  _##name
@@ -43,4 +43,4 @@
 #define GLYPH_ADV 6     /* glyph cell width including the 1px gap */
 #define IDX_SPACE 26    /* slot of ' ' in the key table */
 
-#endif /* ASMEDIT_ASM_INC */
+#endif /* ARMEDIT_ASM_INC */

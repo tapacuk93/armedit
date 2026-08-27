@@ -1,4 +1,4 @@
-# asmedit
+# armedit
 
 A text editor written in aarch64 assembly, that runs two ways:
 
@@ -18,16 +18,16 @@ an AWS credential.
 
 ```
    ┌──────────────────────┐        ┌──────────────────────┐
-   │ asmedit (hosted)     │        │ asmedit (bare metal) │
+   │ armedit (hosted)     │        │ armedit (bare metal) │
    │  macOS window / tty  │        │  own kernel, ramfb   │
    └──────────┬───────────┘        └──────────┬───────────┘
-              │      one asmedit key,         │
+              │      one armedit key,         │
               │      one protocol             │
               └───────────────┬───────────────┘
                               ▼
                    ┌──────────────────────┐
-                   │ asmeditd (Java 25)   │  the only holder of secrets
-                   │ asmedit.oeaio.com    │
+                   │ armeditd (Java 25)   │  the only holder of secrets
+                   │ armedit.oeaio.com    │
                    └───────┬──────────┬───┘
                            ▼          ▼
                  aicoin proxy       EC2
@@ -39,7 +39,7 @@ an AWS credential.
 
 ## One property
 
-A device is configured with exactly one value: **`ASMEDIT_KEY`**.
+A device is configured with exactly one value: **`ARMEDIT_KEY`**.
 
 The key issued at registration carries the address to reach the backend at —
 `<secret>@<host:port>` — so there is no second setting to get wrong and no
@@ -64,8 +64,8 @@ linker ship with Xcode.
 
 ```
 make                             # both hosted modes and the kernel
-java backend-java/src/Asmeditd.java   # the backend, straight from source
-ASMEDIT_KEY=<key> make win       # the editor, bound to that account
+java backend-java/src/Armeditd.java   # the backend, straight from source
+ARMEDIT_KEY=<key> make win       # the editor, bound to that account
 make run                         # terminal mode: make run TEXT="HELLO WORLD"
 make boot                        # boot the kernel in QEMU, with a framebuffer
 make boot-tty                    # boot it headless, serial on your terminal
@@ -121,33 +121,33 @@ Server-side settings, all environment, none committed.
 
 | variable | meaning |
 |---|---|
-| `ASMEDIT_PORT` | listen port (default 8080) |
-| `ASMEDIT_PUBLIC_ADDR` | the address to bake into issued keys |
-| `ASMEDIT_AICOIN` | aicoin proxy base URL |
-| `ASMEDIT_PROVIDER` | which provider aicoin should route to (default `anthropic`) |
-| `ASMEDIT_MODEL` | model override (default `claude-opus-5`) |
-| `ASMEDIT_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
-| `ASMEDIT_AMI` | image the account's instance runs |
-| `ASMEDIT_INSTANCE_TYPE` | default `t4g.small` |
-| `ASMEDIT_WORKSPACE` | where accounts' folders live (default `workspaces`) |
-| `ASMEDIT_S3_BUCKET` | third tier of persistence; unset means disk only |
-| `ASMEDIT_IDLE_MINUTES` | terminate an idle account's instance (default 30, 0 disables) |
-| `ASMEDIT_REAP_SECONDS` | how often to sweep for idle accounts (default 60) |
+| `ARMEDIT_PORT` | listen port (default 8080) |
+| `ARMEDIT_PUBLIC_ADDR` | the address to bake into issued keys |
+| `ARMEDIT_AICOIN` | aicoin proxy base URL |
+| `ARMEDIT_PROVIDER` | which provider aicoin should route to (default `anthropic`) |
+| `ARMEDIT_MODEL` | model override (default `claude-opus-5`) |
+| `ARMEDIT_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
+| `ARMEDIT_AMI` | image the account's instance runs |
+| `ARMEDIT_INSTANCE_TYPE` | default `t4g.small` |
+| `ARMEDIT_WORKSPACE` | where accounts' folders live (default `workspaces`) |
+| `ARMEDIT_S3_BUCKET` | third tier of persistence; unset means disk only |
+| `ARMEDIT_IDLE_MINUTES` | terminate an idle account's instance (default 30, 0 disables) |
+| `ARMEDIT_REAP_SECONDS` | how often to sweep for idle accounts (default 60) |
 
 ### Protocol
 
 What a device may say, and all it may say:
 
 ```
-POST /api/agent      X-Asmedit-Key
+POST /api/agent      X-Armedit-Key
      {mode:"agent"|"aify", screen, scroll, rows, cursor, baseline, context} -> {text}
-POST /api/session    X-Asmedit-Key -> {instance}
-POST /api/teardown   X-Asmedit-Key -> {instance:""}
-POST /api/journal    X-Asmedit-Key; {screen, op|kind, at, text|word, dx, dy} -> {ok}
-GET  /api/clouds     X-Asmedit-Key -> {bound}
-POST /api/clouds     X-Asmedit-Key; {provider, ...fields} -> {provider, complete}
-GET  /api/otp        X-Asmedit-Key -> the pad ledger for this account
-POST /api/otp/reserve X-Asmedit-Key -> {pad, bits, window}
+POST /api/session    X-Armedit-Key -> {instance}
+POST /api/teardown   X-Armedit-Key -> {instance:""}
+POST /api/journal    X-Armedit-Key; {screen, op|kind, at, text|word, dx, dy} -> {ok}
+GET  /api/clouds     X-Armedit-Key -> {bound}
+POST /api/clouds     X-Armedit-Key; {provider, ...fields} -> {provider, complete}
+GET  /api/otp        X-Armedit-Key -> the pad ledger for this account
+POST /api/otp/reserve X-Armedit-Key -> {pad, bits, window}
 ```
 
 and, from a browser rather than a device:

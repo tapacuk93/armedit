@@ -89,7 +89,7 @@ _main:
         ret
 
         CSTR
-default_msg:    .asciz "ASMEDIT"
+default_msg:    .asciz "ARMEDIT"
 
         BSS
         .p2align 4
