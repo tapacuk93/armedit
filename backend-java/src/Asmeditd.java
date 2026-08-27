@@ -62,6 +62,7 @@ public final class Asmeditd {
     private final AwsAgent agent;
     private final Journal journal;
     private final Runner runner;
+    private final Agents agents;
     private final String publicAddr;
 
     private Asmeditd() {
@@ -77,6 +78,7 @@ public final class Asmeditd {
         this.workspace = new Workspace(root, aws, env("ASMEDIT_S3_BUCKET", ""));
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
+        this.agents = new Agents(root);
         this.publicAddr = env("ASMEDIT_PUBLIC_ADDR", "");
         // Machines post their output back here, so they need an address that
         // works from outside this host.
@@ -208,6 +210,10 @@ public final class Asmeditd {
             case "/api/otp" -> routeOtp(r);
             case "/api/otp/reserve" -> routeOtpReserve(r);
             case "/api/run/result" -> routeRunResult(r);
+            case "/api/agents" -> routeAgentsList(r);
+            case "/api/agents/register" -> routeAgentRegister(r);
+            case "/api/agents/poll" -> routeAgentPoll(r);
+            case "/api/agents/result" -> routeAgentResult(r);
             default -> Res.json(404, Json.obj("error", "no such endpoint"));
         };
     }
@@ -239,6 +245,13 @@ public final class Asmeditd {
     }
 
     private void sweep(long idleMinutes) {
+        // Health is checked on the same schedule as the instance reaping, so
+        // the model's picture of what is reachable is never older than a
+        // sweep: an agent that stopped calling in is reported gone.
+        for (var a : agents.stale()) {
+            System.out.printf("asmedit: agent %s has not called in for %ds%n",
+                    a.name, a.idleMillis() / 1000);
+        }
         long limit = idleMinutes * 60_000L;
         for (var account : accounts.all()) {
             if (account.instance().isBlank() || account.idleMillis() < limit) continue;
@@ -342,6 +355,7 @@ public final class Asmeditd {
         }
         prompt.append(journal.briefing(account, screen));
         prompt.append(runner.briefing(account));
+        prompt.append(agents.briefing(account)).append('\n');
         prompt.append(account.clouds().briefing()).append('\n');
         prompt.append(Machines.briefing(account.clouds().available()));
         prompt.append(AwsAgent.briefing(account.region())).append('\n');
@@ -372,7 +386,8 @@ public final class Asmeditd {
             // account's credentials, and only the results go back upstream.
             var outcome = agent.run(account, text);
             var runs = runner.run(account, text);
-            String results = outcome.transcript() + runs.transcript();
+            var onAgents = agents.run(account, text);
+            String results = outcome.transcript() + runs.transcript() + onAgents.transcript();
             if (!results.isBlank()) {
                 String followUp = base + "\n\nYOUR REPLY:\n" + text
                         + "\n\nRESULTS:\n" + results
@@ -435,6 +450,70 @@ public final class Asmeditd {
         boolean known = runner.result(token, code, output);
         return known ? Res.json(200, Json.obj("ok", true))
                      : Res.json(404, Json.obj("error", "unknown run"));
+    }
+
+    /* -------------------------------------------------------------- agents */
+
+    /**
+     * A machine volunteering itself. The account's key authorises the
+     * registration; after that the agent has a token of its own and the key
+     * never travels again.
+     */
+    private Res routeAgentRegister(Req r) {
+        if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        var in = Json.parse(r.body());
+        var agent = agents.register(account,
+                in.getOrDefault("name", "agent"),
+                in.getOrDefault("os", "?"),
+                in.getOrDefault("arch", "?"),
+                Agents.Access.of(in.get("access")));
+        System.out.printf("asmedit: %s registered agent %s (%s %s, %s)%n",
+                account.id(), agent.name, agent.os, agent.arch, agent.access.id);
+        return Res.json(200, Json.obj("agent", agent.id, "token", agent.token,
+                "access", agent.access.id));
+    }
+
+    /** What should this machine do next? Every poll is also a sign of life. */
+    private Res routeAgentPoll(Req r) {
+        if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
+        var in = Json.parse(r.body());
+        var agent = agents.byToken(in.get("token")).orElse(null);
+        if (agent == null) return Res.json(401, Json.obj("error", "unknown agent token"));
+        var job = agents.take(agent);
+        return job == null
+                ? Res.json(200, Json.obj("job", "", "command", ""))
+                : Res.json(200, Json.obj("job", job.id, "command", job.command));
+    }
+
+    private Res routeAgentResult(Req r) {
+        if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
+        var in = Json.parse(r.body());
+        var agent = agents.byToken(in.get("token")).orElse(null);
+        if (agent == null) return Res.json(401, Json.obj("error", "unknown agent token"));
+        agent.seen();
+        agents.complete(in.getOrDefault("job", ""),
+                parseInt(in.getOrDefault("code", "-1"), -1),
+                in.getOrDefault("output", ""));
+        return Res.json(200, Json.obj("ok", true));
+    }
+
+    /** What this account has connected, and whether it is actually there. */
+    private Res routeAgentsList(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        var b = new StringBuilder("[");
+        boolean first = true;
+        for (var a : agents.of(account)) {
+            if (!first) b.append(',');
+            first = false;
+            b.append(Json.obj("name", a.name, "id", a.id, "os", a.os, "arch", a.arch,
+                    "access", a.access.id, "connected", a.connected(),
+                    "idle_seconds", a.idleMillis() / 1000));
+        }
+        b.append(']');
+        return new Res(200, "application/json", b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private Res routeSession(Req r, boolean up) {
