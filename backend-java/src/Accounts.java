@@ -65,6 +65,31 @@ final class Accounts {
         /** Called on every authorised request: this is what "in use" means. */
         void touch() { lastSeenMillis = System.currentTimeMillis(); }
 
+        private volatile String lastCategory = "";
+        private volatile int lastScreen = -1;
+        private volatile long lastAskMillis;
+        private volatile String lastModel = "";
+
+        String lastModel() { return lastModel; }
+
+        void lastModel(String m) { lastModel = m == null ? "" : m; }
+
+        /**
+         * Remember what was just asked, so a second ask about the same screen
+         * a moment later can be counted for what it probably is: the first
+         * answer not landing.
+         */
+        boolean lastAsk(String category, int screen) {
+            long now = System.currentTimeMillis();
+            boolean reask = screen == lastScreen
+                    && category.equals(lastCategory)
+                    && now - lastAskMillis < 60_000;
+            lastCategory = category;
+            lastScreen = screen;
+            lastAskMillis = now;
+            return reask;
+        }
+
         long idleMillis() { return System.currentTimeMillis() - lastSeenMillis; }
     }
 
@@ -104,6 +129,15 @@ final class Accounts {
 
     Optional<Account> byKey(String key) {
         return key == null || key.isBlank() ? Optional.empty() : Optional.ofNullable(byKey.get(key));
+    }
+
+    /**
+     * Any wallet at all, for the model catalogue's refresh. A model list is
+     * not per-account, so borrowing the first one exposes nothing.
+     */
+    String anyWallet() {
+        for (var a : byKey.values()) if (!a.wallet().isBlank()) return a.wallet();
+        return "";
     }
 
     /** Every account, for the reaper to walk. */

@@ -157,6 +157,34 @@ GET  /                registration page
 POST /api/register    {wallet, aws_key, aws_secret, region, password} -> {key}
 ```
 
+## Touch
+
+A phone has one input and five meanings, so nothing acts on touch-down: what a
+touch was is decided when the finger lifts, from how long it stayed and how far
+it went.
+
+| | |
+|---|---|
+| tap a key | type it |
+| tap text | place the caret |
+| **swipe over words** | hand them to the model — "do something with this" |
+| **swipe left / right** | the previous or next screen |
+| **long press a word** | open a screen *about that word* |
+| long press a key | open a screen about the keyboard |
+| long press empty space | ASK and REWRITE, under the finger |
+| two fingers | paste |
+
+Selections snap outwards to whole words, because a swipe is a gesture and
+gestures are not precise: the user meant the words they dragged across, not the
+two characters their finger started and stopped on.
+
+Screens have a **subject**. Long-pressing `build` opens a screen bound to that
+word, and the subject travels with every request from it — so "make it faster"
+typed there is understood to be about the build, without restating it. The
+swipe and what the model did with it both go into the file history: a screen
+that changed says what it says *now*, but only the journal says the user swiped
+these words and asked.
+
 ## Which model, and which cloud
 
 **The server picks the model.** Most presses of `Cmd`+`P` are small — a list to
@@ -176,6 +204,20 @@ The backend re-asks the named model, carrying the transcript and the reason. A
 handoff is a routing decision made with more information than the router had —
 which is why it is allowed, and why it is capped at two per exchange, because
 it costs another call.
+
+**The list of models is asked for, not assumed.** aicoin forwards
+`GET /v1/models` to each provider, and that path is free, so the backend
+refreshes its catalogue on a timer without spending coins on bookkeeping. A
+hardcoded list is wrong the day a provider ships something — and wrong
+silently, with the router still choosing between three names while a fourth
+sits unused.
+
+**Each model is told what the others are for, and what the record says.**
+The record is behaviour, not grades: nobody scores the answers, so what gets
+counted is how often a model hands this kind of work to someone else, how often
+the user comes straight back and asks again, how long it took, and how often it
+failed. A handoff is the strongest signal there, because it is the model's own
+judgement that it was the wrong choice. `GET /api/stats` shows the table.
 
 **The account picks the cloud, or the model does.** The homepage takes
 credentials for AWS, Hetzner, DigitalOcean, GCP and Azure. With more than one

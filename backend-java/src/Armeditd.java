@@ -63,6 +63,8 @@ public final class Armeditd {
     private final Journal journal;
     private final Runner runner;
     private final Agents agents;
+    private final ModelStats stats = new ModelStats();
+    private final Catalogue catalogue;
     private final String publicAddr;
 
     private Armeditd() {
@@ -79,6 +81,8 @@ public final class Armeditd {
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
         this.agents = new Agents(root);
+        this.catalogue = new Catalogue(env("ARMEDIT_AICOIN", "http://127.0.0.1:8081"),
+                java.util.List.of("anthropic", "openai", "google", "mistral", "cohere"));
         this.publicAddr = env("ARMEDIT_PUBLIC_ADDR", "");
         // Machines post their output back here, so they need an address that
         // works from outside this host.
@@ -110,6 +114,9 @@ public final class Armeditd {
         int port = Integer.parseInt(env("ARMEDIT_PORT", "8080"));
         var app = new Armeditd();
         app.startReaper();
+        // Ask the proxy what it can reach rather than assuming: a hardcoded
+        // model list is wrong the day a provider ships, and wrong silently.
+        app.catalogue.start(app.accounts::anyWallet);
 
         // One thread accepting, a small pool reading and writing, and virtual
         // threads doing the work. Nothing that can block belongs on the loops.
@@ -211,6 +218,7 @@ public final class Armeditd {
             case "/api/otp/reserve" -> routeOtpReserve(r);
             case "/api/run/result" -> routeRunResult(r);
             case "/api/agents" -> routeAgentsList(r);
+            case "/api/stats" -> routeStats(r);
             case "/api/agents/register" -> routeAgentRegister(r);
             case "/api/agents/poll" -> routeAgentPoll(r);
             case "/api/agents/result" -> routeAgentResult(r);
@@ -384,19 +392,51 @@ public final class Armeditd {
         prompt.append(AwsAgent.briefing(account.region())).append('\n');
         prompt.append("CURRENT SCREEN:\n").append(context);
 
-        // The router picks a starting model from the state of the screen; the
-        // model may hand over once it knows more than the router did.
+        // What kind of work is this, and who has done it well before?
+        var category = ModelStats.classify(mode, context);
+        var names = new java.util.ArrayList<String>();
+        for (var t : Router.TIERS) names.add(t.name());
+
         var tier = Router.choose(mode, context, baseline);
-        String base = prompt.toString();
+        String preferred = stats.best(category, names);
+        if (preferred != null && !preferred.equals(tier.name())) {
+            var better = Router.byName(preferred);
+            // Only let the record override upwards from the cheapest choice:
+            // a model with a good record on this category earns the work, but
+            // a single bad run should not strand everything on the big model.
+            if (better != null && stats.of(preferred, category).calls() >= 3) tier = better;
+        }
+
+        // Each model is told what the others are for, and what the record
+        // says about them, so a handoff is a decision rather than a guess.
+        String base = prompt.toString()
+                + "\n\n" + catalogue.briefing()
+                + stats.briefing(names, category);
+
+        // A second ask about the same screen within a minute is rarely a
+        // compliment to the answer that came first, so it counts against
+        // whoever gave it - not against whoever is about to try again.
+        if (account.lastAsk(category.id, screen) && !account.lastModel().isBlank()) {
+            stats.reasked(account.lastModel(), category);
+        }
 
         try {
             String text = "";
             for (int hop = 0; hop <= Router.MAX_HANDOFFS; hop++) {
-                text = aicoin.ask(account.wallet(), tier,
-                        base + "\n\n" + Router.briefing(tier), 16000);
+                long began = System.currentTimeMillis();
+                try {
+                    text = aicoin.ask(account.wallet(), tier,
+                            base + "\n\n" + Router.briefing(tier), 16000);
+                } catch (Exception inner) {
+                    stats.failed(tier.name(), category);
+                    throw inner;
+                }
+                stats.called(tier.name(), category, System.currentTimeMillis() - began, text.length());
 
                 var handoff = Router.requested(text);
                 if (handoff == null || hop == Router.MAX_HANDOFFS) break;
+                stats.handedAway(tier.name(), category);
+                stats.handedTo(handoff.to().name(), category);
                 System.out.printf("armedit: %s handing %s -> %s (%s)%n",
                         account.id(), tier.name(), handoff.to().name(), handoff.reason());
                 base = base + "\n\n" + "%s looked at this and handed it to you: %s"
@@ -419,6 +459,7 @@ public final class Armeditd {
             }
 
             account.otp().account((long) text.length() * 8);
+            account.lastModel(tier.name());
             if ("swipe".equals(mode) && !selection.isBlank()) {
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "ai-swipe",
@@ -543,6 +584,20 @@ public final class Armeditd {
         }
         b.append(']');
         return new Res(200, "application/json", b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    /**
+     * What the record says. Behaviour, not grades: nobody scores the answers,
+     * so this counts handoffs, re-asks, failures and latency and orders by
+     * them.
+     */
+    private Res routeStats(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        var body = "{\"models\":" + stats.asJson()
+                + ",\"catalogue\":" + catalogue.models().size()
+                + ",\"catalogue_error\":\"" + Json.escape(catalogue.lastError()) + "\"}";
+        return new Res(200, "application/json", body.getBytes(StandardCharsets.UTF_8));
     }
 
     private Res routeSession(Req r, boolean up) {
