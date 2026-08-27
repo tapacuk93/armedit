@@ -109,18 +109,8 @@ fwcfg_find_file:
         ldp     x29, x30, [sp], #48
         ret
 
-/* str_eq - x0, x1 NUL-terminated; w0 = 1 if equal, 0 otherwise. */
-        .globl  str_eq
-str_eq:
-1:      ldrb    w2, [x0], #1
-        ldrb    w3, [x1], #1
-        cmp     w2, w3
-        b.ne    2f
-        cbnz    w2, 1b
-        mov     w0, #1
-        ret
-2:      mov     w0, #0
-        ret
+/* str_eq comes from net/str.S now that the editor core is linked in here too;
+   this file carried its own copy back when the kernel was only a console. */
 
 /*
  * ramfb_init - point the host's scanout at our buffer.

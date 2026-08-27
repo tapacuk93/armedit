@@ -99,6 +99,8 @@
 #define EDS_COLOUR      24
 #define EDS_SEL_A       28      /* what the user swiped over: first byte  */
 #define EDS_SEL_B       32      /* ... and one past the last              */
+#define EDS_BUSY        36      /* waiting on the backend: no caret, a mark */
+#define EDS_CARET       40      /* the blink phase, driven by the front end */
 #define EDS_SZ          48
 
 #endif

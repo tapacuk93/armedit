@@ -17,9 +17,13 @@
  * ->
  *   {"text":"<what came back>"}
  *
- * "agent" appends the answer under a marker; "aify" drops it straight in at
- * the caret, where the user pressed the key.  Neither one removes text: an
- * empty or missing reply leaves the screen exactly as it was.
+ * Cmd+Enter appends: the answer goes on the end and everything stays.
+ * Cmd+P replaces: the instruction is consumed by its own answer, so writing
+ * "c hello world" and pressing it leaves the program where the words were,
+ * not the words followed by the program.  What gets replaced is the selection
+ * if there is one, otherwise the line the caret is on - never the screen.
+ *
+ * An empty or missing reply changes nothing either way.
  *
  * scroll/rows tell the backend which part of the text the user is actually
  * looking at, and baseline is what the text was the last time the backend saw
@@ -46,6 +50,14 @@
 #define HDRS_SZ         512
 #define REPLY_SZ        8192
 #define KEY_SZ          128
+
+/* What the fetch half leaves behind for the apply half. */
+#define ST_OK           0
+#define ST_NOKEY        1
+#define ST_BADADDR      2
+#define ST_UNREACHABLE  3
+#define ST_BADREPLY     4
+#define ST_EMPTY        5
 
         CODE
         .p2align 2
@@ -113,17 +125,55 @@ resolve_backend:
  * Called when the editor reports Cmd+Enter.  Any failure is reported into the
  * buffer itself rather than silently swallowed.
  */
+/*
+ * The request and its result are two jobs, and they belong on different
+ * threads.  backend_fetch talks to the network and writes only into its own
+ * buffers; backend_apply is the half that touches the screen's text, and it
+ * must run where the drawing runs.  Doing both on a background thread would
+ * mean rewriting the buffer underneath a redraw that is reading it.
+ */
         .globl  SYM(backend_submit)
 SYM(backend_submit):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     w19, w0
+        bl      SYM(backend_fetch)
+        mov     w0, w19
+        bl      SYM(backend_apply)
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+        .globl  SYM(backend_fetch)
+SYM(backend_fetch):
         stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
         str     x23, [sp, #48]
-        mov     w23, w0                 /* ED_SUBMIT or ED_AIFY */
+        mov     w23, w0                 /* ED_SUBMIT, ED_AIFY or ED_SWIPE */
+        LEA     x9, fetch_status        /* what apply will have to say */
+        mov     w10, #ST_NOKEY
+        str     w10, [x9]
         bl      SYM(editor_cursor_get)  /* where the user was when they asked */
         LEA     x9, saved_cursor
         str     w0, [x9]
+
+        cmp     w23, #ED_AIFY           /* what will the answer replace? */
+        b.ne    20f
+        bl      SYM(editor_selection)
+        cmp     w0, w1
+        b.lo    19f                     /* a selection, if they made one */
+        LEA     x0, region_a            /* otherwise the line they are on */
+        LEA     x1, region_b
+        bl      SYM(editor_line_bounds)
+        b       20f
+19:     LEA     x9, region_a
+        str     w0, [x9]
+        LEA     x9, region_b
+        str     w1, [x9]
+20:
 
 /* ---- one property: the key, which carries where to reach the backend ---- */
         bl      resolve_backend         /* x0 = address, x1 = key, or x1 = 0 */
@@ -139,15 +189,22 @@ SYM(backend_submit):
         add     x2, x21, #REQ_PORT
         bl      SYM(net_parse_addr)
         tbz     w0, #31, 3f
-        LEA     x0, m_badaddr
-        bl      SYM(editor_insert_str)
+        LEA     x9, fetch_status
+        mov     w10, #ST_BADADDR
+        str     w10, [x9]
         b       .Lsub_out
 3:
 
 /* ---- {"screen":N,"context":"..."} --------------------------------------- */
-        LEA     x0, ctxbuf
+        LEA     x0, rawbuf
         mov     w1, #CTX_SZ
         bl      SYM(editor_context)
+        LEA     x0, ctxbuf              /* private lines lose their content
+                                           here, on the device, before any of
+                                           this is a request */
+        LEA     x1, rawbuf
+        mov     w2, #CTX_SZ
+        bl      SYM(str_redact)
 
         LEA     x22, bodybuf
         mov     x0, x22
@@ -203,6 +260,48 @@ SYM(backend_submit):
         mov     x0, x22
         bl      SYM(u32_dec)
         mov     x22, x0
+        mov     x0, x22                 /* what this screen is bound to, if
+                                           anything: a widget's screen takes
+                                           behaviour, a word's takes work */
+        LEA     x1, s_json_subj
+        bl      SYM(str_copy)
+        mov     x22, x0
+        LEA     x0, subjtext
+        mov     w1, #64
+        bl      SYM(editor_subject)
+        mov     x0, x22
+        LEA     x1, subjtext
+        mov     w2, #128
+        bl      SYM(json_escape)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_quote
+        bl      SYM(str_copy)
+        mov     x22, x0
+
+        cmp     w23, #ED_AIFY           /* Cmd+P carries what it will replace */
+        b.ne    14f
+        mov     x0, x22
+        LEA     x1, s_json_instr
+        bl      SYM(str_copy)
+        mov     x22, x0
+        LEA     x9, region_a
+        ldr     w0, [x9]
+        LEA     x9, region_b
+        ldr     w1, [x9]
+        LEA     x2, selbuf
+        mov     w3, #CTX_SZ
+        bl      SYM(editor_range_text)
+        mov     x0, x22
+        LEA     x1, selbuf
+        mov     w2, #(BODY_SZ / 4)
+        bl      SYM(json_escape)
+        mov     x22, x0
+        mov     x0, x22
+        LEA     x1, s_json_quote
+        bl      SYM(str_copy)
+        mov     x22, x0
+14:
         cmp     w23, #ED_SWIPE          /* a swipe carries what it covered */
         b.ne    13f
         mov     x0, x22
@@ -279,19 +378,21 @@ SYM(backend_submit):
         bl      SYM(http_request)
         cmp     w0, #0
         b.gt    4f
-        LEA     x0, m_unreachable
-        bl      SYM(editor_insert_str)
+        LEA     x9, fetch_status
+        mov     w10, #ST_UNREACHABLE
+        str     w10, [x9]
         b       .Lsub_out
 4:
 
-/* ---- {"text":"..."} back into the buffer -------------------------------- */
+/* ---- {"text":"..."} into a buffer of our own, and no further ------------ */
         LEA     x0, respbuf
         bl      SYM(http_body)
         LEA     x1, s_key_text
         bl      SYM(json_find)
         cbnz    x0, 4f
-        LEA     x0, m_badreply
-        bl      SYM(editor_insert_str)
+        LEA     x9, fetch_status
+        mov     w10, #ST_BADREPLY
+        str     w10, [x9]
         b       .Lsub_out
 4:      mov     x1, x0
         LEA     x0, replybuf
@@ -299,22 +400,75 @@ SYM(backend_submit):
         bl      SYM(json_unescape)
         LEA     x9, replybuf            /* nothing came back: change nothing */
         ldrb    w10, [x9]
+        LEA     x9, fetch_status
         cbnz    w10, 5f
-        LEA     x0, m_empty
-        bl      SYM(editor_insert_str)
+        mov     w11, #ST_EMPTY
+        str     w11, [x9]
         b       .Lsub_out
-5:      cmp     w23, #ED_AIFY
-        b.ne    6f
-        LEA     x0, saved_cursor        /* aify: land it exactly where the key
-                                           was pressed, leaving the rest of the
-                                           screen alone */
-        ldr     w0, [x0]
-        bl      SYM(editor_cursor_set)
-        LEA     x0, replybuf
+5:      str     wzr, [x9]               /* ST_OK */
+
+.Lsub_out:
+        ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * backend_apply - w0 = the mode that was asked.
+ *
+ * The half that touches the text, and the only half that may: it runs where
+ * the drawing runs.  Cmd+P replaces what asked for it, Cmd+Enter and a swipe
+ * append.  Every failure says what happened in the buffer rather than
+ * vanishing, except a missing key - that one is meant to do nothing at all.
+ */
+        .globl  SYM(backend_apply)
+SYM(backend_apply):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+        LEA     x9, fetch_status
+        ldr     w20, [x9]
+
+        cmp     w20, #ST_OK
+        b.eq    .Lap_ok
+        cmp     w20, #ST_NOKEY
+        b.eq    .Lap_out                /* no key: these keys do nothing */
+        cmp     w20, #ST_BADADDR
+        b.ne    1f
+        LEA     x0, m_badaddr
+        b       .Lap_say
+1:      cmp     w20, #ST_UNREACHABLE
+        b.ne    2f
+        LEA     x0, m_unreachable
+        b       .Lap_say
+2:      cmp     w20, #ST_BADREPLY
+        b.ne    3f
+        LEA     x0, m_badreply
+        b       .Lap_say
+3:      LEA     x0, m_empty
+.Lap_say:
         bl      SYM(editor_insert_str)
+        b       .Lap_out
+
+.Lap_ok:
+        cmp     w19, #ED_AIFY
+        b.ne    4f
+        LEA     x9, region_a            /* Cmd+P: the answer takes the place of
+                                           the instruction that asked for it */
+        ldr     w0, [x9]
+        LEA     x9, region_b
+        ldr     w1, [x9]
+        LEA     x2, replybuf
+        bl      SYM(editor_replace)
+        bl      SYM(editor_selection_clear)
         bl      SYM(editor_mark_synced)
-        b       .Lsub_out
-6:      LEA     x0, m_reply_open        /* agent: append it below */
+        b       .Lap_out
+4:      bl      SYM(editor_length)      /* Cmd+Enter: on the end, keeping all
+                                           of what is already there */
+        bl      SYM(editor_cursor_set)
+        LEA     x0, m_reply_open
         bl      SYM(editor_insert_str)
         LEA     x0, replybuf
         bl      SYM(editor_insert_str)
@@ -322,11 +476,9 @@ SYM(backend_submit):
         bl      SYM(editor_insert_str)
         bl      SYM(editor_mark_synced)
 
-.Lsub_out:
-        ldr     x23, [sp, #48]
-        ldp     x21, x22, [sp, #32]
+.Lap_out:
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #64
+        ldp     x29, x30, [sp], #48
         ret
 
 /*
@@ -428,6 +580,8 @@ s_mode_agent:       .asciz "agent"
 s_mode_aify:        .asciz "aify"
 s_mode_swipe:       .asciz "swipe"
 s_json_sel:         .asciz ",\"selection\":\""
+s_json_instr:       .asciz ",\"instruction\":\""
+s_json_subj:        .asciz ",\"subject\":\""
 s_json_quote:       .asciz "\""
 s_json_head:        .asciz "\",\"screen\":"
 s_json_scroll:      .asciz ",\"scroll\":"
@@ -450,9 +604,14 @@ m_empty:            .asciz "\nEMPTY REPLY. NOTHING CHANGED.\n"
 req:        .space 80
 saved_cursor: .space 8
 keybuf:     .space KEY_SZ           /* the key with any @address stripped off */
+rawbuf:     .space CTX_SZ           /* the screen as it is, before redaction */
 ctxbuf:     .space CTX_SZ
 basebuf:    .space CTX_SZ
 selbuf:     .space CTX_SZ
+region_a:   .space 8
+region_b:   .space 8
+fetch_status: .space 8
+subjtext:   .space 64
 bodybuf:    .space BODY_SZ
 hdrbuf:     .space HDRS_SZ
 respbuf:    .space RESP_SZ

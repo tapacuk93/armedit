@@ -237,6 +237,108 @@ SYM(base64_encode):
         ret
 
 /*
+ * str_redact - copy x1 to x0, keeping private lines out of it.
+ *   x0 = destination, x1 = source, w2 = capacity; out w0 = bytes written
+ *
+ * A line beginning with $$name is a definition: the name is a reference and
+ * the rest of the line is its content.  The name goes out, the content does
+ * not.  So
+ *
+ *     $$apikey sk-live-8f3a...
+ *
+ * leaves here as
+ *
+ *     $$apikey
+ *
+ * which tells the far side that the thing exists and belongs on that line,
+ * and nothing whatever about what it is.  References used inline elsewhere in
+ * the text are already only names, so they pass through untouched.
+ *
+ * This runs on the device, before anything is sent.  That is the whole point:
+ * a rule enforced at the other end is a promise, and a promise is not a
+ * mechanism.
+ */
+        .globl  SYM(str_redact)
+SYM(str_redact):
+        mov     x3, x0                  /* where we started */
+        sub     w2, w2, #1              /* room for the NUL */
+        mov     w4, #0                  /* bytes written */
+
+.Lline:
+        ldrb    w5, [x1]
+        cbz     w5, .Lred_done
+
+        ldrb    w6, [x1, #1]            /* does this line open with "$$"? */
+        cmp     w5, #'$'
+        b.ne    .Lcopy_line
+        cmp     w6, #'$'
+        b.ne    .Lcopy_line
+
+        /* Copy the reference itself: "$$" and the name that follows. */
+        cmp     w4, w2
+        b.hs    .Lred_done
+        strb    w5, [x0, w4, uxtw]
+        add     w4, w4, #1
+        cmp     w4, w2
+        b.hs    .Lred_done
+        strb    w6, [x0, w4, uxtw]
+        add     w4, w4, #1
+        add     x1, x1, #2
+1:      ldrb    w5, [x1]
+        cbz     w5, .Lred_done
+        cmp     w5, #'\n'
+        b.eq    .Lred_eol
+        sub     w6, w5, #'0'            /* names are letters, digits and _ */
+        cmp     w6, #9
+        b.ls    2f
+        orr     w6, w5, #0x20
+        sub     w6, w6, #'a'
+        cmp     w6, #25
+        b.ls    2f
+        cmp     w5, #'_'
+        b.ne    .Lskip_rest             /* the name ended: drop the content */
+2:      cmp     w4, w2
+        b.hs    .Lred_done
+        strb    w5, [x0, w4, uxtw]
+        add     w4, w4, #1
+        add     x1, x1, #1
+        b       1b
+
+.Lskip_rest:                            /* everything up to the newline goes */
+        ldrb    w5, [x1]
+        cbz     w5, .Lred_done
+        cmp     w5, #'\n'
+        b.eq    .Lred_eol
+        add     x1, x1, #1
+        b       .Lskip_rest
+
+.Lred_eol:
+        cmp     w4, w2
+        b.hs    .Lred_done
+        mov     w5, #'\n'
+        strb    w5, [x0, w4, uxtw]
+        add     w4, w4, #1
+        add     x1, x1, #1
+        b       .Lline
+
+.Lcopy_line:                            /* an ordinary line, as it stands */
+        ldrb    w5, [x1]
+        cbz     w5, .Lred_done
+        cmp     w4, w2
+        b.hs    .Lred_done
+        strb    w5, [x0, w4, uxtw]
+        add     w4, w4, #1
+        add     x1, x1, #1
+        cmp     w5, #'\n'
+        b.eq    .Lline
+        b       .Lcopy_line
+
+.Lred_done:
+        strb    wzr, [x0, w4, uxtw]
+        mov     w0, w4
+        ret
+
+/*
  * str_to_u32 - read a decimal number from x0, out w0 (0 if there is none).
  */
         .globl  SYM(str_to_u32)

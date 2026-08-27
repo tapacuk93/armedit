@@ -23,10 +23,11 @@ kmain:
         bl      console_init
         tbnz    w0, #31, .Lno_display
 
-        LEA     x0, m_banner
-        bl      console_puts
         LEA     x0, m_ready
         bl      platform_puts
+        LEA     x0, m_keys
+        bl      platform_puts
+        bl      kedit_run               /* the editor is the operating system */
         b       .Lidle
 
 .Lno_display:
@@ -40,4 +41,4 @@ kmain:
 m_boot:   .asciz "armedit: boot\n"
 m_ready:  .asciz "armedit: display up\n"
 m_nofb:   .asciz "armedit: no framebuffer on this machine, serial only\n"
-m_banner: .asciz "ARMEDIT KERNEL\nHELLO WORLD\nBARE METAL AARCH64.\nNO OS UNDER THIS."
+m_keys:   .asciz "armedit: type into the display window. Ctrl stands in for Cmd:\n  Ctrl+T new screen   Ctrl+left/right switch   Ctrl+H close\n  Ctrl+P rewrite      Ctrl+J hand over        Ctrl+0..9 colour\n"

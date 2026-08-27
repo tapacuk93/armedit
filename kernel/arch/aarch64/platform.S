@@ -63,12 +63,37 @@ platform_puts:
 
 /*
  * platform_getc - one byte from the console, or -1 if none is waiting.
- * Nothing calls this yet; it is here because the contract names it and a
- * kernel that cannot be typed into is only half a kernel.
+ * The editor polls this rather than blocking on it, because a blocked kernel
+ * is a kernel whose caret has stopped for the wrong reason.
  */
         .globl  platform_getc
 platform_getc:
         b       uart_getc
+
+/*
+ * platform_ticks - milliseconds since the machine started.
+ *
+ * The editor needs this for one thing only: deciding when the caret has been
+ * on long enough. That is a small purpose for a port contract entry, but the
+ * alternative is a caret that blinks at whatever rate the key-polling loop
+ * happens to run at, which is to say a different rate on every machine.
+ *
+ * The generic timer is architectural on aarch64, so this is one of the few
+ * places where the port layer gets an easy answer. A port to a CPU without
+ * one counts something else and scales it the same way.
+ */
+        .globl  platform_ticks
+platform_ticks:
+        mrs     x0, cntvct_el0
+        mrs     x1, cntfrq_el0
+        cbz     x1, 1f
+        mov     x2, #1000
+        mul     x0, x0, x2
+        udiv    x0, x0, x1
+        ret
+1:      mov     x0, #0                  /* no timer: a caret that never blinks
+                                           beats a division by zero */
+        ret
 
         .section .bss
         .p2align 4

@@ -97,6 +97,8 @@ _main:
         ADDM    x27, s_keyDown, view_key_down, t_void_id
         ADDM    x27, s_performKeyEquivalent, view_perform_key_equiv, t_bool_id
         ADDM    x27, s_acceptsFirstResponder, view_accepts_first, t_bool
+        ADDM    x27, s_armeditFinish, view_armedit_finish, t_void
+        ADDM    x27, s_armeditBlink, view_armedit_blink, t_void_id
         ADDM    x27, s_mouseDown, view_mouse_down, t_void_id
         mov     x0, x27
         bl      _objc_registerClassPair
@@ -139,6 +141,24 @@ _main:
 
         MSG1    x20, s_setContentView, x26
         MSG1    x20, s_makeFirstResponder, x26
+        LEA     x9, view_slot           /* app_redraw needs to find it later */
+        str     x26, [x9]
+
+        CLS     s_NSTimer               /* half a second, forever: the caret */
+        mov     x27, x0
+        LEA     x0, s_armeditBlink
+        bl      _sel_registerName
+        mov     x28, x0
+        LEA     x0, s_scheduledTimer
+        bl      _sel_registerName
+        mov     x1, x0
+        mov     x2, x26                 /* target: the view */
+        mov     x3, x28                 /* selector: armeditBlink: */
+        mov     x4, #0                  /* no userInfo */
+        mov     x5, #1                  /* repeats */
+        fmov    d0, #0.5
+        mov     x0, x27
+        bl      _objc_msgSend
 
 /* -------------------------------- a delegate, so closing the window quits us */
         CLS     s_NSObject
@@ -303,6 +323,80 @@ delegate_should_terminate:
         ret
 
 /*
+ * app_finish - called from the background thread when the answer is in.
+ *
+ * Everything after this has to happen where the drawing happens, so it is
+ * handed to the main thread rather than done here.  performSelectorOnMainThread
+ * is the platform's own way of saying that, and it needs no queue symbol.
+ */
+        .p2align 2
+        .globl  SYM(app_finish)
+SYM(app_finish):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        LEA     x9, view_slot
+        ldr     x19, [x9]
+        cbz     x19, 1f
+        LEA     x0, s_armeditFinish     /* the selector to run over there */
+        bl      _sel_registerName
+        mov     x20, x0
+        LEA     x0, s_performOnMain
+        bl      _sel_registerName
+        mov     x1, x0
+        mov     x2, x20
+        mov     x3, #0                  /* no argument */
+        mov     x4, #0                  /* do not wait */
+        mov     x0, x19
+        bl      _objc_msgSend
+1:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/* - (void)armeditFinish - the main-thread half, installed on the view class */
+        .p2align 2
+view_armedit_finish:
+        b       SYM(async_finish)
+
+/*
+ * - (void)armeditBlink - the caret's phase, twice a second.
+ *
+ * The editor decides whether anything changed: while a request is out there is
+ * no caret to blink, so it says no and the screen is left alone.  A blink
+ * during a wait would say "ready for you" at exactly the wrong moment.
+ */
+        .p2align 2
+view_armedit_blink:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+        bl      SYM(editor_caret_blink)
+        cbz     w0, 1f
+        MSG1    x19, s_setNeedsDisplay, #1
+1:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/*
+ * app_redraw - what async.S calls when the screen should be repainted.
+ * Always on the main thread: the background half hops back before calling it.
+ */
+        .p2align 2
+        .globl  SYM(app_redraw)
+SYM(app_redraw):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        LEA     x9, view_slot
+        ldr     x19, [x9]
+        cbz     x19, 1f
+        MSG1    x19, s_setNeedsDisplay, #1
+1:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/*
  * handle_event - x0 = the view, x1 = NSEvent.
  * Translates one AppKit key event into the editor's own key encoding, feeds it
  * in, and asks for a redraw.
@@ -360,8 +454,10 @@ handle_event:
         orr     w23, w23, #MOD_SHIFT
 5:      mov     w0, w23
         bl      SYM(editor_key)
-        cbz     w0, 6f                  /* ED_SUBMIT or ED_AIFY: go to the backend */
-        bl      SYM(backend_submit)
+        cbz     w0, 6f                  /* ED_SUBMIT or ED_AIFY: go to the backend,
+                                           off this thread so the window keeps
+                                           drawing while it waits */
+        bl      SYM(async_ask)
 6:      MSG1    x19, s_setNeedsDisplay, #1
 
 .Lhe_out:
@@ -380,6 +476,12 @@ t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
 t_void_id:              .asciz "v@:@"
 t_bool_id:              .asciz "c@:@"
 t_bool:                 .asciz "c@:"
+t_void:                 .asciz "v@:"
+s_armeditFinish:        .asciz "armeditFinish"
+s_armeditBlink:         .asciz "armeditBlink:"
+s_NSTimer:              .asciz "NSTimer"
+s_scheduledTimer:       .asciz "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"
+s_performOnMain:        .asciz "performSelectorOnMainThread:withObject:waitUntilDone:"
 s_NSApplication:        .asciz "NSApplication"
 s_NSWindow:             .asciz "NSWindow"
 s_NSString:             .asciz "NSString"
@@ -416,3 +518,4 @@ s_mouseDown:            .asciz "mouseDown:"
 s_locationInWindow:     .asciz "locationInWindow"
 
         .zerofill __DATA,__bss,pixels,(WIN_W*WIN_H*4),4
+        .zerofill __DATA,__bss,view_slot,8,3

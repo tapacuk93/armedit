@@ -578,7 +578,7 @@ view_touches_ended:
         cmp     w0, w1
         b.hs    1f
         mov     w0, #ED_SWIPE
-        bl      SYM(backend_submit)
+        bl      SYM(async_ask)
         bl      SYM(editor_selection_clear)
         b       .Lended_redraw
 
@@ -617,7 +617,7 @@ view_touches_ended:
         mov     w0, #ED_SUBMIT
         mov     w1, #ED_AIFY
         csel    w0, w0, w1, eq
-        bl      SYM(backend_submit)
+        bl      SYM(async_ask)
         LEA     x9, press_menu          /* the menu goes once it is used */
         ldr     w0, [x9]
         cbz     w0, .Lended_redraw
@@ -793,6 +793,24 @@ paste_from_board:
         .p2align 2
 view_yes:
         mov     w0, #1
+        ret
+
+/*
+ * app_redraw - what async.S calls when the screen should be repainted.
+ * Always on the main thread: the background half hops back before calling it.
+ */
+        .p2align 2
+        .globl  SYM(app_redraw)
+SYM(app_redraw):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        LEA     x9, view_slot
+        ldr     x19, [x9]
+        cbz     x19, 1f
+        MSG0    x19, s_setNeedsDisplay
+1:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
         ret
 
         CSTR

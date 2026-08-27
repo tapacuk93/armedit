@@ -71,6 +71,8 @@ SYM(editor_init):
         mov     w10, #ED_SCALE
         str     w10, [x9, #EDS_SCALE]
         str     wzr, [x9, #EDS_COLOUR]
+        mov     w10, #1                 /* a caret, until something blinks it */
+        str     w10, [x9, #EDS_CARET]
         LEA     x0, ed_screens
         str     wzr, [x0, #SCR_LEN_OFF]
         str     wzr, [x0, #SCR_CUR_OFF]
@@ -679,6 +681,172 @@ ed_copy_bounded:
 2:      strb    wzr, [x0, w3, uxtw]
 3:      ret
 
+/*
+ * editor_busy - w0 = 1 while a request is in flight, 0 when it is done.
+ *
+ * A caret blinking away while the far side thinks says "type something", which
+ * is the wrong thing to say. So while this is set the caret simply stops -
+ * still visible, still where the answer will land, just not blinking. Nothing
+ * else is drawn to announce the wait: a marker in the text would be one more
+ * thing to take back out again when the answer arrives.
+ */
+        .globl  SYM(editor_busy)
+SYM(editor_busy):
+        LEA     x9, ed_state
+        str     w0, [x9, #EDS_BUSY]
+        mov     w10, #1                 /* coming back from a wait, show the
+                                           caret at once rather than on the
+                                           next half-second */
+        str     w10, [x9, #EDS_CARET]
+        ret
+
+/*
+ * editor_caret_blink - flip the caret's phase, and say whether to redraw.
+ *   out w0 = 1 when something changed on screen
+ *
+ * The front end calls this on a timer.  While a request is out there is no
+ * caret to blink, so it reports no change and the screen is left alone - a
+ * blink during a wait would be exactly the wrong signal.
+ */
+        .globl  SYM(editor_caret_blink)
+SYM(editor_caret_blink):
+        LEA     x9, ed_state
+        ldr     w10, [x9, #EDS_BUSY]
+        cbz     w10, 1f
+        mov     w0, #0
+        ret
+1:      ldr     w10, [x9, #EDS_CARET]
+        eor     w10, w10, #1
+        str     w10, [x9, #EDS_CARET]
+        mov     w0, #1
+        ret
+
+/*
+ * editor_line_bounds - the line the caret is on.
+ *   x0 = out first byte, x1 = out one past the last
+ *
+ * This is what Cmd+P replaces when nothing is selected: the user typed an
+ * instruction on a line, and the answer takes its place.
+ */
+        .globl  SYM(editor_line_bounds)
+SYM(editor_line_bounds):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     x19, x0
+        mov     x20, x1
+        bl      ed_cur
+        ldr     w9, [x0, #SCR_LEN_OFF]
+        ldr     w10, [x0, #SCR_CUR_OFF]
+        add     x11, x0, #SCR_TEXT_OFF
+        cmp     w10, w9
+        csel    w10, w10, w9, lo
+
+        mov     w12, w10                /* back to the start of the line */
+1:      cbz     w12, 2f
+        sub     w13, w12, #1
+        ldrb    w14, [x11, w13, uxtw]
+        cmp     w14, #'\n'
+        b.eq    2f
+        sub     w12, w12, #1
+        b       1b
+2:      mov     w13, w10                /* forward to the end of it */
+3:      cmp     w13, w9
+        b.hs    4f
+        ldrb    w14, [x11, w13, uxtw]
+        cmp     w14, #'\n'
+        b.eq    4f
+        add     w13, w13, #1
+        b       3b
+4:      str     w12, [x19]
+        str     w13, [x20]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
+ * editor_replace - w0 = first byte, w1 = one past the last, x2 = new text.
+ *
+ * Cut the range out, put the text in its place, and leave the caret at the
+ * end of what was inserted.  Everything either side of the range is
+ * untouched, which is the difference between replacing an instruction and
+ * wiping a screen.
+ */
+        .globl  SYM(editor_replace)
+SYM(editor_replace):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     w19, w0
+        mov     w20, w1
+        mov     x21, x2
+
+        bl      ed_cur
+        mov     x22, x0
+        ldr     w9, [x22, #SCR_LEN_OFF]
+        cmp     w20, w9                 /* clamp to what is actually there */
+        csel    w20, w20, w9, lo
+        cmp     w19, w20
+        csel    w19, w19, w20, lo
+
+        add     x10, x22, #SCR_TEXT_OFF /* close the gap */
+        mov     w11, w20
+        mov     w12, w19
+1:      cmp     w11, w9
+        b.hs    2f
+        ldrb    w13, [x10, w11, uxtw]
+        strb    w13, [x10, w12, uxtw]
+        add     w11, w11, #1
+        add     w12, w12, #1
+        b       1b
+2:      str     w12, [x22, #SCR_LEN_OFF]
+        str     w19, [x22, #SCR_CUR_OFF]
+
+        mov     x0, x21                 /* and type the new text in at it */
+        bl      SYM(editor_insert_str)
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * editor_range_text - w0 = first byte, w1 = one past the last,
+ *                     x2 = destination, w3 = capacity; out w0 = length
+ */
+        .globl  SYM(editor_range_text)
+SYM(editor_range_text):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     w19, w0
+        mov     w20, w1
+        mov     x21, x2
+        mov     w22, w3
+        bl      ed_cur
+        ldr     w9, [x0, #SCR_LEN_OFF]
+        add     x10, x0, #SCR_TEXT_OFF
+        cmp     w20, w9
+        csel    w20, w20, w9, lo
+        sub     w11, w22, #1
+        mov     w12, #0
+1:      cmp     w19, w20
+        b.hs    2f
+        cmp     w12, w11
+        b.hs    2f
+        ldrb    w13, [x10, w19, uxtw]
+        strb    w13, [x21, w12, uxtw]
+        add     w19, w19, #1
+        add     w12, w12, #1
+        b       1b
+2:      strb    wzr, [x21, w12, uxtw]
+        mov     w0, w12
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
 /* editor_length - how much text this screen holds */
         .globl  SYM(editor_length)
 SYM(editor_length):
@@ -1118,7 +1286,7 @@ SYM(editor_context):
  */
         .globl  SYM(editor_render)
 SYM(editor_render):
-        stp     x29, x30, [sp, #-160]!
+        stp     x29, x30, [sp, #-192]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
@@ -1175,6 +1343,11 @@ SYM(editor_render):
         ldr     w28, [x25, #SCR_SCROLL_OFF]
 
 /* pass one: where is the cursor, in rows and columns? */
+        str     wzr, [sp, #96]          /* a cursor past the end of the text is
+                                           never matched below, and stale stack
+                                           read as a row and column puts the
+                                           caret outside the framebuffer */
+        str     wzr, [sp, #100]
         mov     w9, #0                  /* index */
         mov     w10, #0                 /* row   */
         mov     w11, #0                 /* col   */
@@ -1254,7 +1427,11 @@ SYM(editor_render):
         b.lo    6f
         cmp     w9, w11
         b.hs    6f
-        stp     x16, x17, [sp, #96]     /* the fill clobbers the scratch */
+        stp     x16, x17, [sp, #160]    /* the fill clobbers the scratch.  Not
+                                           at 96: that is where the caret's row
+                                           and column live, and stamping on
+                                           them sends the caret off the end of
+                                           the framebuffer. */
         mov     x0, x19
         mov     w1, w20
         mov     w2, w16
@@ -1263,7 +1440,7 @@ SYM(editor_render):
         ldr     w5, [sp, #136]
         LDCOL   w6, COL_SEL_LO, COL_SEL_HI
         bl      SYM(fb_fill)
-        ldp     x16, x17, [sp, #96]
+        ldp     x16, x17, [sp, #160]
 6:
         strb    w12, [sp, #104]         /* a one-character string */
         strb    wzr, [sp, #105]
@@ -1294,6 +1471,19 @@ SYM(editor_render):
         str     w10, [sp, #116]
         b       .Ldraw
 .Ldraw_done:
+
+        LEA     x9, ed_state            /* Waiting is shown by the caret going
+                                           still: idle it blinks on the phase
+                                           the front end drives, busy it just
+                                           sits there.  The phase is a flag
+                                           rather than a clock read, because
+                                           this file also runs where there is
+                                           no clock to call. */
+        ldr     w10, [x9, #EDS_BUSY]
+        cbnz    w10, 7f
+        ldr     w9, [x9, #EDS_CARET]
+        cbz     w9, .Lbar
+7:
 
         ldr     w13, [sp, #96]          /* the caret */
         ldr     w14, [sp, #100]
@@ -1367,7 +1557,7 @@ SYM(editor_render):
         ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #160
+        ldp     x29, x30, [sp], #192
         ret
 
         RODATA

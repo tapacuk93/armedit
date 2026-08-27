@@ -64,6 +64,9 @@ public final class Armeditd {
     private final Runner runner;
     private final Agents agents;
     private final ModelStats stats = new ModelStats();
+    private final Cache cache = new Cache();
+    private final Scripts scripts = new Scripts();
+    private final Behaviours behaviours;
     private final Catalogue catalogue;
     private final String publicAddr;
 
@@ -81,6 +84,7 @@ public final class Armeditd {
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
         this.agents = new Agents(root);
+        this.behaviours = new Behaviours(root);
         this.catalogue = new Catalogue(env("ARMEDIT_AICOIN", "http://127.0.0.1:8081"),
                 java.util.List.of("anthropic", "openai", "google", "mistral", "cohere"));
         this.publicAddr = env("ARMEDIT_PUBLIC_ADDR", "");
@@ -219,6 +223,7 @@ public final class Armeditd {
             case "/api/run/result" -> routeRunResult(r);
             case "/api/agents" -> routeAgentsList(r);
             case "/api/stats" -> routeStats(r);
+            case "/api/behaviours" -> routeBehaviours(r);
             case "/api/agents/register" -> routeAgentRegister(r);
             case "/api/agents/poll" -> routeAgentPoll(r);
             case "/api/agents/result" -> routeAgentResult(r);
@@ -331,6 +336,8 @@ public final class Armeditd {
         String baseline = in.getOrDefault("baseline", "");
         String cursor = in.getOrDefault("cursor", "");
         String selection = in.getOrDefault("selection", "");
+        String instruction = in.getOrDefault("instruction", "");
+        String subject = in.getOrDefault("subject", "");
         int screen = parseInt(in.getOrDefault("screen", "1"), 1);
 
         // Memory to disk to cloud: handed to the writer thread, not waited on.
@@ -362,10 +369,13 @@ public final class Armeditd {
                     answer is that it is not clear, say so in one line rather than guessing at \
                     length.""";
             case "aify" -> """
-                    You are inside armedit, a text editor. Your reply is inserted at the caret; \
-                    everything else on the screen stays exactly as it is, so do not repeat it. \
-                    Carry out whatever the user's latest edit asks for and reply with only the text \
-                    that belongs at the caret - no preamble, no fences.""";
+                    You are inside armedit, a text editor. The user wrote an instruction and it \
+                    is about to be REPLACED by your reply, in place, where it stands. Produce \
+                    exactly what should be there instead of it and nothing else - no preamble, no \
+                    explanation, no fences, no restating the instruction. If they wrote \
+                    "c hello world", reply with the C program itself. If they wrote "make this \
+                    shorter" over some text, reply with the shorter text. Whatever you send is \
+                    what they will be looking at.""";
             default -> """
                     You are inside armedit, a text editor. The user asked about this screen. \
                     Answer plainly.""";
@@ -373,6 +383,12 @@ public final class Armeditd {
         prompt.append("""
                  Use only ASCII letters, digits and simple punctuation - the editor renders a 5x7 \
                 bitmap font and cannot draw anything else.
+
+                Anything written as $$name is a reference to text you cannot see and will never \
+                be shown. Treat it as a name for something that is there: write $$name where the \
+                thing belongs and the editor puts the real content in on its side. Do not ask \
+                what is in it, do not guess at it, and do not work around it by inventing a \
+                value - $$name is the answer, and it resolves where you cannot reach.
 
                 """);
         if (!baseline.isBlank()) {
@@ -384,6 +400,10 @@ public final class Armeditd {
         if (!selection.isBlank()) {
             prompt.append("THE USER SWIPED OVER THIS:\n").append(selection).append("\n\n");
         }
+        if (!instruction.isBlank()) {
+            prompt.append("THIS IS WHAT YOUR REPLY WILL REPLACE:\n")
+                  .append(instruction).append("\n\n");
+        }
         prompt.append(journal.briefing(account, screen));
         prompt.append(runner.briefing(account));
         prompt.append(agents.briefing(account)).append('\n');
@@ -391,6 +411,50 @@ public final class Armeditd {
         prompt.append(Machines.briefing(account.clouds().available()));
         prompt.append(AwsAgent.briefing(account.region())).append('\n');
         prompt.append("CURRENT SCREEN:\n").append(context);
+
+        // A screen bound to a widget is not asking for text: what is typed
+        // there is how that kind of thing should behave.  A screen bound to a
+        // word is the opposite - "make it faster" there is about the build,
+        // not about words in general - so only widgets take this path.
+        if ("aify".equals(mode) && isWidgetSubject(subject) && !instruction.isBlank()) {
+            try {
+                String said = authorBehaviour(account, subject, instruction,
+                        Router.byName("sonnet") == null ? Router.cheapest() : Router.byName("sonnet"));
+                journal.edits(account, screen, java.util.List.of(new Journal.Edit(
+                        System.currentTimeMillis(), "behaviour", 0, said)));
+                return Res.json(200, Json.obj("text", said, "model", "behaviour"));
+            } catch (Exception x) {
+                return Res.json(502, Json.obj("error", "behaviour: " + x.getMessage()));
+            }
+        }
+
+        // Somebody may already have paid for this one.  Only ever true when
+        // nothing of theirs went into the asking - see Cache.shareable.
+        boolean shareable = Cache.shareable(instruction, context, baseline, selection, subject);
+        String cacheKey = null;
+        if (shareable) {
+            cacheKey = Cache.key(mode, instruction, context, baseline, selection, subject);
+            var hit = cache.get(cacheKey);
+            if (hit != null) {
+                journal.edits(account, screen, java.util.List.of(new Journal.Edit(
+                        System.currentTimeMillis(), "cached", 0, instruction)));
+                return Res.json(200, Json.obj("text", hit.text(),
+                        "model", hit.model(), "cached", true));
+            }
+
+            // Nobody asked this exact thing before, but a model may have
+            // recognised the kind of thing it is and left an answer for it.
+            // This is the fast path: no upstream call at all.
+            var scripted = scripts.lookup(new Scripts.Ctx(
+                    mode, instruction, context, selection, subject));
+            if (scripted != null) {
+                journal.edits(account, screen, java.util.List.of(new Journal.Edit(
+                        System.currentTimeMillis(), "scripted", 0, instruction)));
+                return Res.json(200, Json.obj("text", scripted.text(),
+                        "model", scripted.script().author(), "scripted", true,
+                        "script", scripted.script().name()));
+            }
+        }
 
         // What kind of work is this, and who has done it well before?
         var category = ModelStats.classify(mode, context);
@@ -411,7 +475,8 @@ public final class Armeditd {
         // says about them, so a handoff is a decision rather than a guess.
         String base = prompt.toString()
                 + "\n\n" + catalogue.briefing()
-                + stats.briefing(names, category);
+                + stats.briefing(names, category)
+                + (shareable ? scripts.briefing() : "");
 
         // A second ask about the same screen within a minute is rarely a
         // compliment to the answer that came first, so it counts against
@@ -445,6 +510,16 @@ public final class Armeditd {
             }
             text = Router.withoutHandoff(text);
 
+            // Whatever it decided was worth remembering, remember - then take
+            // the teaching back out, because the user asked for an answer and
+            // not for a transcript of the model talking to the server.
+            for (var taught : scripts.learn(text, tier.name(), shareable)) {
+                System.out.printf("armedit: %s taught \"%s\" -> %s (%s)%n",
+                        tier.name(), taught.pattern(), taught.name(),
+                        taught.code() != null ? "compiled" : taught.body().length() + "-byte template");
+            }
+            text = Scripts.without(text);
+
             // Anything the model asked a cloud for runs here, signed with this
             // account's credentials, and only the results go back upstream.
             var outcome = agent.run(account, text);
@@ -460,6 +535,11 @@ public final class Armeditd {
 
             account.otp().account((long) text.length() * 8);
             account.lastModel(tier.name());
+            if (cacheKey != null) {
+                // Nothing here was marked private, so the next person to ask
+                // for the same thing gets this without paying for it again.
+                cache.put(cacheKey, text, tier.name());
+            }
             if ("swipe".equals(mode) && !selection.isBlank()) {
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "ai-swipe",
@@ -587,6 +667,44 @@ public final class Armeditd {
     }
 
     /**
+     * The behaviours every client starts with: the winning rule for each
+     * gesture, in the three-words-and-a-number form a client with no JSON
+     * parser can read. `?format=json` gives the same thing with weights, for
+     * anyone looking rather than executing.
+     */
+    private Res routeBehaviours(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        if ("json".equals(r.header().apply("X-Armedit-Format"))) {
+            return new Res(200, "application/json",
+                    behaviours.asJson().getBytes(StandardCharsets.UTF_8));
+        }
+        return new Res(200, "text/plain", behaviours.asText().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * A rule someone typed on a screen bound to a thing.
+     *
+     * This is what makes Cmd+P on such a screen different: the sentence is not
+     * a request for text, it is a request for behaviour, so it goes to the
+     * model to be turned into one of the verbs the client can actually do, and
+     * the reply the user sees is what was understood - not prose about it.
+     */
+    private String authorBehaviour(Accounts.Account account, String subject,
+                                   String sentence, Router.Tier tier) throws Exception {
+        String reply = aicoin.ask(account.wallet(), tier,
+                behaviours.translationPrompt(sentence, subject), 400);
+        var rule = behaviours.parse(reply, sentence);
+        if (rule == null) {
+            return "NOT UNDERSTOOD AS A BEHAVIOUR:\n" + sentence
+                    + "\n\nTHE EDITOR CAN ONLY MOVE, RESIZE, HIGHLIGHT, OPEN, ASK OR REWRITE.\n";
+        }
+        behaviours.author(account.id(), rule.target, rule.trigger, rule.verb, sentence);
+        return "%s %s -> %s\nNOW THE DEFAULT FOR EVERYONE, BY WEIGHT %d.\n"
+                .formatted(rule.target.id, rule.trigger.id, rule.verb.id, rule.weight);
+    }
+
+    /**
      * What the record says. Behaviour, not grades: nobody scores the answers,
      * so this counts handoffs, re-asks, failures and latency and orders by
      * them.
@@ -694,6 +812,14 @@ public final class Armeditd {
 
     private static Res unauthorised() {
         return Res.json(401, Json.obj("error", "unknown or missing armedit key"));
+    }
+
+    /** Widgets take behaviour; content takes instructions. */
+    private static boolean isWidgetSubject(String subject) {
+        if (subject == null || subject.isBlank()) return false;
+        String s = subject.toLowerCase(java.util.Locale.ROOT);
+        return s.startsWith("image") || s.startsWith("key") || s.startsWith("applet")
+                || s.startsWith("button") || s.equals("keyboard");
     }
 
     private static int parseInt(String s, int fallback) {
