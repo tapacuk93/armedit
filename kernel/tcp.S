@@ -45,8 +45,17 @@
 #define RXBUF           32768
 #define MSS             1400
 
-/* How long to spin waiting for something to arrive. Not a clock - a count. */
-#define SPIN            4000000
+/*
+ * How long to wait, in milliseconds, using the machine's actual clock.
+ *
+ * This was a spin count to begin with, which is wrong in the way that only
+ * shows up later: the number of iterations a loop manages in a second depends
+ * on the host, the emulator and what else is running, so the same count is
+ * minutes on one machine and a fraction of a second on another. It was short
+ * enough here that a model taking a second and a half to answer looked exactly
+ * like a backend that was not there.
+ */
+#define WAIT_MS         30000
 
         CODE
         .p2align 2
@@ -122,7 +131,8 @@ SYM(tcp_connect):
         mov     w10, #S_SYNSENT
         str     w10, [x9]
 
-        mov     w21, #0
+        bl      platform_ticks
+        mov     x21, x0                         /* when we started asking */
 1:      bl      tcp_pump
         LEA     x9, t_state
         ldr     w9, [x9]
@@ -130,10 +140,11 @@ SYM(tcp_connect):
         b.eq    .Ltc_ok
         cmp     w9, #S_CLOSED
         b.eq    .Ltc_fail                       /* refused */
-        add     w21, w21, #1
-        movz    w9, #(SPIN & 0xFFFF)
-        movk    w9, #(SPIN >> 16), lsl #16
-        cmp     w21, w9
+        bl      platform_ticks
+        sub     x9, x0, x21
+        movz    x10, #(WAIT_MS & 0xFFFF)
+        movk    x10, #(WAIT_MS >> 16), lsl #16
+        cmp     x9, x10
         b.lo    1b
 .Ltc_fail:
         mov     w0, #-1
@@ -199,7 +210,8 @@ SYM(tcp_recv):
         stp     x21, x22, [sp, #32]
         mov     x19, x0
         mov     w20, w1
-        mov     w21, #0                         /* how long since anything came */
+        bl      platform_ticks
+        mov     x21, x0                         /* when anything last arrived */
 
 1:      LEA     x9, t_finished
         ldr     w9, [x9]
@@ -211,12 +223,14 @@ SYM(tcp_recv):
         ldr     w9, [x9]
         cmp     w9, w22
         b.eq    2f
-        mov     w21, #0                         /* progress; wait afresh */
+        bl      platform_ticks                  /* progress; wait afresh */
+        mov     x21, x0
         b       1b
-2:      add     w21, w21, #1
-        movz    w9, #(SPIN & 0xFFFF)
-        movk    w9, #(SPIN >> 16), lsl #16
-        cmp     w21, w9
+2:      bl      platform_ticks
+        sub     x9, x0, x21
+        movz    x10, #(WAIT_MS & 0xFFFF)
+        movk    x10, #(WAIT_MS >> 16), lsl #16
+        cmp     x9, x10
         b.lo    1b
 
 .Ltr_done:

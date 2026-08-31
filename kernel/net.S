@@ -162,7 +162,11 @@ SYM(arp_resolve):
         mov     w1, #42                         /* 14 of Ethernet, 28 of ARP */
         bl      net_send
 
-        mov     w22, #0                         /* how long we have waited */
+        bl      platform_ticks                  /* by the clock, not by a count:
+                                                   iterations per second are a
+                                                   property of the host, not of
+                                                   the network */
+        mov     x22, x0
 .Lar_wait:
         LEA     x0, rxframe
         mov     w1, #FRAMEBUF
@@ -178,10 +182,11 @@ SYM(arp_resolve):
         ldr     w9, [x9]
         cbnz    w9, .Lar_check
 .Lar_tick:
-        add     w22, w22, #1
-        movz    w9, #(200000 & 0xFFFF)
-        movk    w9, #(200000 >> 16), lsl #16
-        cmp     w22, w9
+        bl      platform_ticks
+        sub     x9, x0, x22
+        mov     x10, #1000                      /* a second for an answer from
+                                                   the machine next door */
+        cmp     x9, x10
         b.lo    .Lar_wait
         add     w21, w21, #1
         cmp     w21, #3
