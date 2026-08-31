@@ -29,6 +29,7 @@ KERNEL_ARCH ?= aarch64
 # difference: OS mode is the same program with the machine underneath it
 # removed, not a cut-down version of it.
 KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
+              kernel/net.S kernel/tcp.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
@@ -49,6 +50,11 @@ QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
 # virtio-mmio transport reports version 1 by default, and the legacy queue
 # layout is a different driver - one this kernel does not have.
 QEMU_KBD  := -global virtio-mmio.force-legacy=false -device virtio-keyboard-device
+# A network card, and QEMU's user-mode network behind it. The guest is
+# 10.0.2.15 and the gateway 10.0.2.2, which is also how it reaches a server on
+# the host - those addresses are fixed and documented, which is why this kernel
+# can be told them rather than having to discover them with DHCP.
+QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 
 .PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve clean
 all: tty window kernel backend
@@ -179,7 +185,7 @@ serve: $(B)/armeditd
 # typed into at all. So: this terminal is the keyboard, and the window is the
 # screen. (Ctrl+A X quits, since the monitor shares this line.)
 boot: $(B)/kernel.elf
-	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) -device ramfb \
+	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) -device ramfb \
 	  -display cocoa,zoom-to-fit=on -serial mon:stdio
 
 boot-tty: $(B)/kernel.elf
