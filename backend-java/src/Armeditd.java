@@ -486,6 +486,31 @@ public final class Armeditd {
             is a nuisance; one that deletes the screen is not.
             """;
 
+
+    /**
+     * What a text editor can hold.
+     *
+     * A model writing code fences is doing the right thing for a chat window
+     * and the wrong thing here: this reply is pasted straight into a document,
+     * where ```javascript is three backticks and a word nobody typed. So the
+     * fences come off - and only the fences, since what is between them is the
+     * answer.
+     *
+     * Deliberately not a markdown renderer. Stripping bold and headings too
+     * would start guessing at which asterisks were formatting and which were
+     * multiplication, and getting that wrong silently edits somebody's code.
+     */
+    static String plainText(String reply) {
+        if (reply == null || reply.isBlank()) return "";
+        var out = new StringBuilder();
+        for (String line : reply.split("\n", -1)) {
+            if (line.strip().startsWith("```")) continue;
+            if (out.length() > 0) out.append('\n');
+            out.append(line);
+        }
+        return out.toString().strip();
+    }
+
     private Res routeAgent(Req r) {
         if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
         var account = authorise(r);
@@ -698,6 +723,7 @@ public final class Armeditd {
 
             // Did it decide this supersedes the screen rather than the line?
             boolean whole = false;
+            text = plainText(text);
             String lead = text.stripLeading();
             if (lead.startsWith("#WHOLE")) {
                 whole = true;
@@ -724,7 +750,20 @@ public final class Armeditd {
             if (!results.isBlank()) {
                 String followUp = base + "\n\nYOUR REPLY:\n" + text
                         + "\n\nRESULTS:\n" + results
-                        + "\nNow answer the user with what you found. Do not repeat the raw output.";
+                        + """
+
+                        Now answer what they actually asked. Do not repeat the
+                        raw output.
+
+                        If something above failed and they never asked for it,
+                        say nothing about it at all - a person who asked how to
+                        sort an array does not want to read about credentials,
+                        and their screen is where your reply lands, not a log.
+                        Answer the request as though the attempt had not
+                        happened. Only when the thing they asked for genuinely
+                        depended on it is the failure worth mentioning, and then
+                        in one line.
+                        """;
                 text = AwsAgent.redact(aicoin.ask(account.wallet(), tier, followUp, 16000));
             }
 
