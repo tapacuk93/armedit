@@ -398,6 +398,20 @@ SYM(backend_fetch):
         LEA     x0, replybuf
         mov     w2, #REPLY_SZ
         bl      SYM(json_unescape)
+
+/*
+ * Did the far side say its answer supersedes the whole screen rather than the
+ * line that asked for it?  "add a loop" is about the program above, not a
+ * request for a new one, and only the model can tell those apart - so it says,
+ * and this looks for the saying.
+ */
+        LEA     x0, respbuf
+        LEA     x1, s_whole_true
+        bl      SYM(str_find)
+        LEA     x9, reply_whole
+        cmp     x0, #0
+        cset    w10, ne
+        str     w10, [x9]
         LEA     x9, replybuf            /* nothing came back: change nothing */
         ldrb    w10, [x9]
         LEA     x9, fetch_status
@@ -455,11 +469,20 @@ SYM(backend_apply):
 .Lap_ok:
         cmp     w19, #ED_AIFY
         b.ne    4f
-        LEA     x9, region_a            /* Cmd+P: the answer takes the place of
-                                           the instruction that asked for it */
+        LEA     x9, reply_whole         /* the whole screen, when the answer is
+                                           a rewrite of what was already there */
+        ldr     w9, [x9]
+        cbz     w9, 5f
+        mov     w0, #0
+        bl      SYM(editor_length)
+        mov     w1, w0
+        mov     w0, #0
+        b       6f
+5:      LEA     x9, region_a            /* otherwise the instruction that asked */
         ldr     w0, [x9]
         LEA     x9, region_b
         ldr     w1, [x9]
+6:
         LEA     x2, replybuf
         bl      SYM(editor_replace)
         bl      SYM(editor_selection_clear)
@@ -686,6 +709,7 @@ s_path_agent:       .asciz "/api/agent"
 s_get:              .asciz "GET"
 s_path_behav:       .asciz "/api/behaviours"
 s_rule_dragmove:    .asciz " drag move"
+s_whole_true:       .asciz "\"whole\":true"
 s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
@@ -726,6 +750,7 @@ region_b:   .space 8
 fetch_status: .space 8
 subjtext:   .space 64
 targetbuf:  .space 32
+reply_whole: .space 8
 bodybuf:    .space BODY_SZ
 hdrbuf:     .space HDRS_SZ
 respbuf:    .space RESP_SZ

@@ -450,6 +450,39 @@ public final class Armeditd {
      * The editor's one call. It sends the screen and gets text back; which
      * model answered, and what had to be done to answer, is decided here.
      */
+
+    /**
+     * When a reply is about the screen rather than about the line.
+     *
+     * Cmd+P replaces exactly what was typed, which is right when somebody asked
+     * for something new and wrong when they asked for a change to what is
+     * already there. "add a loop" is not a request for a program; it is a
+     * request for *that* program with a loop in it, and replacing only the
+     * instruction leaves the old version above with a second copy underneath.
+     *
+     * The model is the only party that can tell those apart, since the
+     * difference is in what the sentence means. So it says which it meant, and
+     * the default is the conservative one - a stray marker deletes work that
+     * was not the model's to delete.
+     */
+    private static final String WHOLE_BRIEFING = """
+            By default your reply takes the place of exactly that: the line they
+            typed, and nothing else on the screen. That is right when they asked
+            for something new.
+
+            It is wrong when they asked you to change what is already there.
+            "add a loop", "make it faster", "without the comments" are all about
+            the text above - replacing only the instruction leaves the old
+            version sitting there with a second copy underneath it.
+
+            When the instruction is about the existing screen, put #WHOLE alone
+            on the first line and then give the entire new contents of the
+            screen. The marker is removed before anyone sees it.
+
+            When in doubt, leave it out. A reply that lands in the wrong place
+            is a nuisance; one that deletes the screen is not.
+            """;
+
     private Res routeAgent(Req r) {
         if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
         var account = authorise(r);
@@ -618,10 +651,15 @@ public final class Armeditd {
 
         // Each model is told what the others are for, and what the record
         // says about them, so a handoff is a decision rather than a guess.
+        // The briefings above are context - what models exist, what the record
+        // says, what has been scripted. This is the actual instruction, so it
+        // goes last: buried in the middle, between the cloud inventory and the
+        // model catalogue, it was simply not acted on.
         String base = prompt.toString()
                 + "\n\n" + catalogue.briefing()
                 + stats.briefing(names, category)
-                + (shareable ? scripts.briefing() : "");
+                + (shareable ? scripts.briefing() : "")
+                + (instruction.isBlank() ? "" : WHOLE_BRIEFING);
 
         // A second ask about the same screen within a minute is rarely a
         // compliment to the answer that came first, so it counts against
@@ -654,6 +692,15 @@ public final class Armeditd {
                 tier = handoff.to();
             }
             text = Router.withoutHandoff(text);
+
+            // Did it decide this supersedes the screen rather than the line?
+            boolean whole = false;
+            String lead = text.stripLeading();
+            if (lead.startsWith("#WHOLE")) {
+                whole = true;
+                int nl = lead.indexOf('\n');
+                text = nl < 0 ? "" : lead.substring(nl + 1);
+            }
 
             // Whatever it decided was worth remembering, remember - then take
             // the teaching back out, because the user asked for an answer and
@@ -699,7 +746,7 @@ public final class Armeditd {
                         parseInt(cursor.isBlank() ? "0" : cursor, 0),
                         text.length() > 200 ? text.substring(0, 200) + "..." : text)));
             }
-            return Res.json(200, Json.obj("text", text, "model", tier.name()));
+            return Res.json(200, Json.obj("text", text, "model", tier.name(), "whole", whole));
         } catch (Exception x) {
             return Res.json(502, Json.obj("error", "aicoin: " + x.getMessage()));
         }
