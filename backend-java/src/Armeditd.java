@@ -83,6 +83,9 @@ public final class Armeditd {
                 env("ARMEDIT_AMI", ""),
                 env("ARMEDIT_INSTANCE_TYPE", ""));
         var root = java.nio.file.Path.of(env("ARMEDIT_WORKSPACE", "workspaces"));
+        // Keys outlive the process now: a redeploy should not re-provision
+        // every device that was working a moment ago.
+        accounts.openStore(root.resolve("accounts.tsv"));
         this.workspace = new Workspace(root, aws, env("ARMEDIT_S3_BUCKET", ""));
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
