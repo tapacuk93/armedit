@@ -125,52 +125,35 @@ SYM(http_request):
         b       4b
 3:      sub     x24, x20, x28           /* total request length */
 
-/* ---- connect ------------------------------------------------------------ */
-        mov     x0, #AF_INET
-        mov     x1, #SOCK_STREAM
-        mov     x2, #0
-        mov     x16, #SYS_SOCKET
-        svc     #0x80
-        b.cs    .Lfail
-        mov     w21, w0                 /* fd */
+/*
+ * ---- the exchange --------------------------------------------------------
+ *
+ * Four calls, and each target supplies them: sockets under an operating
+ * system, and the kernel's own TCP on bare metal. What is above this line -
+ * building a request, finding the body - is identical either way, which is
+ * the point of putting the seam here rather than writing the whole client
+ * twice.
+ */
+        ldr     w0, [x19, #REQ_IP]
+        ldrh    w1, [x19, #REQ_PORT]
+        bl      SYM(sock_open)
+        cmn     w0, #1
+        b.eq    .Lfail
+        mov     w21, w0
 
-        LEA     x22, http_sockaddr
-        mov     w9, #16
-        strb    w9, [x22, #0]           /* sin_len    */
-        mov     w9, #AF_INET
-        strb    w9, [x22, #1]           /* sin_family */
-        ldrh    w9, [x19, #REQ_PORT]
-        rev16   w9, w9                  /* port is big-endian on the wire */
-        strh    w9, [x22, #2]
-        ldr     w9, [x19, #REQ_IP]
-        str     w9, [x22, #4]
-        str     xzr, [x22, #8]
-
-        mov     w0, w21
-        mov     x1, x22
-        mov     x2, #16
-        mov     x16, #SYS_CONNECT
-        svc     #0x80
-        b.cs    .Lfail_close
-
-/* ---- send it all -------------------------------------------------------- */
-        mov     x23, x28
+        mov     x23, x28                /* everything we built, out */
 5:      cbz     w24, 6f
         mov     w0, w21
         mov     x1, x23
         mov     w2, w24
-        mov     x16, #SYS_WRITE
-        svc     #0x80
-        b.cs    .Lfail_close
+        bl      SYM(sock_write)
         cmp     w0, #0
         b.le    .Lfail_close
         add     x23, x23, w0, uxtw
         sub     w24, w24, w0
         b       5b
 6:
-
-/* ---- read until the peer closes ---------------------------------------- */
-        ldr     x25, [x19, #REQ_OUT]
+        ldr     x25, [x19, #REQ_OUT]    /* and the answer back */
         ldr     w26, [x19, #REQ_OUTCAP]
         sub     w26, w26, #1            /* leave room for a NUL */
         mov     w27, #0
@@ -179,9 +162,7 @@ SYM(http_request):
         mov     w0, w21
         add     x1, x25, w27, uxtw
         sub     w2, w26, w27
-        mov     x16, #SYS_READ
-        svc     #0x80
-        b.cs    8f                      /* an error here just ends the body */
+        bl      SYM(sock_read)
         cmp     w0, #0
         b.le    8f
         add     w27, w27, w0
@@ -189,15 +170,13 @@ SYM(http_request):
 8:      add     x9, x25, w27, uxtw
         strb    wzr, [x9]
         mov     w0, w21
-        mov     x16, #SYS_CLOSE
-        svc     #0x80
+        bl      SYM(sock_close)
         mov     w0, w27
         b       .Lout
 
 .Lfail_close:
         mov     w0, w21
-        mov     x16, #SYS_CLOSE
-        svc     #0x80
+        bl      SYM(sock_close)
 .Lfail:
         mov     w0, #-1
 .Lout:

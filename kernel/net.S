@@ -264,26 +264,37 @@ arp_build_request:
         ret
 
 /* put32 - w11 into the four bytes at x12, in the order it already has. */
+/*
+ * put32 - w11 into the four bytes at x12, wire order.
+ *
+ * An address is held the way net_ip4 packs one: the first byte on the wire in
+ * the low bits. That is the same convention net/http.S uses for a sockaddr, so
+ * an address means the same thing on both sides of the seam. Holding it the
+ * other way round - as a big-endian integer - is equally defensible and was
+ * what this did first, and the two conventions meeting in the middle is why
+ * ARP resolved the gateway correctly and then decided the answer was not the
+ * one it had asked for.
+ */
 put32:
-        lsr     w13, w11, #24
-        strb    w13, [x12]
-        lsr     w13, w11, #16
-        strb    w13, [x12, #1]
+        strb    w11, [x12]
         lsr     w13, w11, #8
+        strb    w13, [x12, #1]
+        lsr     w13, w11, #16
         strb    w13, [x12, #2]
-        strb    w11, [x12, #3]
+        lsr     w13, w11, #24
+        strb    w13, [x12, #3]
         ret
 
 /* get32 - four bytes at x0 as one word, in the order they were sent. */
+/* get32 - four bytes at x0 as one word, wire order; see put32. */
 get32:
         ldrb    w9, [x0]
         ldrb    w10, [x0, #1]
         ldrb    w11, [x0, #2]
         ldrb    w12, [x0, #3]
-        lsl     w9, w9, #24
-        orr     w9, w9, w10, lsl #16
-        orr     w9, w9, w11, lsl #8
-        orr     w0, w9, w12
+        orr     w9, w9, w10, lsl #8
+        orr     w9, w9, w11, lsl #16
+        orr     w0, w9, w12, lsl #24
         ret
 
 /* get16 - two bytes at x0, big-endian. */

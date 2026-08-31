@@ -116,19 +116,29 @@ kedit_run:
                                            a keyboard is the port's business */
         mov     w23, #1
         cmp     w0, #ED_AIFY
-        b.eq    .Lke_nolink
+        b.eq    .Lke_ask
         cmp     w0, #ED_SUBMIT
-        b.eq    .Lke_nolink
+        b.eq    .Lke_ask
         b       1b
 
 /*
- * The two keys that need a far side. Saying nothing would be indistinguishable
- * from a hung machine, and saying it in the text would mean taking it out
- * again later, so it goes to the serial line where a note belongs.
+ * The two keys that need a far side.
+ *
+ * Synchronously, unlike the hosted builds, which hand this to another thread
+ * and keep drawing. There is no other thread here - no scheduler, one stack -
+ * so the editor stops until the answer comes back. The caret stops blinking,
+ * which is the same signal it gives everywhere else, and for the same reason.
  */
-.Lke_nolink:
-        LEA     x0, m_nolink
-        bl      platform_puts
+.Lke_ask:
+        mov     w25, w0                 /* not w19: that is the framebuffer */
+        mov     w0, #1
+        bl      SYM(editor_busy)
+        mov     w23, #1
+        mov     w0, w25
+        bl      SYM(backend_submit)
+        mov     w0, #0
+        bl      SYM(editor_busy)
+        mov     w23, #1
         b       1b
 
 .Lke_tick:

@@ -27,47 +27,52 @@ kmain:
         bl      platform_puts
         LEA     x0, m_keys
         bl      platform_puts
-/* A self-test before the editor: can this machine reach anything at all? */
+/*
+ * The network, and then the one thing this machine has to be told.
+ *
+ * A kernel has no environment to inherit, so the key that says which backend
+ * to talk to arrives through fw_cfg - which is how a QEMU guest is handed
+ * anything at boot:
+ *
+ *     -fw_cfg name=opt/armedit/key,string=<key>@10.0.2.2:8090
+ *
+ * It goes into the same place env_get looks on every other target, so nothing
+ * above here knows which kind of machine it is running on.
+ */
         bl      net_init
         cmn     w0, #1
         b.eq    1f
+        movz    w0, #0x000A                     /* 10.0.2.15, and 10.0.2.2 for */
+        movk    w0, #0x0F02, lsl #16            /* the gateway: QEMU's user
+                                                   network uses fixed,
+                                                   documented addresses, so
+                                                   they can be told rather than
+                                                   discovered */
+        movz    w1, #0x000A
+        movk    w1, #0x0202, lsl #16
+        bl      SYM(ip_configure)
         LEA     x0, m_net
         bl      platform_puts
-        movz    w0, #0x0A00                     /* 10.0.2.15, what QEMU's */
-        movk    w0, #0x020F, lsl #0             /* user network hands out */
-        movz    w0, #0x020F
-        movk    w0, #0x0A00, lsl #16
-        movz    w1, #0x0202                     /* 10.0.2.2, the gateway */
-        movk    w1, #0x0A00, lsl #16
-        bl      SYM(ip_configure)
-        movz    w0, #0x0202
-        movk    w0, #0x0A00, lsl #16
-        mov     w1, #8090
-        bl      SYM(tcp_connect)
-        cmn     w0, #1
-        b.eq    2f
-        LEA     x0, m_conn
-        bl      platform_puts
 
-        LEA     x0, m_get                       /* ask it something real */
-        bl      SYM(str_len)
-        mov     w1, w0
-        LEA     x0, m_get
-        bl      SYM(tcp_send)
-        LEA     x0, httpbuf
-        mov     w1, #4095
-        bl      SYM(tcp_recv)
-        LEA     x9, httpbuf
-        strb    wzr, [x9, w0, uxtw]
-        LEA     x0, m_reply
+        LEA     x0, s_keyfile
+        bl      fwcfg_find_file
+        tbnz    w0, #31, 2f
+        lsl     w0, w0, #16
+        mov     w9, #(0x02 | 0x08)              /* select, then read */
+        orr     w0, w0, w9
+        mov     w1, #255
+        LEA     x2, keybuf
+        bl      fwcfg_dma
+        LEA     x9, keybuf
+        ldrb    w10, [x9]
+        cbz     w10, 2f
+        LEA     x0, s_keyname
+        LEA     x1, keybuf
+        bl      SYM(env_put)
+        LEA     x0, m_key
         bl      platform_puts
-        LEA     x0, httpbuf
-        bl      platform_puts
-        LEA     x0, m_nl
-        bl      platform_puts
-        bl      SYM(tcp_close)
         b       3f
-2:      LEA     x0, m_noconn
+2:      LEA     x0, m_nokey
         bl      platform_puts
         b       3f
 1:      LEA     x0, m_nonet
@@ -85,17 +90,16 @@ kmain:
 
         .section .bss
         .p2align 3
-httpbuf:  .space 4096
+keybuf:   .space 256
 
         .section .rodata
 m_boot:   .asciz "armedit: boot\n"
 m_ready:  .asciz "armedit: display up\n"
 m_net:    .asciz "armedit: network device found\n"
-m_nonet:  .asciz "armedit: no network device\n"
-m_conn:   .asciz "armedit: connected to the backend\n"
-m_noconn: .asciz "armedit: could not connect\n"
-m_get:    .asciz "GET /api/health HTTP/1.1\r\nHost: 10.0.2.2\r\nConnection: close\r\n\r\n"
-m_reply:  .asciz "armedit: the backend said --\n"
-m_nl:     .asciz "\n-- end\n"
+m_nonet:  .asciz "armedit: no network device - Cmd+P has nowhere to go\n"
+m_key:    .asciz "armedit: backend key accepted\n"
+m_nokey:  .asciz "armedit: no key in fw_cfg - Cmd+P will do nothing\n"
+s_keyfile: .asciz "opt/armedit/key"
+s_keyname: .asciz "ARMEDIT_KEY"
 m_nofb:   .asciz "armedit: no framebuffer on this machine, serial only\n"
 m_keys:   .asciz "armedit: type in the display window if this machine has a keyboard,\n  otherwise here on the serial line, where Ctrl stands in for Cmd.\n  Cmd+T new screen   Cmd+left/right switch   Cmd+Delete close\n  Cmd+P rewrite      Cmd+Enter hand over     Cmd+0..9 colour\n"

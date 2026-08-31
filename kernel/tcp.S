@@ -108,6 +108,16 @@ SYM(tcp_connect):
         mov     x1, #0
         mov     w2, #0
         bl      tcp_emit
+        LEA     x9, t_snd                       /* a SYN occupies a sequence
+                                                   number even though it
+                                                   carries no data - forget
+                                                   that and every segment after
+                                                   it claims a number the far
+                                                   side has already seen, which
+                                                   it answers with RST */
+        ldr     w10, [x9]
+        add     w10, w10, #1
+        str     w10, [x9]
         LEA     x9, t_state
         mov     w10, #S_SYNSENT
         str     w10, [x9]
@@ -454,11 +464,11 @@ tcp_emit:
         LEA     x9, SYM(my_ip)
         ldr     w11, [x9]
         add     x12, x23, #12
-        bl      tcp_put32
+        bl      tcp_put_ip
         LEA     x9, t_peer
         ldr     w11, [x9]
         add     x12, x23, #16
-        bl      tcp_put32
+        bl      tcp_put_ip
 
         mov     x0, x23                         /* the header checksums itself */
         mov     w1, #IP_HDR
@@ -517,12 +527,12 @@ tcp_emit:
         LEA     x12, t_pseudo
         LEA     x9, SYM(my_ip)
         ldr     w11, [x9]
-        bl      tcp_put32
+        bl      tcp_put_ip
         LEA     x9, t_peer
         ldr     w11, [x9]
         LEA     x12, t_pseudo
         add     x12, x12, #4
-        bl      tcp_put32
+        bl      tcp_put_ip
         LEA     x12, t_pseudo
         strb    wzr, [x12, #8]
         mov     w9, #IP_TCP
@@ -561,7 +571,22 @@ tcp_emit:
         ldp     x29, x30, [sp], #96
         ret
 
-tcp_put32:
+/*
+ * Two ways to put four bytes on the wire, because two different things live in
+ * these fields.
+ *
+ * A sequence number is an integer, and integers go big-endian: most
+ * significant byte first. An address is not an integer - it is four bytes in a
+ * fixed order, and it is held here the way net_ip4 packs one, first byte in
+ * the low bits, so that an address means the same thing on both sides of the
+ * seam with net/http.S.
+ *
+ * Using one routine for both is what made the first version send its SYN
+ * announcing sequence number 16777216 instead of 1. The checksums were all
+ * valid; the numbers were simply backwards, which is why the far side kept
+ * politely repeating itself.
+ */
+tcp_put32:                                      /* an integer */
         lsr     w13, w11, #24
         strb    w13, [x12]
         lsr     w13, w11, #16
@@ -569,6 +594,16 @@ tcp_put32:
         lsr     w13, w11, #8
         strb    w13, [x12, #2]
         strb    w11, [x12, #3]
+        ret
+
+tcp_put_ip:                                     /* four bytes in wire order */
+        strb    w11, [x12]
+        lsr     w13, w11, #8
+        strb    w13, [x12, #1]
+        lsr     w13, w11, #16
+        strb    w13, [x12, #2]
+        lsr     w13, w11, #24
+        strb    w13, [x12, #3]
         ret
 
         BSS

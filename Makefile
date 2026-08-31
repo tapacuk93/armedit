@@ -19,6 +19,7 @@ AS_MACHO := $(CC) $(INC) -arch arm64 -c
 AS_ELF   := $(CC) $(INC) -target aarch64-none-elf -c
 LD_MACHO := ld -lSystem -syslibroot $(SDK) -arch arm64
 B        := build
+, := ,
 
 FONT_SRC   := font/font.S font/render.S
 # The kernel splits in two: kernel/ is what it does, kernel/arch/<cpu>/ is
@@ -29,7 +30,8 @@ KERNEL_ARCH ?= aarch64
 # difference: OS mode is the same program with the machine underneath it
 # removed, not a cut-down version of it.
 KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
-              kernel/net.S kernel/tcp.S \
+              kernel/net.S kernel/tcp.S kernel/sock.S \
+              net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
@@ -40,7 +42,7 @@ BACKEND_SRC := backend/daemon.S backend/page.S backend/util.S backend/aicoin.S \
 BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
-NET_SRC    := net/str.S net/http.S
+NET_SRC    := net/str.S net/http.S net/sock.S
 WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 
@@ -55,6 +57,10 @@ QEMU_KBD  := -global virtio-mmio.force-legacy=false -device virtio-keyboard-devi
 # the host - those addresses are fixed and documented, which is why this kernel
 # can be told them rather than having to discover them with DHCP.
 QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
+# A kernel has no environment, so the one thing it must be told arrives through
+# fw_cfg:  make boot KEY=<key>@10.0.2.2:8090
+KEY       ?=
+QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
 .PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve clean
 all: tty window kernel backend
@@ -91,6 +97,7 @@ IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 IOS_ARCH  := arm64-apple-ios16.0-simulator
 IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S editor/editor.S \
              editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S net/str.S net/http.S \
+             net/sock.S \
              net/dns.S $(FONT_SRC)
 IOS_OBJ   := $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
 
@@ -185,7 +192,7 @@ serve: $(B)/armeditd
 # typed into at all. So: this terminal is the keyboard, and the window is the
 # screen. (Ctrl+A X quits, since the monitor shares this line.)
 boot: $(B)/kernel.elf
-	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) -device ramfb \
+	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) $(QEMU_KEY) -device ramfb \
 	  -display cocoa,zoom-to-fit=on -serial mon:stdio
 
 boot-tty: $(B)/kernel.elf
