@@ -83,6 +83,17 @@ final class Scripts {
     /** A body that is code rather than a template. */
     private static final Pattern JAVA = Pattern.compile("(?ms)^#JAVA\\s*$(.*)");
 
+    /**
+     * A body written once and meant for two destinations.
+     *
+     * #JAVA runs only here. #JS is the one that matters: the same source is
+     * evaluated on this machine to answer immediately, and compiled to aarch64
+     * for a device that would rather not ask. Both come from one parser and one
+     * syntax tree, because two implementations of one language is how they
+     * start disagreeing.
+     */
+    private static final Pattern JS = Pattern.compile("(?ms)^#JS\\s*$(.*)");
+
     static final int MAX_BODY = 8000;
     static final int MAX_SCRIPTS = 2000;
 
@@ -148,7 +159,16 @@ final class Scripts {
      */
     record Script(String name, String pattern, List<Token> tokens,
                   List<Condition> conditions, String body, ScriptBody code,
-                  String author, long taughtAt, AtomicLong hits) {}
+                  String js, NativeOp.Blob blob,
+                  String author, long taughtAt, AtomicLong hits) {
+
+        /** The variables this operation takes, in the order it wants them. */
+        List<String> parameters() {
+            var names = new ArrayList<String>();
+            for (var t : tokens) if (t.isVar()) names.add(t.var().name());
+            return names;
+        }
+    }
 
     record Hit(Script script, String text, Map<String, String> bound) {}
 
@@ -277,7 +297,19 @@ final class Scripts {
             if (!all) continue;
 
             String text;
-            if (s.code() != null) {
+            if (s.js() != null) {
+                // Answer with the operation itself, here, now. The device may
+                // instead have been handed the compiled form and never asked.
+                var order = new ArrayList<String>();
+                for (var p : s.parameters()) order.add(bound.getOrDefault(p, ""));
+                try {
+                    text = Js.run(s.js(), s.parameters(), order);
+                } catch (RuntimeException x) {
+                    System.out.printf("armedit: script \"%s\" failed: %s%n", s.name(), x);
+                    continue;
+                }
+                if (text == null || text.isBlank()) continue;
+            } else if (s.code() != null) {
                 // Compiled: it may still look at what it was handed and decide
                 // this one is not for it, in which case we carry on as though
                 // it had never matched.
@@ -328,20 +360,44 @@ final class Scripts {
             while (c.find()) conditions.add(new Condition(c.group(1), c.group(2).charAt(0), c.group(3)));
             String remainder = CONDITION.matcher(rest).replaceAll("").strip();
 
-            // A #JAVA block means the model wrote code rather than a template.
-            String body = remainder, source = null;
-            Matcher j = JAVA.matcher(remainder);
-            if (j.find()) {
-                source = j.group(1).strip();
-                body = j.replaceAll("").strip();
+            // A #JAVA block means the model wrote code rather than a template;
+            // #JS means it wrote something that can also leave this machine.
+            String body = remainder, source = null, script = null;
+            Matcher jsm = JS.matcher(remainder);
+            if (jsm.find()) {
+                script = jsm.group(1).strip();
+                body = jsm.replaceAll("").strip();
+            } else {
+                Matcher j = JAVA.matcher(remainder);
+                if (j.find()) {
+                    source = j.group(1).strip();
+                    body = j.replaceAll("").strip();
+                }
             }
 
             var tokens = compile(pattern);
             if (!shareable || tokens.isEmpty() || !specific(tokens)
                     || scripts.size() >= MAX_SCRIPTS
-                    || (source == null && (body.isEmpty() || body.length() > MAX_BODY))) {
+                    || (source == null && script == null
+                        && (body.isEmpty() || body.length() > MAX_BODY))) {
                 refused.incrementAndGet();
                 continue;
+            }
+
+            // A script that does not compile is refused here, on the server,
+            // where the error can be read - rather than shipped to a device
+            // that has no way to report it.
+            NativeOp.Blob blob = null;
+            if (script != null) {
+                var params = new ArrayList<String>();
+                for (var t : tokens) if (t.isVar()) params.add(t.var().name());
+                try {
+                    blob = Js.compile(name, script, params);
+                } catch (RuntimeException x) {
+                    System.out.printf("armedit: script \"%s\" rejected: %s%n", name, x.getMessage());
+                    refused.incrementAndGet();
+                    continue;
+                }
             }
 
             ScriptBody code = null;
@@ -359,7 +415,7 @@ final class Scripts {
             }
 
             var s = new Script(name, pattern, tokens, List.copyOf(conditions), body, code,
-                    author, System.currentTimeMillis(), new AtomicLong());
+                    script, blob, author, System.currentTimeMillis(), new AtomicLong());
             // The first teacher of a pattern keeps it. Letting a later model
             // overwrite one that is already answering people turns a fast path
             // into a moving target.
@@ -478,6 +534,41 @@ final class Scripts {
         return b.toString();
     }
 
+    /** Every operation that exists as machine code, for a device to fetch. */
+    List<Script> nativeOps() {
+        var out = new ArrayList<Script>();
+        for (var s : scripts.values()) if (s.blob() != null) out.add(s);
+        return out;
+    }
+
+    Script byName(String name) {
+        for (var s : scripts.values()) if (s.name().equals(name)) return s;
+        return null;
+    }
+
+    /** For the refresher: what the model should be shown about its own work. */
+    String inventory() {
+        var b = new StringBuilder();
+        for (var s : scripts.values()) {
+            b.append("  ").append(s.name()).append(" :: ").append(s.pattern())
+             .append("  (").append(s.hits().get()).append(" uses")
+             .append(s.blob() != null ? ", compiled" : "")
+             .append(")\n");
+        }
+        return b.toString();
+    }
+
+    /** Take one back out, by name, so the refresher can replace it. */
+    boolean forget(String name) {
+        for (var e : scripts.entrySet()) {
+            if (e.getValue().name().equals(name)) {
+                scripts.remove(e.getKey());
+                return true;
+            }
+        }
+        return false;
+    }
+
     int size() { return scripts.size(); }
 
     long served() { return served.get(); }
@@ -496,6 +587,7 @@ final class Scripts {
                     "author", s.author(), "hits", s.hits().get(),
                     "conditions", s.conditions().size(),
                     "compiled", s.code() != null,
+                    "native", s.blob() != null ? s.blob().code().length : 0,
                     "taught", s.taughtAt(), "bytes", s.body().length()));
         }
         b.append("],\"vm\":").append(vm.asJson());

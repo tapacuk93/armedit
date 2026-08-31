@@ -108,14 +108,106 @@ final class Aarch64 {
         word(0x91000000 | (imm & 0xFFF) << 10 | n << 5 | d);
     }
 
+    /** Condition codes, for b.cond. */
+    static final int EQ = 0, NE = 1, GE = 10, LT = 11, GT = 12, LE = 13;
+
     /** add Xd, Xn, Xm */
     void addReg(int d, int n, int m) {
         word(0x8B000000 | m << 16 | n << 5 | d);
     }
 
+    /** orr Xd, Xn, Xm */
+    void orrReg(int d, int n, int m) {
+        word(0xAA000000 | m << 16 | n << 5 | d);
+    }
+
     /** sub Xd, Xn, Xm */
     void subReg(int d, int n, int m) {
         word(0xCB000000 | m << 16 | n << 5 | d);
+    }
+
+    /** mul Xd, Xn, Xm - madd with the zero register as the addend. */
+    void mul(int d, int n, int m) {
+        word(0x9B007C00 | m << 16 | n << 5 | d);
+    }
+
+    /** sub Xd, Xn, #imm12 */
+    void subImm(int d, int n, int imm) {
+        word(0xD1000000 | (imm & 0xFFF) << 10 | n << 5 | d);
+    }
+
+    /** cmp Xn, Xm - subs xzr, Xn, Xm */
+    void cmpReg(int n, int m) {
+        word(0xEB00001F | m << 16 | n << 5);
+    }
+
+    /** cmp Xn, #imm12 */
+    void cmpImm(int n, int imm) {
+        word(0xF100001F | (imm & 0xFFF) << 10 | n << 5);
+    }
+
+    /** cset Xd, cond - csinc Xd, xzr, xzr, invert(cond) */
+    void cset(int d, int cond) {
+        word(0x9A9F07E0 | (cond ^ 1) << 12 | d);
+    }
+
+    /** str Xt, [Xn, #imm] - imm a byte offset, a multiple of 8. */
+    void str(int t, int n, int imm) {
+        word(0xF9000000 | ((imm / 8) & 0xFFF) << 10 | n << 5 | t);
+    }
+
+    /** str Xt, [sp, #-16]! - the expression stack. */
+    void push(int t) {
+        word(0xF8000C00 | ((-16 & 0x1FF) << 12) | 31 << 5 | t);
+    }
+
+    /** ldr Xt, [sp], #16 */
+    void pop(int t) {
+        word(0xF8400400 | ((16 & 0x1FF) << 12) | 31 << 5 | t);
+    }
+
+    /** b.cond label */
+    void bcond(int cond, String label) {
+        fixups.add(new Fixup(out.size(), label, Kind.COND19));
+        word(0x54000000 | cond);
+    }
+
+    /** lsl Xd, Xn, #shift - ubfm, which is how the manual spells it. */
+    void lslImm(int d, int n, int shift) {
+        int immr = (64 - shift) & 63, imms = 63 - shift;
+        word(0xD3400000 | immr << 16 | imms << 10 | n << 5 | d);
+    }
+
+    /** asr Xd, Xn, #shift */
+    void asrImm(int d, int n, int shift) {
+        word(0x9340FC00 | shift << 16 | n << 5 | d);
+    }
+
+    /** and Xd, Xn, #1 - the tag bit, the only mask this needs. */
+    void andOne(int d, int n) {
+        word(0x92400000 | n << 5 | d);
+    }
+
+    /**
+     * and Xd, Xn, #~1 - clear the tag bit.
+     *
+     * The mask is 63 ones rotated left by one, which the immediate encoding
+     * spells as N=1, immr=63, imms=62. Logical immediates are the one part of
+     * this instruction set nobody guesses correctly, so: verified by
+     * disassembly like everything else here.
+     */
+    void bicOne(int d, int n) {
+        word(0x92400000 | 63 << 16 | 62 << 10 | n << 5 | d);
+    }
+
+    /** eor Xd, Xn, #1 - flip a tagged boolean. */
+    void eorOne(int d, int n) {
+        word(0xD2400000 | n << 5 | d);
+    }
+
+    /** orr Xd, Xn, #1 */
+    void orrOne(int d, int n) {
+        word(0xB2400000 | n << 5 | d);
     }
 
     /** ldr Xt, [Xn, #imm] - imm a byte offset, a multiple of 8. */

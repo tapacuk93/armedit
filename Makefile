@@ -79,8 +79,9 @@ $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
 # business knowing about.
 IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 IOS_ARCH  := arm64-apple-ios16.0-simulator
-IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S editor/editor.S \
-             editor/applet.S gfx/image.S net/str.S net/http.S $(FONT_SRC)
+IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S editor/editor.S \
+             editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S net/str.S net/http.S \
+             net/dns.S $(FONT_SRC)
 IOS_OBJ   := $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
 
 $(B)/ios/%.o: %.S

@@ -73,6 +73,16 @@ _main:
         bl      SYM(editor_init)
         LEA     x0, seed_text
         bl      SYM(editor_insert_str)
+
+        /* Say out loud whether this device can run an operation the server
+           sent, because the answer decides which form to ask for. */
+        bl      SYM(op_available)
+        cbz     w0, 1f
+        LEA     x0, s_ops_yes
+        b       2f
+1:      LEA     x0, s_ops_no
+2:      bl      SYM(editor_insert_str)
+
         mov     w0, #0                  /* our keyboard, not the system's */
         bl      SYM(keyboard_build)
         LEA     x9, press_offset        /* zero is a real offset, so start at
@@ -134,6 +144,7 @@ build_classes:
         ADDM    x20, s_touchesBegan, view_touches_began, t_void_id_id
         ADDM    x20, s_touchesMoved, view_touches_moved, t_void_id_id
         ADDM    x20, s_touchesEnded, view_touches_ended, t_void_id_id
+        ADDM    x20, s_armeditFinish, view_armedit_finish, t_void
         mov     x0, x20
         bl      _objc_registerClassPair
 
@@ -796,6 +807,50 @@ view_yes:
         ret
 
 /*
+ * app_finish - the background half is done; the rest must happen where the
+ * drawing happens.
+ *
+ * Identical in purpose to the macOS one and identical in mechanism, because
+ * the mechanism is the platform's own: performSelectorOnMainThread is how both
+ * of them say "not here, over there".
+ */
+        .p2align 2
+        .globl  SYM(app_finish)
+SYM(app_finish):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        LEA     x9, view_slot
+        ldr     x19, [x9]
+        cbz     x19, 1f
+        LEA     x0, s_armeditFinish
+        bl      _sel_registerName
+        mov     x20, x0
+        LEA     x0, s_performOnMain
+        bl      _sel_registerName
+        mov     x1, x0
+        mov     x2, x20
+        mov     x3, #0                  /* no argument */
+        mov     x4, #0                  /* do not wait */
+        mov     x0, x19
+        bl      _objc_msgSend
+1:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/* - (void)armeditFinish - the main-thread half, installed on the view class */
+        .p2align 2
+view_armedit_finish:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+        bl      SYM(async_finish)
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/*
  * app_redraw - what async.S calls when the screen should be repainted.
  * Always on the main thread: the background half hops back before calling it.
  */
@@ -815,6 +870,8 @@ SYM(app_redraw):
 
         CSTR
 seed_text:              .asciz "ARMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nSWIPE OVER WORDS TO ASK ABOUT THEM\nTWO FINGERS TO PASTE\n\n"
+s_armeditFinish:        .asciz "armeditFinish"
+s_performOnMain:        .asciz "performSelectorOnMainThread:withObject:waitUntilDone:"
 s_delegate_cls:         .asciz "ArmeditDelegate"
 s_view_cls:             .asciz "ArmeditView"
 s_NSObject:             .asciz "NSObject"
@@ -855,6 +912,8 @@ s_subj_word:            .asciz "word:"
 s_subj_keyboard:        .asciz "keyboard"
 s_seed_word:            .asciz "ABOUT: "
 s_seed_word2:           .asciz "\n\nSAY WHAT TO DO WITH IT, THEN ASK.\n"
+s_ops_yes:              .asciz "native ops: this device CAN run code from the server\n"
+s_ops_no:               .asciz "native ops: this device CANNOT - ask for the spec instead\n"
 s_seed_kb:              .asciz "ABOUT THE KEYBOARD\n\nSAY HOW IT SHOULD LOOK OR BEHAVE,\nTHEN ASK. FOR EXAMPLE:\nMAKE THE KEYS RED\nHIGHLIGHT A KEY WHILE IT IS TOUCHED\n\n"
 s_stringWithUTF8String: .asciz "stringWithUTF8String:"
 t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"

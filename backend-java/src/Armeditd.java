@@ -118,6 +118,7 @@ public final class Armeditd {
         int port = Integer.parseInt(env("ARMEDIT_PORT", "8080"));
         var app = new Armeditd();
         app.startReaper();
+        app.startRefresher();
         // Ask the proxy what it can reach rather than assuming: a hardcoded
         // model list is wrong the day a provider ships, and wrong silently.
         app.catalogue.start(app.accounts::anyWallet);
@@ -224,6 +225,7 @@ public final class Armeditd {
             case "/api/agents" -> routeAgentsList(r);
             case "/api/stats" -> routeStats(r);
             case "/api/behaviours" -> routeBehaviours(r);
+            case "/api/ops" -> routeOps(r);
             case "/api/agents/register" -> routeAgentRegister(r);
             case "/api/agents/poll" -> routeAgentPoll(r);
             case "/api/agents/result" -> routeAgentResult(r);
@@ -240,6 +242,86 @@ public final class Armeditd {
      * scheduler rather than piggybacking on request traffic, because an idle
      * account by definition sends none.
      */
+    /**
+     * The model, revisiting its own work on a timer.
+     *
+     * A script is written once, in the middle of answering something else, on
+     * the evidence available at that moment. Some turn out to be wrong, some
+     * cover less than they could, and some stop being asked for. None of that
+     * is visible from inside a single request - it is only visible in the
+     * record of what has been used since.
+     *
+     * So periodically the model is shown its own inventory and what each entry
+     * has actually done, and invited to replace or retire. That is the loop
+     * that makes this improve rather than merely accumulate.
+     *
+     * Nothing here runs without an account to spend, and a refresh that fails
+     * is logged and forgotten: this is maintenance, and maintenance that can
+     * break the thing it maintains is worse than none.
+     */
+    private void startRefresher() {
+        long everyMinutes = Long.parseLong(env("ARMEDIT_REFRESH_MINUTES", "360"));
+        if (everyMinutes <= 0) {
+            System.out.println("armedit: script refreshing disabled");
+            return;
+        }
+        var timer = Executors.newSingleThreadScheduledExecutor(r -> {
+            var t = new Thread(r, "armedit-refresher");
+            t.setDaemon(true);
+            return t;
+        });
+        timer.scheduleWithFixedDelay(this::refresh, everyMinutes, everyMinutes,
+                java.util.concurrent.TimeUnit.MINUTES);
+        System.out.printf("armedit: the model revisits its scripts every %d minutes%n",
+                everyMinutes);
+    }
+
+    private void refresh() {
+        try {
+            if (scripts.size() == 0) return;
+            String wallet = accounts.anyWallet();
+            if (wallet == null || wallet.isBlank()) return;
+
+            var tier = Router.byName("sonnet") == null ? Router.cheapest() : Router.byName("sonnet");
+            String prompt = """
+                    You wrote these operations. They answer requests without waking
+                    you, so they are worth being right rather than merely present.
+
+                    Here is what exists and how much each has been used:
+
+                    """ + scripts.inventory() + """
+
+                    Consider: is any of them wrong, or narrower than it could be?
+                    Has anything gone unused long enough to be clutter?
+
+                    Reply with nothing at all if they are fine - that is the
+                    common and correct answer. Otherwise:
+
+                        #RETIRE <name>          to take one out
+                        #SCRIPT ... #END        to write a better one
+
+                    A replacement must be clearly better, not merely different.
+                    Rewriting a working operation costs everyone who was relying
+                    on the answer it already gave.
+                    """ + scripts.briefing();
+
+            String reply = aicoin.ask(wallet, tier, prompt, 4000);
+            var retire = java.util.regex.Pattern
+                    .compile("(?m)^#RETIRE\\s+([A-Za-z0-9_-]{1,40})\\s*$").matcher(reply);
+            while (retire.find()) {
+                if (scripts.forget(retire.group(1))) {
+                    System.out.printf("armedit: retired script \"%s\"%n", retire.group(1));
+                }
+            }
+            for (var taught : scripts.learn(reply, tier.name(), true)) {
+                System.out.printf("armedit: refreshed \"%s\" -> %s%n",
+                        taught.pattern(), taught.name());
+            }
+        } catch (Exception x) {
+            System.out.printf("armedit: refresh skipped: %s%n", x);
+        }
+    }
+
     private void startReaper() {
         long idleMinutes = Long.parseLong(env("ARMEDIT_IDLE_MINUTES", "30"));
         long everySeconds = Long.parseLong(env("ARMEDIT_REAP_SECONDS", "60"));
@@ -672,6 +754,51 @@ public final class Armeditd {
      * parser can read. `?format=json` gives the same thing with weights, for
      * anyone looking rather than executing.
      */
+    /**
+     * The operations a device may run itself.
+     *
+     * Without a name, the catalogue: what exists, what each takes, and the
+     * hash of its code. With ?name=, the code itself, base64'd because this is
+     * a JSON API and the alternative is a second transport for one field.
+     *
+     * A device asks for this when it can execute what comes back. iOS cannot -
+     * every page must be signed there - so it never asks, and gets the same
+     * answers from /api/agent instead. The operation is identical either way;
+     * only who runs it differs.
+     */
+    private Res routeOps(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+
+        String want = r.path().contains("?") ? "" : "";
+        var q = new QueryStringDecoder("/?" + (r.header().apply("X-Armedit-Op") == null
+                ? "" : "name=" + r.header().apply("X-Armedit-Op")));
+        var names = q.parameters().get("name");
+        if (names != null && !names.isEmpty()) {
+            var op = scripts.byName(names.get(0));
+            if (op == null || op.blob() == null) {
+                return Res.json(404, Json.obj("error", "no such operation"));
+            }
+            return Res.json(200, Json.obj(
+                    "name", op.name(),
+                    "params", String.join(",", op.parameters()),
+                    "sha", op.blob().sha(),
+                    "code", Base64.getEncoder().encodeToString(op.blob().code())));
+        }
+
+        var b = new StringBuilder("{\"ops\":[");
+        boolean first = true;
+        for (var op : scripts.nativeOps()) {
+            if (!first) b.append(',');
+            first = false;
+            b.append(Json.obj("name", op.name(), "pattern", op.pattern(),
+                    "params", String.join(",", op.parameters()),
+                    "bytes", op.blob().code().length, "sha", op.blob().sha()));
+        }
+        b.append("]}");
+        return Res.json(200, b.toString());
+    }
+
     private Res routeBehaviours(Req r) {
         var account = authorise(r);
         if (account == null) return unauthorised();
