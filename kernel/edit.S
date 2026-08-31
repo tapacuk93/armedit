@@ -101,6 +101,7 @@ kedit_run:
         mov     w2, w20
         mov     w3, w21
         bl      SYM(applet_render)
+        bl      platform_present        /* and only now to the display */
         mov     w23, #0
 /*
  * Every key that is waiting, before drawing anything.

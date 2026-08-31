@@ -52,14 +52,22 @@ platform_init:
         ret
 
 /*
- * platform_fb - where the pixels are, and how many.
+ * platform_fb - where to draw, and how much of it there is.
  *   x0 = out pointer to the base address
  *   x1 = out width in pixels, x2 = out height
  * Stride is the width: this board has no padding between rows.
+ *
+ * This hands back the *back* buffer, not the one the display is scanning out.
+ * The editor draws a frame by clearing the surface and then painting it, and
+ * ramfb shows whatever is in the scanout buffer at the moment it looks - so
+ * drawing straight into it means the cleared screen is on display for as long
+ * as the painting takes. Which is exactly as much flicker as it sounds like.
+ *
+ * platform_present copies the finished frame across.
  */
         .globl  platform_fb
 platform_fb:
-        LEA     x9, fb_store
+        LEA     x9, fb_back
         str     x9, [x0]
         mov     w9, #FB_W
         str     w9, [x1]
@@ -71,6 +79,29 @@ platform_fb:
  * platform_puts - the debug channel, before and after a display exists.
  * x0 = NUL-terminated string.
  */
+/*
+ * platform_present - the finished frame goes to the display.
+ *
+ * A straight copy, eight bytes at a time. It can still tear, in the sense that
+ * the display may catch it half done - but a half-updated picture of two
+ * frames is not something an eye notices, whereas a fully cleared screen
+ * between every pair of frames very much is.
+ */
+        .globl  platform_present
+platform_present:
+        LEA     x0, fb_back
+        LEA     x1, fb_store
+        mov     x2, #0
+        movz    x3, #((FB_W * FB_H * 4) & 0xFFFF)
+        movk    x3, #((FB_W * FB_H * 4) >> 16), lsl #16
+1:      cmp     x2, x3
+        b.hs    2f
+        ldr     x4, [x0, x2]
+        str     x4, [x1, x2]
+        add     x2, x2, #8
+        b       1b
+2:      ret
+
         .globl  platform_puts
 platform_puts:
         b       uart_puts
@@ -140,4 +171,7 @@ m_nokbd:  .asciz "armedit: no keyboard device\n"
 kbd_present:    .space 4
         .p2align 4
 fb_store:
-        .space  (FB_W * FB_H * 4)
+        .space  (FB_W * FB_H * 4)       /* what the display scans out */
+        .p2align 4
+fb_back:
+        .space  (FB_W * FB_H * 4)       /* what we draw into */
