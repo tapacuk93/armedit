@@ -159,39 +159,61 @@ SYM(tcp_connect):
 
 /*
  * tcp_send - x0 = bytes, w1 = how many.  out w0 = 0 or -1.
- * Sent as one segment: the requests this carries are smaller than one.
+ *
+ * Cut into segments of at most one MSS, because a request is only small until
+ * it isn't. This began as a single segment on the reasoning that the requests
+ * it carried were smaller than one - true of an empty screen asking for a
+ * hello world, and false the moment the screen has a program on it. Past 1400
+ * bytes it simply refused to send, which the editor reported as the backend
+ * being unreachable: the most misleading possible description of a message
+ * that was never put on the wire.
+ *
+ * Between segments we pump the receive side. The far side acknowledges as it
+ * goes, and a ring nobody drains is a ring that overflows - dropping the very
+ * acknowledgements that say the request arrived.
  */
         .globl  SYM(tcp_send)
 SYM(tcp_send):
-        stp     x29, x30, [sp, #-48]!
+        stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
-        mov     x19, x0
-        mov     w20, w1
+        stp     x21, x22, [sp, #32]
+        mov     x19, x0                         /* where we are in the buffer */
+        mov     w20, w1                         /* what is left of it */
         LEA     x9, t_state
         ldr     w9, [x9]
         cmp     w9, #S_OPEN
         b.ne    .Lts_fail
-        mov     w9, #MSS
-        cmp     w20, w9
-        b.hi    .Lts_fail                       /* one segment, and we said so */
+
+1:      cbz     w20, .Lts_done
+        mov     w21, #MSS                       /* this segment's worth */
+        cmp     w20, w21
+        csel    w21, w20, w21, ls
 
         mov     w0, #(TCP_ACK | TCP_PSH)
         mov     x1, x19
-        mov     w2, w20
+        mov     w2, w21
         bl      tcp_emit
         LEA     x9, t_snd                       /* our sequence advances by
-                                                   what we just sent */
+                                                   exactly what went out */
         ldr     w10, [x9]
-        add     w10, w10, w20
+        add     w10, w10, w21
         str     w10, [x9]
+
+        add     x19, x19, w21, uxtw
+        sub     w20, w20, w21
+        bl      tcp_pump                        /* take their acknowledgements */
+        b       1b
+
+.Lts_done:
         mov     w0, #0
         b       .Lts_out
 .Lts_fail:
         mov     w0, #-1
 .Lts_out:
+        ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #48
+        ldp     x29, x30, [sp], #64
         ret
 
 /*
