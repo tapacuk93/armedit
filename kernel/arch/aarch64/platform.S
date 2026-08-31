@@ -11,8 +11,8 @@
  * beside it. See kernel/PORTING.md for the whole contract; it is four
  * functions long on purpose.
  */
-#define FB_W    800
-#define FB_H    600
+#define FB_W    1280
+#define FB_H    800
 
         .section .text
         .p2align 2

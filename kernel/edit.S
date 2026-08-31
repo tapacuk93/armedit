@@ -61,6 +61,29 @@ kedit_run:
         bl      SYM(editor_init)
         bl      SYM(applet_clear)
 
+        /*
+         * The same video widget the window build shows, decoded by the same
+         * ARMV1 decoder. Nothing about it is different here - which is the
+         * point of the editor core being shared rather than reimplemented.
+         */
+        LEA     x0, SYM(demo_clip)
+        LEA     x9, SYM(demo_clip_end)
+        sub     x9, x9, x0
+        mov     w1, w9
+        bl      SYM(video_open)
+        cmn     w0, #1
+        b.eq    1f
+        bl      SYM(video_next)
+        mov     w0, #AP_KIND_VIDEO
+        mov     w1, #6000               /* basis points, so the same layout */
+        mov     w2, #1000               /* lands correctly on any surface */
+        mov     w3, #3400
+        mov     w4, #3400
+        mov     w5, #0
+        LEA     x6, s_unlabelled
+        bl      SYM(applet_add)
+1:
+
         mov     w22, #ESC_NONE
         mov     w23, #1                 /* redraw wanted */
         bl      platform_ticks
@@ -73,6 +96,11 @@ kedit_run:
         mov     w2, w20
         mov     w3, w21
         bl      SYM(editor_render)
+        mov     x0, x19                 /* widgets sit on top of the text */
+        mov     w1, w20
+        mov     w2, w20
+        mov     w3, w21
+        bl      SYM(applet_render)
         mov     w23, #0
 1:
         bl      platform_getc
@@ -108,6 +136,10 @@ kedit_run:
         mov     x24, x0
         bl      SYM(editor_caret_blink)
         orr     w23, w23, w0            /* it says nothing changed while busy */
+        bl      SYM(video_ok)           /* the clip advances on the same tick */
+        cbz     w0, .Lke_loop
+        bl      SYM(video_next)
+        mov     w23, #1
         b       .Lke_loop
 
 .Lke_out:
@@ -251,5 +283,8 @@ kedit_run:
         ret
 
         .section .rodata
+/* A video answers to its kind, which is what a shared rule is written against. */
+s_unlabelled:
+        .asciz ""
 m_nolink:
         .asciz "armedit: no link yet - the editor works, the far side does not\n"

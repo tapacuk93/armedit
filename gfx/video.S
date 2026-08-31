@@ -12,6 +12,18 @@
  * delta frame is defined against the frame before it and nothing earlier.
  * That is what keeps the memory here fixed and the code short enough to trust.
  *
+ * Nothing here reads a multi-byte field with a multi-byte load, and that is
+ * not fussiness. A frame record begins wherever the palette ended - byte 25
+ * for a three-colour clip - so its length field is unaligned by construction.
+ * Under an operating system that is invisible, because the MMU makes ordinary
+ * memory tolerant of it. On bare metal with the MMU off, every byte is Device
+ * memory, an unaligned load takes an alignment fault, and a kernel with no
+ * exception vectors answers a fault by hanging. The same decoder, the same
+ * clip, working hosted and stopping dead on the first frame.
+ *
+ * So: bytes in, assembled by hand. A format defined as a byte stream should be
+ * read as one.
+ *
  * Every loop below is bounded twice: by the payload it was given and by the
  * pixel count of the frame. A file that lies about either - truncated in
  * transit, or deliberately malformed - runs out of one bound or the other and
@@ -60,21 +72,32 @@ SYM(video_open):
         cmp     w20, #16
         b.lo    .Lvo_bad
 
-        ldr     w9, [x19]               /* "ARMV" */
-        movz    w10, #0x5241
-        movk    w10, #0x564D, lsl #16
-        cmp     w9, w10
+        ldrb    w9, [x19]               /* "ARMV", a byte at a time */
+        cmp     w9, #'A'
+        b.ne    .Lvo_bad
+        ldrb    w9, [x19, #1]
+        cmp     w9, #'R'
+        b.ne    .Lvo_bad
+        ldrb    w9, [x19, #2]
+        cmp     w9, #'M'
+        b.ne    .Lvo_bad
+        ldrb    w9, [x19, #3]
+        cmp     w9, #'V'
         b.ne    .Lvo_bad
         ldrb    w9, [x19, #4]
         cmp     w9, #1
         b.ne    .Lvo_bad
 
-        ldrh    w22, [x19, #6]          /* width */
+        ldrb    w22, [x19, #6]
+        ldrb    w11, [x19, #7]
+        orr     w22, w22, w11, lsl #8          /* width */
         cbz     w22, .Lvo_bad
         mov     w9, #VID_MAX_W
         cmp     w22, w9
         b.hi    .Lvo_bad
-        ldrh    w9, [x19, #8]           /* height */
+        ldrb    w9, [x19, #8]
+        ldrb    w11, [x19, #9]
+        orr     w9, w9, w11, lsl #8           /* height */
         cbz     w9, .Lvo_bad
         mov     w10, #VID_MAX_H
         cmp     w9, w10
@@ -85,17 +108,23 @@ SYM(video_open):
         LEA     x10, vid_h
         str     w9, [x10]
 
-        ldrh    w10, [x19, #10]         /* frame count */
+        ldrb    w10, [x19, #10]
+        ldrb    w11, [x19, #11]
+        orr     w10, w10, w11, lsl #8         /* frame count */
         cbz     w10, .Lvo_bad
         LEA     x11, vid_count
         str     w10, [x11]
-        ldrh    w10, [x19, #12]         /* fps; 0 would divide by zero later */
+        ldrb    w10, [x19, #12]
+        ldrb    w11, [x19, #13]
+        orr     w10, w10, w11, lsl #8         /* fps; 0 would divide by zero later */
         cbnz    w10, 1f
         mov     w10, #12
 1:      LEA     x11, vid_fps
         str     w10, [x11]
 
-        ldrh    w10, [x19, #14]         /* palette entries */
+        ldrb    w10, [x19, #14]
+        ldrb    w11, [x19, #15]
+        orr     w10, w10, w11, lsl #8         /* palette entries */
         cbz     w10, .Lvo_bad
         mov     w11, #256
         cmp     w10, w11
@@ -189,7 +218,13 @@ SYM(video_next):
         cmp     x9, x20
         b.hi    .Lvn_bad
 
-        ldr     w21, [x19]              /* payload length */
+        ldrb    w21, [x19]              /* payload length, four bytes */
+        ldrb    w9, [x19, #1]
+        orr     w21, w21, w9, lsl #8
+        ldrb    w9, [x19, #2]
+        orr     w21, w21, w9, lsl #16
+        ldrb    w9, [x19, #3]
+        orr     w21, w21, w9, lsl #24
         ldrb    w22, [x19, #4]          /* kind */
         add     x23, x19, #5            /* payload */
         add     x9, x23, w21, uxtw

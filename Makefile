@@ -166,8 +166,10 @@ win: $(B)/armedit-window
 serve: $(B)/armeditd
 	@$(B)/armeditd
 
+# zoom-to-fit lets the window be dragged to any size: ramfb has one fixed
+# resolution, so the alternative is a window you cannot resize at all.
 boot: $(B)/kernel.elf
-	$(QEMU) $(QEMU_ARGS) -device ramfb -display cocoa
+	$(QEMU) $(QEMU_ARGS) -device ramfb -display cocoa,zoom-to-fit=on
 
 boot-tty: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) -nographic
