@@ -41,4 +41,4 @@ kmain:
 m_boot:   .asciz "armedit: boot\n"
 m_ready:  .asciz "armedit: display up\n"
 m_nofb:   .asciz "armedit: no framebuffer on this machine, serial only\n"
-m_keys:   .asciz "armedit: type into the display window. Ctrl stands in for Cmd:\n  Ctrl+T new screen   Ctrl+left/right switch   Ctrl+H close\n  Ctrl+P rewrite      Ctrl+J hand over        Ctrl+0..9 colour\n"
+m_keys:   .asciz "armedit: type in the display window if this machine has a keyboard,\n  otherwise here on the serial line, where Ctrl stands in for Cmd.\n  Cmd+T new screen   Cmd+left/right switch   Cmd+Delete close\n  Cmd+P rewrite      Cmd+Enter hand over     Cmd+0..9 colour\n"

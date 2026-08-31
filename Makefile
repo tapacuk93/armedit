@@ -45,6 +45,10 @@ KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
 
 QEMU      := qemu-system-aarch64
 QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
+# A keyboard for the display window. force-legacy=false is not optional: QEMU's
+# virtio-mmio transport reports version 1 by default, and the legacy queue
+# layout is a different driver - one this kernel does not have.
+QEMU_KBD  := -global virtio-mmio.force-legacy=false -device virtio-keyboard-device
 
 .PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve clean
 all: tty window kernel backend
@@ -168,8 +172,15 @@ serve: $(B)/armeditd
 
 # zoom-to-fit lets the window be dragged to any size: ramfb has one fixed
 # resolution, so the alternative is a window you cannot resize at all.
+#
+# -serial mon:stdio is not optional. The kernel's keyboard is the UART, and
+# without this QEMU sends the serial line to a virtual console the cocoa
+# display does not show - which is a window that draws correctly and cannot be
+# typed into at all. So: this terminal is the keyboard, and the window is the
+# screen. (Ctrl+A X quits, since the monitor shares this line.)
 boot: $(B)/kernel.elf
-	$(QEMU) $(QEMU_ARGS) -device ramfb -display cocoa,zoom-to-fit=on
+	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) -device ramfb \
+	  -display cocoa,zoom-to-fit=on -serial mon:stdio
 
 boot-tty: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) -nographic

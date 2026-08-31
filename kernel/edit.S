@@ -102,20 +102,30 @@ kedit_run:
         mov     w3, w21
         bl      SYM(applet_render)
         mov     w23, #0
+/*
+ * Every key that is waiting, before drawing anything.
+ *
+ * Redrawing between one keystroke and the next sounds harmless and is not: a
+ * frame is a million pixels, and while it is being painted the keyboard's ring
+ * fills and the device starts dropping events. Typed at speed, "hello from the
+ * window" arrived as "te". So the loop takes everything that has arrived,
+ * applies it, and paints once - which is also what makes typing feel like
+ * typing rather than like a teletype.
+ */
 1:
         bl      platform_getc
         cmn     w0, #1
         b.eq    .Lke_tick
         bl      .Lke_translate          /* w0 = an editor key, or -1 */
         cmn     w0, #1
-        b.eq    .Lke_loop
+        b.eq    1b
         bl      SYM(editor_key)
         mov     w23, #1
         cmp     w0, #ED_AIFY
         b.eq    .Lke_nolink
         cmp     w0, #ED_SUBMIT
         b.eq    .Lke_nolink
-        b       .Lke_loop
+        b       1b
 
 /*
  * The two keys that need a far side. Saying nothing would be indistinguishable
@@ -125,7 +135,7 @@ kedit_run:
 .Lke_nolink:
         LEA     x0, m_nolink
         bl      platform_puts
-        b       .Lke_loop
+        b       1b
 
 .Lke_tick:
         bl      platform_ticks

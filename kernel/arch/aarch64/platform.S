@@ -34,6 +34,20 @@ platform_init:
         mov     w1, #FB_W
         mov     w2, #FB_H
         bl      ramfb_init
+        stp     x0, x1, [sp, #-16]!     /* a keyboard is optional; a display
+                                           is what decides whether we run */
+        bl      kbd_init
+        LEA     x9, kbd_present
+        cmn     w0, #1
+        cset    w10, ne
+        str     w10, [x9]
+        cbnz    w10, 9f
+        LEA     x0, m_nokbd
+        bl      uart_puts
+        b       8f
+9:      LEA     x0, m_kbd
+        bl      uart_puts
+8:      ldp     x0, x1, [sp], #16
         ldp     x29, x30, [sp], #16
         ret
 
@@ -66,9 +80,31 @@ platform_puts:
  * The editor polls this rather than blocking on it, because a blocked kernel
  * is a kernel whose caret has stopped for the wrong reason.
  */
+/*
+ * platform_getc - one key, or -1.
+ *
+ * A machine with a keyboard uses it, and does not also read the serial line.
+ * That is deliberate: the serial port is shared with QEMU's monitor, so
+ * treating it as a second keyboard turns anything printed there into
+ * keystrokes - which showed up as characters nobody typed appearing between
+ * the ones they did. A console is for saying things, not for being typed into,
+ * once there is somewhere better to type.
+ *
+ * A machine with no keyboard still has the wire, which is how this kernel was
+ * driven before the driver existed.
+ */
         .globl  platform_getc
 platform_getc:
-        b       uart_getc
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        LEA     x9, kbd_present
+        ldr     w9, [x9]
+        cbz     w9, 1f
+        bl      kbd_getc
+        b       2f
+1:      bl      uart_getc
+2:      ldp     x29, x30, [sp], #16
+        ret
 
 /*
  * platform_ticks - milliseconds since the machine started.
@@ -95,7 +131,13 @@ platform_ticks:
                                            beats a division by zero */
         ret
 
+        .section .rodata
+m_kbd:    .asciz "armedit: keyboard found\n"
+m_nokbd:  .asciz "armedit: no keyboard device\n"
+
         .section .bss
+        .p2align 2
+kbd_present:    .space 4
         .p2align 4
 fb_store:
         .space  (FB_W * FB_H * 4)
