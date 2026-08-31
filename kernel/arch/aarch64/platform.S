@@ -133,7 +133,7 @@ platform_getc:
         cbz     w9, 1f
         bl      kbd_getc
         b       2f
-1:      bl      uart_getc
+1:      bl      uart_key
 2:      ldp     x29, x30, [sp], #16
         ret
 

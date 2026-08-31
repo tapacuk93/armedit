@@ -25,11 +25,6 @@
  * things that stop working.
  */
 
-/* Where we are in an escape sequence, since getc never blocks. */
-#define ESC_NONE        0
-#define ESC_ESC         1               /* seen 0x1B */
-#define ESC_BRACKET     2               /* seen 0x1B '[' or 0x1B 'O' */
-
 #define BLINK_MS        500
 
         .section .text
@@ -84,7 +79,6 @@ kedit_run:
         bl      SYM(applet_add)
 1:
 
-        mov     w22, #ESC_NONE
         mov     w23, #1                 /* redraw wanted */
         bl      platform_ticks
         mov     x24, x0                 /* when the caret last flipped */
@@ -117,10 +111,9 @@ kedit_run:
         bl      platform_getc
         cmn     w0, #1
         b.eq    .Lke_tick
-        bl      .Lke_translate          /* w0 = an editor key, or -1 */
-        cmn     w0, #1
-        b.eq    1b
-        bl      SYM(editor_key)
+        bl      SYM(editor_key)         /* platform_getc hands us keys, not
+                                           bytes: whatever this machine has for
+                                           a keyboard is the port's business */
         mov     w23, #1
         cmp     w0, #ED_AIFY
         b.eq    .Lke_nolink
@@ -159,138 +152,6 @@ kedit_run:
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #128
-        ret
-
-/*
- * .Lke_translate - w0 = a byte off the wire, out w0 = an editor key or -1.
- *
- * w22 carries the escape state between calls and w25 the numeric parameter,
- * because the bytes of a sequence arrive on separate polls and there is
- * nothing to block on in between.
- *
- * The awkward part of a serial keyboard is that the control codes are already
- * spoken for. Ctrl+M *is* Return and Ctrl+H *is* Backspace - a terminal sends
- * the same byte either way, so those two Ctrl combinations cannot be told
- * apart from the plain keys and cannot carry Cmd. The two that are left over
- * take their place: Ctrl+J, which is what Ctrl+Enter sends on a real keyboard
- * anyway, and DEL against Ctrl+H for the two kinds of erase.
- */
-.Lke_translate:
-        cmp     w22, #ESC_NONE
-        b.eq    .Lkt_plain
-        cmp     w22, #ESC_ESC
-        b.eq    .Lkt_esc
-
-/* Inside a sequence: digits and ';' are the parameters, a letter ends it. */
-        cmp     w0, #'0'
-        b.lo    1f
-        cmp     w0, #'9'
-        b.hi    1f
-        mov     w9, #10                 /* accumulate this parameter */
-        mul     w25, w25, w9
-        sub     w9, w0, #'0'
-        add     w25, w25, w9
-        mov     w0, #-1
-        ret
-1:      cmp     w0, #';'
-        b.ne    2f
-        mov     w25, #0                 /* the modifier is the last one */
-        mov     w0, #-1
-        ret
-
-2:      mov     w22, #ESC_NONE
-        mov     w26, #0                 /* what the parameter says was held */
-        cmp     w25, #2
-        b.lo    3f
-        sub     w9, w25, #1             /* xterm: 1 + shift + 2*alt + 4*ctrl */
-        tbz     w9, #0, 4f
-        mov     w26, #MOD_SHIFT
-4:      tbz     w9, #2, 3f
-        orr     w26, w26, #MOD_CMD      /* Ctrl stands in for Cmd here too */
-3:      mov     w25, #0
-
-        cmp     w0, #'A'
-        b.ne    5f
-        mov     w0, #K_UP
-        b       .Lkt_mod
-5:      cmp     w0, #'B'
-        b.ne    6f
-        mov     w0, #K_DOWN
-        b       .Lkt_mod
-6:      cmp     w0, #'C'
-        b.ne    7f
-        mov     w0, #K_RIGHT
-        b       .Lkt_mod
-7:      cmp     w0, #'D'
-        b.ne    8f
-        mov     w0, #K_LEFT
-        b       .Lkt_mod
-8:      cmp     w0, #'H'
-        b.ne    9f
-        mov     w0, #K_HOME
-        b       .Lkt_mod
-9:      cmp     w0, #'F'
-        b.ne    10f
-        mov     w0, #K_END
-        b       .Lkt_mod
-10:     mov     w0, #-1                 /* some sequence we do not speak */
-        ret
-.Lkt_mod:
-        orr     w0, w0, w26
-        ret
-
-.Lkt_esc:
-        cmp     w0, #'['
-        b.eq    1f
-        cmp     w0, #'O'
-        b.eq    1f
-        mov     w22, #ESC_NONE          /* ESC then something else: a bare ESC */
-        mov     w0, #-1
-        ret
-1:      mov     w22, #ESC_BRACKET
-        mov     w25, #0
-        mov     w0, #-1
-        ret
-
-.Lkt_plain:
-        cmp     w0, #0x1B
-        b.ne    1f
-        mov     w22, #ESC_ESC
-        mov     w0, #-1
-        ret
-
-1:      cmp     w0, #0x7F               /* DEL: erase a character */
-        b.ne    2f
-        mov     w0, #K_BS
-        ret
-2:      cmp     w0, #0x08               /* Ctrl+H: erase the screen */
-        b.ne    3f
-        mov     w0, #K_BS
-        orr     w0, w0, #MOD_CMD
-        ret
-3:      cmp     w0, #'\r'               /* Return */
-        b.ne    4f
-        mov     w0, #K_ENTER
-        ret
-4:      cmp     w0, #'\n'               /* Ctrl+J: hand the screen over */
-        b.ne    5f
-        mov     w0, #K_ENTER
-        orr     w0, w0, #MOD_CMD
-        ret
-
-5:      cmp     w0, #0x01               /* every other Ctrl+letter is Cmd+it */
-        b.lo    6f
-        cmp     w0, #0x1A
-        b.hi    6f
-        add     w0, w0, #('a' - 1)
-        orr     w0, w0, #MOD_CMD
-        ret
-6:      cmp     w0, #' '                /* anything printable is itself */
-        b.lo    7f
-        cmp     w0, #0x7E
-        b.hi    7f
-        ret
-7:      mov     w0, #-1
         ret
 
         .section .rodata
