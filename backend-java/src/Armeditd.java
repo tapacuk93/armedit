@@ -558,9 +558,20 @@ public final class Armeditd {
         // Somebody may already have paid for this one.  Only ever true when
         // nothing of theirs went into the asking - see Cache.shareable.
         boolean shareable = Cache.shareable(instruction, context, baseline, selection, subject);
+        // Asking the same thing twice in quick succession is somebody saying
+        // the answer was wrong. It is the only such signal there is, so it is
+        // worth acting on: forget what was remembered and go and ask properly,
+        // rather than handing back the same unwanted reply faster each time.
+        var again = ModelStats.classify(mode, context);
+        boolean unhappy = account.lastAsk(again.id, screen);
+
         String cacheKey = null;
         if (shareable) {
             cacheKey = Cache.key(mode, instruction, context, baseline, selection, subject);
+            if (unhappy && cache.forget(cacheKey)) {
+                System.out.printf("armedit: asked again - forgetting the cached answer for \"%s\"%n",
+                        instruction.length() > 60 ? instruction.substring(0, 60) + "..." : instruction);
+            }
             var hit = cache.get(cacheKey);
             if (hit != null) {
                 // A cache hit is still somebody receiving this answer, and that
@@ -579,7 +590,7 @@ public final class Armeditd {
             // Nobody asked this exact thing before, but a model may have
             // recognised the kind of thing it is and left an answer for it.
             // This is the fast path: no upstream call at all.
-            var scripted = scripts.lookup(new Scripts.Ctx(
+            var scripted = unhappy ? null : scripts.lookup(new Scripts.Ctx(
                     mode, instruction, context, selection, subject));
             if (scripted != null) {
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
@@ -615,7 +626,7 @@ public final class Armeditd {
         // A second ask about the same screen within a minute is rarely a
         // compliment to the answer that came first, so it counts against
         // whoever gave it - not against whoever is about to try again.
-        if (account.lastAsk(category.id, screen) && !account.lastModel().isBlank()) {
+        if (unhappy && !account.lastModel().isBlank()) {
             stats.reasked(account.lastModel(), category);
         }
 

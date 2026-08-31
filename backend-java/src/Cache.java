@@ -98,6 +98,20 @@ final class Cache {
         entries.putIfAbsent(key, new Entry(text, model, System.currentTimeMillis(), new AtomicLong()));
     }
 
+    /**
+     * Take one back out.
+     *
+     * A cache with no way to forget is a cache that makes one wrong answer
+     * permanent, and this one is shared - so a single bad reply becomes
+     * everybody's bad reply, for as long as the process lives. Somebody asking
+     * the identical thing again straight away is the signal that the answer
+     * they got was not the one they wanted, and it is the only signal available
+     * without asking them to rate anything.
+     */
+    boolean forget(String key) {
+        return key != null && entries.remove(key) != null;
+    }
+
     long hits() { return hits.get(); }
 
     long misses() { return misses.get(); }
