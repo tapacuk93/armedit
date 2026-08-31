@@ -193,7 +193,7 @@ serve: $(B)/armeditd
 # screen. (Ctrl+A X quits, since the monitor shares this line.)
 boot: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) $(QEMU_KEY) -device ramfb \
-	  -display cocoa,zoom-to-fit=on -serial mon:stdio
+	  -display cocoa,zoom-to-fit=on,left-command-key=on -serial mon:stdio
 
 boot-tty: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) -nographic

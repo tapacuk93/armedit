@@ -131,11 +131,18 @@ kedit_run:
  */
 .Lke_ask:
         mov     w25, w0                 /* not w19: that is the framebuffer */
+        LEA     x0, m_asking            /* a wait with no sign of life is
+                                           indistinguishable from a key that
+                                           did nothing, and the two get
+                                           reported the same way */
+        bl      platform_puts
         mov     w0, #1
         bl      SYM(editor_busy)
         mov     w23, #1
         mov     w0, w25
         bl      SYM(backend_submit)
+        LEA     x0, m_answered
+        bl      platform_puts
         mov     w0, #0
         bl      SYM(editor_busy)
         mov     w23, #1
@@ -168,5 +175,7 @@ kedit_run:
 /* A video answers to its kind, which is what a shared rule is written against. */
 s_unlabelled:
         .asciz ""
+m_asking:   .asciz "armedit: asking the backend...\n"
+m_answered: .asciz "armedit: ...answered\n"
 m_nolink:
         .asciz "armedit: no link yet - the editor works, the far side does not\n"
