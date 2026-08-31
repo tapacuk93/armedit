@@ -66,9 +66,12 @@ public final class Armeditd {
     private final ModelStats stats = new ModelStats();
     private final Cache cache = new Cache();
     private final Scripts scripts = new Scripts();
+    private final Consensus consensus = new Consensus();
     private final Behaviours behaviours;
     private final Catalogue catalogue;
     private final String publicAddr;
+    /** Promotion is slow and nobody is waiting for it. */
+    private final ExecutorService promoter = Executors.newVirtualThreadPerTaskExecutor();
 
     private Armeditd() {
         this.aicoin = new Aicoin(
@@ -226,6 +229,7 @@ public final class Armeditd {
             case "/api/stats" -> routeStats(r);
             case "/api/behaviours" -> routeBehaviours(r);
             case "/api/ops" -> routeOps(r);
+            case "/api/consensus" -> routeConsensus(r);
             case "/api/agents/register" -> routeAgentRegister(r);
             case "/api/agents/poll" -> routeAgentPoll(r);
             case "/api/agents/result" -> routeAgentResult(r);
@@ -259,6 +263,45 @@ public final class Armeditd {
      * is logged and forgotten: this is maintenance, and maintenance that can
      * break the thing it maintains is worse than none.
      */
+    /**
+     * Turn an agreement into something the server can answer with.
+     *
+     * Asked of the model rather than assembled here, because the useful output
+     * is the general operation behind the agreement, not the sentence three
+     * people happened to type. The model is allowed to decline - a coincidence
+     * of identical requests is not a pattern - and declining is the common
+     * case, so nothing is forced.
+     *
+     * Off the request thread: the person who asked is owed their answer now,
+     * not after this has finished.
+     */
+    private void promote(Consensus.Agreed settled, Router.Tier tier) {
+        promoter.submit(() -> {
+            try {
+                System.out.printf("armedit: %d people agree on \"%s\" - asking for the operation%n",
+                        settled.people(), settled.instruction());
+                String wallet = accounts.anyWallet();
+                if (wallet == null || wallet.isBlank()) return;
+                String reply = aicoin.ask(wallet, tier,
+                        Consensus.promotionPrompt(settled) + scripts.briefing(), 4000);
+                var learned = scripts.learn(reply, tier.name(), true);
+                if (learned.isEmpty()) {
+                    System.out.printf("armedit: nothing general in it, left as it was%n");
+                    return;
+                }
+                for (var op : learned) {
+                    System.out.printf("armedit: promoted \"%s\" -> %s%s%n",
+                            op.pattern(), op.name(),
+                            op.blob() != null
+                                ? " (" + op.blob().code().length + " bytes of machine code)"
+                                : "");
+                }
+            } catch (Exception x) {
+                System.out.printf("armedit: promotion skipped: %s%n", x);
+            }
+        });
+    }
+
     private void startRefresher() {
         long everyMinutes = Long.parseLong(env("ARMEDIT_REFRESH_MINUTES", "360"));
         if (everyMinutes <= 0) {
@@ -502,9 +545,11 @@ public final class Armeditd {
             try {
                 String said = authorBehaviour(account, subject, instruction,
                         Router.byName("sonnet") == null ? Router.cheapest() : Router.byName("sonnet"));
-                journal.edits(account, screen, java.util.List.of(new Journal.Edit(
-                        System.currentTimeMillis(), "behaviour", 0, said)));
-                return Res.json(200, Json.obj("text", said, "model", "behaviour"));
+                if (said != null) {
+                    journal.edits(account, screen, java.util.List.of(new Journal.Edit(
+                            System.currentTimeMillis(), "behaviour", 0, said)));
+                    return Res.json(200, Json.obj("text", said, "model", "behaviour"));
+                }
             } catch (Exception x) {
                 return Res.json(502, Json.obj("error", "behaviour: " + x.getMessage()));
             }
@@ -518,6 +563,13 @@ public final class Armeditd {
             cacheKey = Cache.key(mode, instruction, context, baseline, selection, subject);
             var hit = cache.get(cacheKey);
             if (hit != null) {
+                // A cache hit is still somebody receiving this answer, and that
+                // is exactly what consensus counts. Recording only on the slow
+                // path would mean the cache quietly prevents anything from ever
+                // being agreed on: the second person to ask an identical
+                // question would never be seen.
+                var settled = consensus.record(account.id(), subject, instruction, hit.text());
+                if (settled != null) promote(settled, Router.cheapest());
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "cached", 0, instruction)));
                 return Res.json(200, Json.obj("text", hit.text(),
@@ -613,6 +665,14 @@ public final class Armeditd {
                         + "\n\nRESULTS:\n" + results
                         + "\nNow answer the user with what you found. Do not repeat the raw output.";
                 text = AwsAgent.redact(aicoin.ask(account.wallet(), tier, followUp, 16000));
+            }
+
+            // Did this land somebody else's answer too?  If enough different
+            // people have now been told the same thing, it stops being theirs
+            // and becomes an operation.
+            if (shareable) {
+                var settled = consensus.record(account.id(), subject, instruction, text);
+                if (settled != null) promote(settled, tier);
             }
 
             account.otp().account((long) text.length() * 8);
@@ -799,6 +859,22 @@ public final class Armeditd {
         return Res.json(200, b.toString());
     }
 
+    /** What is converging, what has converged, and what is scattered. */
+    private Res routeConsensus(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        var b = new StringBuilder(consensus.asJson());
+        b.setLength(b.length() - 1);
+        b.append(",\"pending\":[");
+        boolean first = true;
+        for (var line : consensus.pending()) {
+            if (!first) b.append(',');
+            first = false;
+            b.append('"').append(Json.escape(line)).append('"');
+        }
+        return Res.json(200, b.append("]}").toString());
+    }
+
     private Res routeBehaviours(Req r) {
         var account = authorise(r);
         if (account == null) return unauthorised();
@@ -822,10 +898,13 @@ public final class Armeditd {
         String reply = aicoin.ask(account.wallet(), tier,
                 behaviours.translationPrompt(sentence, subject), 400);
         var rule = behaviours.parse(reply, sentence);
-        if (rule == null) {
-            return "NOT UNDERSTOOD AS A BEHAVIOUR:\n" + sentence
-                    + "\n\nTHE EDITOR CAN ONLY MOVE, RESIZE, HIGHLIGHT, OPEN, ASK OR REWRITE.\n";
-        }
+        // Not every sentence typed on a widget's screen is a behaviour. "make
+        // it draggable" is; "what format is this" is not. Returning an error
+        // for the second kind was wrong twice over - it refused a reasonable
+        // question, and it kept those questions out of the record that decides
+        // what becomes an operation. So: say nothing, and let the caller ask
+        // normally.
+        if (rule == null) return null;
         behaviours.author(account.id(), rule.target, rule.trigger, rule.verb, sentence);
         return "%s %s -> %s\nNOW THE DEFAULT FOR EVERYONE, BY WEIGHT %d.\n"
                 .formatted(rule.target.id, rule.trigger.id, rule.verb.id, rule.weight);
