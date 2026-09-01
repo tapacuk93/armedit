@@ -115,6 +115,38 @@ See [docs/aws-and-the-model.md](docs/aws-and-the-model.md) — it matters most
 because aicoin shares one provider key across users, so anything in a prompt
 should be considered disclosed.
 
+## Opening a site
+
+Write `open example.com`, press `Cmd`+`Enter`, and the page is on the screen.
+There is no browser mode — it is the same key that hands a screen to a model,
+because from the editor's side those are one request with two sources.
+
+It goes two ways, and the choice between them is the point:
+
+**Directly.** Resolve the name, open a socket, send a `GET`, and `net/html.S`
+turns the reply into text. Nothing in the middle, nobody else's logs, no
+backend needed. This is better whenever it works.
+
+**Through the backend.** It fetches and hands back text. This is the only route
+that works for `https` — the editor has no TLS yet — and the only one that
+works on a bare-metal machine, which has no resolver at all.
+
+Direct first, backend when direct cannot, and the working route is remembered
+per host so the second visit skips the discovery. Deliberately not a race: a
+race fetches every page twice, and the loser's request still arrived at
+somebody's server.
+
+A route that *cannot* work is not attempted, and that turned out to matter more
+than it sounds. Sending a plain `GET` to port 443 does not fail — a TLS server
+answers `400 The plain HTTP request was sent to HTTPS port`, which is a page. It
+parses, it renders, and it lands on the screen looking like the site said it,
+while the fallback never runs because nothing failed.
+
+`/api/fetch` is not an open proxy. `http` and `https` only, every redirect hop
+re-checked, and anything resolving to loopback, link-local or a private range
+refused — `http://localhost:8090/api/stats` is a URL, and `169.254.169.254` is
+where every cloud keeps its credentials.
+
 ## Operations the editor learns
 
 The same request, asked by enough different people, stops being a question and
@@ -380,7 +412,11 @@ decides only *where* the windows fall, never what the pad contains.
 | `app/tty.S` | terminal mode — one `write` syscall, no libc |
 | `app/backend_client.S` | the editor's entire view of the world |
 | `kernel/` | boot, PL011 serial, fw_cfg DMA, ramfb, scrolling console |
-| `net/` | sockets, HTTP/1.1 client and server, JSON and string primitives |
+| `net/` | sockets, HTTP client and server, JSON and string primitives |
+| `net/browse.S` | opening a site: direct, or through the backend, and remembering which |
+| `net/html.S` | HTML to text, for the direct route |
+| `app/localops.S` | the built-in operations, matched and run without a network |
+| `kernel/arch/aarch64/trap.S` | what happens when something goes wrong |
 | `crypto/` | SHA-256, HMAC, ChaCha20, Poly1305, AEAD, HKDF, X25519 |
 | `backend-java/src/` | the backend: routing, accounts, aicoin, EC2, the pad |
 | `backend-java/src/Scripts.java` | operations: patterns with typed holes, and what they may know |
@@ -418,22 +454,24 @@ Verified by running it, against published test vectors where they exist:
       then executes the machine code the compiler emitted
 - [x] the consortium: several models, two vendors, asked separately before
       anything is committed to `ops/`
+- [x] **offline**: `ops/` is baked into the image and tried before the network,
+      so `colours blue` works on a machine with no netdev, no backend and no key
+- [x] **exception vectors**: a fault reports its class, ESR, ELR, faulting
+      address and every register, over serial and framebuffer alike, instead of
+      stopping silently. `make boot-fault` proves it. It found three bugs in the
+      week it was written
+- [x] **opening a site**: `open example.com` and `Cmd`+`Enter`, rendered on the
+      bare-metal framebuffer over our own TCP stack
+- [x] typing during a request is no longer typing that is lost
 
 Next, in rough order:
 
-- [ ] **exception vectors in the kernel** - any fault is currently a silent
-      hang, which has cost real debugging time twice
 - [ ] **TLS 1.3 client in assembly** - the primitives are done and verified; the
       handshake, record layer and certificate pinning are not. Until then the
       backend reaches AWS and aicoin over TLS from Java, and the editor talks
       to its backend in the clear
-- [ ] the browser: `net/html.S` and `net/dns.S` exist and parse, but nothing
-      yet balances fetching a page directly against fetching it through the
-      backend
-- [ ] keystrokes are dropped while `Cmd`+`P` is in flight - the poll loop
-      blocks inside the request
-- [ ] offline mode: the editor should keep working from `ops/` and local
-      widgets when the backend is gone, rather than reporting it is gone
+- [ ] links: pages render as text, but nothing follows a link yet — `html.S`
+      collects them and the editor does not offer them
 - [ ] local persistence on the device itself, so a screen survives losing the
       backend
 - [ ] mounting the account's folders into the provisioned machine's home
