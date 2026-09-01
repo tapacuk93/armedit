@@ -166,6 +166,30 @@ platform_ticks:
 m_kbd:    .asciz "armedit: keyboard found\n"
 m_nokbd:  .asciz "armedit: no keyboard device\n"
 
+/*
+ * platform_idle - something is waiting; keep the machine listening.
+ *
+ * Called from the places that spin: waiting for a handshake, for an
+ * acknowledgement, for a reply. None of those has anything to do with the
+ * keyboard, and that is exactly the problem - the device's ring fills after a
+ * few dozen events and then stops delivering, so a Cmd+P that takes two
+ * seconds used to cost every key pressed during those two seconds.
+ *
+ * It does not deliver keys anywhere. It moves them off the device and into a
+ * ring the editor will read when it is free again, which is all that is needed
+ * for typing during a request to be typing that happened.
+ */
+        .globl  platform_idle
+platform_idle:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        LEA     x9, kbd_present
+        ldr     w9, [x9]
+        cbz     w9, 1f
+        bl      kbd_pump
+1:      ldp     x29, x30, [sp], #16
+        ret
+
         .section .bss
         .p2align 2
 kbd_present:    .space 4

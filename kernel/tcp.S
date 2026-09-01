@@ -133,7 +133,10 @@ SYM(tcp_connect):
 
         bl      platform_ticks
         mov     x21, x0                         /* when we started asking */
-1:      bl      tcp_pump
+1:      bl      platform_idle           /* keys pressed while waiting are keys
+                                           that happened, not keys that were
+                                           lost - see platform_idle */
+        bl      tcp_pump
         LEA     x9, t_state
         ldr     w9, [x9]
         cmp     w9, #S_OPEN
@@ -202,6 +205,7 @@ SYM(tcp_send):
 
         add     x19, x19, w21, uxtw
         sub     w20, w20, w21
+        bl      platform_idle
         bl      tcp_pump                        /* take their acknowledgements */
         b       1b
 
@@ -235,7 +239,10 @@ SYM(tcp_recv):
         bl      platform_ticks
         mov     x21, x0                         /* when anything last arrived */
 
-1:      LEA     x9, t_finished
+1:      bl      platform_idle           /* the reply is the long wait, and the
+                                           one somebody is most likely to be
+                                           typing through */
+        LEA     x9, t_finished
         ldr     w9, [x9]
         cbnz    w9, .Ltr_done
         LEA     x9, t_rxlen

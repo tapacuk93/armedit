@@ -257,8 +257,7 @@ kbd_init:
  * which is what a text editor wants: holding a letter should not type it twice
  * because it was also let go.
  */
-        .globl  kbd_getc
-kbd_getc:
+kbd_next:
         stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
@@ -365,6 +364,82 @@ kbd_getc:
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * A place for keys to wait, so that being busy is not the same as being deaf.
+ *
+ * The device's used ring holds 64 events, which is a few seconds of not
+ * looking and about twenty keystrokes - and a Cmd+P that has to reach a
+ * backend is exactly a few seconds of not looking. Past that the ring is full,
+ * the device stops delivering, and what the person typed while waiting is not
+ * late, it is gone.
+ *
+ * So the ring is drained on a timer that has nothing to do with the editor's
+ * loop: anything that waits calls platform_idle, and platform_idle empties the
+ * device into here. The editor still reads one key at a time and still cannot
+ * act on them until it is free, but the difference between "acted on late" and
+ * "never happened" is the whole of what a keyboard is for.
+ */
+/*
+ * Words, not bytes.
+ *
+ * platform_getc returns editor keys rather than characters, and the editor's
+ * keys do not fit in a byte: the arrows start at 0x100 and every Cmd
+ * combination is above them. A byte-wide ring truncated Cmd+P to plain "p",
+ * which typed a letter into the document instead of asking anything - a bug
+ * that looks exactly like the modifier not being pressed.
+ */
+#define KRING           256
+
+        .globl  kbd_pump
+kbd_pump:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+1:      bl      kbd_next
+        cmn     w0, #1
+        b.eq    9f
+        mov     w19, w0
+        LEA     x9, kring_head
+        ldr     w10, [x9]
+        LEA     x9, kring_tail
+        ldr     w11, [x9]
+        add     w12, w10, #1
+        and     w12, w12, #(KRING - 1)
+        cmp     w12, w11
+        b.eq    1b                      /* full: the oldest keys are the ones
+                                           worth keeping, so drop this one and
+                                           keep draining the device */
+        LEA     x9, kring
+        str     w19, [x9, w10, uxtw #2]
+        LEA     x9, kring_head
+        str     w12, [x9]
+        b       1b
+9:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+        .globl  kbd_getc
+kbd_getc:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      kbd_pump
+        LEA     x9, kring_head
+        ldr     w10, [x9]
+        LEA     x9, kring_tail
+        ldr     w11, [x9]
+        cmp     w10, w11
+        b.eq    1f
+        LEA     x9, kring
+        ldr     w0, [x9, w11, uxtw #2]
+        add     w11, w11, #1
+        and     w11, w11, #(KRING - 1)
+        LEA     x9, kring_tail
+        str     w11, [x9]
+        b       2f
+1:      mov     w0, #-1
+2:      ldp     x29, x30, [sp], #16
         ret
 
 /*
@@ -488,6 +563,10 @@ kbd_avail:      .space (6 + 2 * QSIZE)
 kbd_used:       .space (6 + 8 * QSIZE)
         .p2align 12
 kbd_buf:        .space (EVENT_SZ * QSIZE)
+        .p2align 2
+kring:          .space (4 * KRING)
+kring_head:     .space 4
+kring_tail:     .space 4
         .p2align 3
 kbd_dev:        .space 8
 kbd_qsize:      .space 4
