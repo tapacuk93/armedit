@@ -10,7 +10,37 @@
  */
         .section .text.boot
         .globl  _start
+/*
+ * The arm64 Linux image header, sixty-four bytes of it.
+ *
+ * Not because this is Linux, but because "an arm64 kernel image" is a format
+ * with exactly one definition, and every loader worth booting on implements
+ * that one: QEMU, macOS's Virtualization framework, and m1n1. A loader given
+ * an ELF instead will happily jump to its entry point and tell the kernel
+ * nothing - which is what used to happen here, and is why x0 held no device
+ * tree despite a comment saying it did. The machine was never asked in a way
+ * that obliged it to answer.
+ *
+ * The first word must be a branch, because the loader enters at offset zero.
+ * flags bit 3 says the image may be placed anywhere 2MB-aligned rather than as
+ * low as possible, which is only safe because everything here is PC-relative -
+ * LEA is adrp, the operation table holds offsets rather than addresses, and
+ * the vector base is installed from a computed address. An absolute pointer
+ * anywhere in this image would make that bit a lie.
+ */
 _start:
+        b       .Lreal                  /* code0: the loader enters here */
+        .long   0                       /* code1 */
+        .quad   0                       /* text_offset: we are position-independent */
+        .quad   __image_size            /* image_size, bss included */
+        .quad   8                       /* flags: 2MB-aligned, anywhere */
+        .quad   0                       /* res2 */
+        .quad   0                       /* res3 */
+        .quad   0                       /* res4 */
+        .ascii  "ARM\x64"               /* magic */
+        .long   0                       /* res5 */
+
+.Lreal:
         LEA     x1, __stack_top
         mov     sp, x1
 

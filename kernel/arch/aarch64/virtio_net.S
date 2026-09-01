@@ -23,6 +23,14 @@
  * a question every few seconds is not a workload; it is a conversation.
  */
 
+/*
+ * Where virtio lives when the machine does not say.
+ *
+ * QEMU's virt machine puts them here, and for years that was written down as a
+ * constant because QEMU was the only machine this booted on. It is the
+ * fallback now rather than the answer: dtb_or asks the device tree first, so
+ * the same binary works on a machine that puts them somewhere else.
+ */
 #define VIRTIO_BASE     0x0A000000
 #define VIRTIO_STRIDE   0x200
 #define VIRTIO_SLOTS    32
@@ -76,7 +84,10 @@ net_init:
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
 
-        mov     x19, #VIRTIO_BASE
+        LEA     x0, s_c_virtio_mmio
+        mov     x1, #VIRTIO_BASE
+        bl      SYM(dtb_or)
+        mov     x19, x0
         mov     w20, #0
 1:      cmp     w20, #VIRTIO_SLOTS
         b.hs    .Lni_none
@@ -405,6 +416,9 @@ net_mac:
         add     w10, w10, #1
         b       1b
 9:      ret
+
+        .section .rodata
+s_c_virtio_mmio: .asciz "virtio,mmio"
 
         .section .bss
 /* Shared with the device, so page-aligned - the MMU is off and unaligned

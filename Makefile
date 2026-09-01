@@ -35,6 +35,7 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S app/localops.S net/html.S net/browse.S kernel/dns.S \
+              kernel/dtb.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 # The approved operations, turned into a table the linker can place. Generated
@@ -72,7 +73,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve test clean
+.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test clean
 all: tty window kernel backend
 tty: $(B)/armedit-tty
 window: $(B)/armedit-window
@@ -103,6 +104,11 @@ $(B)/armedit-window: $(WIN_OBJ)
 
 $(B)/armeditd: $(BACKEND_OBJ)
 	$(LD_MACHO) -o $@ $^
+
+# The flat image every real loader wants. See tools/mkimg.py.
+kernel-img: $(B)/kernel.img
+$(B)/kernel.img: $(B)/kernel.elf tools/mkimg.py
+	@python3 tools/mkimg.py $< $@
 
 $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
 	ld.lld -T kernel/arch/$(KERNEL_ARCH)/link.ld -o $@ $(KERNEL_OBJ)
@@ -232,6 +238,18 @@ boot-fault:
 	  && sed -n '1,8p' $(B)/fault.log \
 	  || (echo "    the kernel faulted and said nothing - the vectors are not installed"; \
 	      cat $(B)/fault.log; exit 1)
+	@$(MAKE) --no-print-directory clean-kernel
+
+# What the machine says about itself. The first question on any unfamiliar
+# board is whether the addresses came out right, and this is how a kernel with
+# no debugger answers it.
+.PHONY: boot-dtb
+boot-dtb:
+	@$(MAKE) --no-print-directory clean-kernel
+	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DARMEDIT_DTB_DUMP
+	@$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) -nographic > $(B)/dtb.log 2>&1 & \
+	 P=$$!; sleep 5; kill $$P 2>/dev/null; true
+	@sed -n '1,10p' $(B)/dtb.log
 	@$(MAKE) --no-print-directory clean-kernel
 
 .PHONY: clean-kernel

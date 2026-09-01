@@ -15,6 +15,18 @@ kmain:
         stp     x29, x30, [sp, #-16]!
         mov     x29, sp
 
+/*
+ * The device tree, before anything else touches x0.
+ *
+ * It is the only thing the machine tells this kernel about itself, and it
+ * arrives in the register every function is about to use for its first
+ * argument. So it is put somewhere safe first and read afterwards - reading it
+ * here, before the first print, meant that any trouble in the parser happened
+ * with nothing on the wire and looked like a machine that never started.
+ */
+        LEA     x9, dtb_arg
+        str     x0, [x9]
+
         LEA     x0, m_boot
         bl      platform_puts
 
@@ -31,6 +43,62 @@ kmain:
         LEA     x0, m_boot
         add     x0, x0, #1
         ldr     w1, [x0]
+#endif
+
+        LEA     x9, dtb_arg             /* now that there is somewhere to complain to */
+        ldr     x0, [x9]
+        bl      SYM(dtb_init)
+
+#ifdef ARMEDIT_DTB_DUMP
+/*
+ * What the tree says about this machine, for when it is a new one.
+ *
+ * `make boot-dtb` turns this on. It exists because the first question on any
+ * unfamiliar machine is "did the addresses come out right", and answering it
+ * from inside a kernel with no debugger means printing them.
+ */
+        LEA     x0, m_dtb
+        bl      platform_puts
+        LEA     x9, dtb_arg             /* what actually arrived, in hex */
+        ldr     x19, [x9]
+        LEA     x0, m_two
+        bl      platform_puts
+        lsr     x0, x19, #32
+        bl      uart_puthex
+        mov     w0, w19
+        bl      uart_puthex
+        LEA     x0, m_nl2
+        bl      platform_puts
+        LEA     x0, m_two
+        bl      platform_puts
+        mov     x1, x19                 /* and the word it holds */
+        bl      SYM(dtb_peek)
+        bl      uart_puthex
+        LEA     x0, m_nl2
+        bl      platform_puts
+
+        bl      SYM(dtb_have)
+        LEA     x1, m_notree
+        LEA     x2, m_tree
+        cmp     w0, #0
+        csel    x0, x2, x1, ne
+        bl      platform_puts
+        LEA     x0, s_c_virtio
+        mov     w1, #0
+        bl      SYM(dtb_reg)
+        bl      dtb_show
+        LEA     x0, s_c_pl011
+        mov     w1, #0
+        bl      SYM(dtb_reg)
+        bl      dtb_show
+        LEA     x0, s_c_pci
+        mov     w1, #0
+        bl      SYM(dtb_reg)
+        bl      dtb_show
+        LEA     x0, s_c_gpu
+        mov     w1, #0
+        bl      SYM(dtb_reg)
+        bl      dtb_show
 #endif
 
         bl      platform_init           /* a display, if this machine has one */
@@ -103,12 +171,62 @@ kmain:
         ldp     x29, x30, [sp], #16
         ret
 
+#ifdef ARMEDIT_DTB_DUMP
+/*
+ * dtb_show - x0 = an address the tree gave us, x1 = its size.
+ *
+ * Prints "  <addr> +<size>" or "  (absent)". Absent is the interesting answer:
+ * it is how an unfamiliar machine says this kernel is looking for the wrong
+ * thing, which beats reading a register that is not there.
+ */
+dtb_show:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     x19, x0
+        mov     x20, x1
+        cbnz    x19, 1f
+        LEA     x0, m_absent
+        bl      platform_puts
+        b       9f
+1:      LEA     x0, m_two
+        bl      platform_puts
+        lsr     x0, x19, #32
+        bl      uart_puthex
+        mov     w0, w19
+        bl      uart_puthex
+        LEA     x0, m_plus
+        bl      platform_puts
+        mov     w0, w20
+        bl      uart_puthex
+        LEA     x0, m_nl2
+        bl      platform_puts
+9:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+#endif
+
         .section .bss
         .p2align 3
 keybuf:   .space 256
+        .p2align 3
+dtb_arg:  .space 8
 
         .section .rodata
 m_boot:   .asciz "armedit: boot\n"
+#ifdef ARMEDIT_DTB_DUMP
+m_dtb:    .asciz "armedit: what the device tree says (virtio, pl011, pci, gpu):\n"
+m_absent: .asciz "  (absent)\n"
+m_tree:   .asciz "  a tree was accepted\n"
+m_notree: .asciz "  no device tree arrived in x0\n"
+m_two:    .asciz "  "
+m_plus:   .asciz " +"
+m_nl2:    .asciz "\n"
+s_c_virtio: .asciz "virtio,mmio"
+s_c_pl011:  .asciz "arm,pl011"
+s_c_pci:    .asciz "pci-host-ecam-generic"
+s_c_gpu:    .asciz "simple-framebuffer"
+#endif
 m_ready:  .asciz "armedit: display up\n"
 m_net:    .asciz "armedit: network device found\n"
 m_nonet:  .asciz "armedit: no network device - Cmd+P has nowhere to go\n"
