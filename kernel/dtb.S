@@ -48,6 +48,14 @@
  * matching node has no children, which is true of every leaf device here -
  * state is reset when a child node begins, so a parent's properties would be
  * forgotten before its END_NODE arrives.
+ *
+ * And it only reports nodes that have a `reg`. That is the right answer for
+ * finding hardware and the wrong answer for asking whether a node exists: an
+ * interrupt-only node like the architected timer has no address, so dtb_reg
+ * says "not here" about something that is. It came up immediately - a probe
+ * for arm,armv8-timer under the Virtualization framework said absent, and the
+ * timer is certainly there. A caller wanting existence rather than an address
+ * needs a different question than this one.
  */
 
 #define FDT_MAGIC       0xD00DFEED
