@@ -567,6 +567,27 @@ public final class Armeditd {
     private static final java.util.regex.Pattern COLOUR_DIRECTIVE =
             java.util.regex.Pattern.compile("(?mi)^#COLou?R\\s+([0-9])\\s*$");
 
+    /**
+     * Did the reply ask the machine to restart?
+     *
+     * A field of its own, for the same reason the colour is: every directive
+     * is stripped before the text is handed to a device, so a client reading
+     * the text would find nothing. That is the correct behaviour for the text
+     * and the wrong place to look for the instruction.
+     *
+     * Named "restart" rather than "reboot" because the reply already carries a
+     * "reboot" that means something else - that boot code changed and a
+     * restart is owed eventually. One is an action and the other is a notice,
+     * and a client that confused them would restart on every request after a
+     * kernel change.
+     */
+    private static final java.util.regex.Pattern RESTART_DIRECTIVE =
+            java.util.regex.Pattern.compile("(?mi)^#REBOOT\\s*$");
+
+    static boolean restartIn(String reply) {
+        return reply != null && RESTART_DIRECTIVE.matcher(reply).find();
+    }
+
     static int colourIn(String reply) {
         if (reply == null) return -1;
         var m = COLOUR_DIRECTIVE.matcher(reply);
@@ -635,6 +656,28 @@ public final class Armeditd {
             "sort it manually", "do it without the library", "rewrite it as a
             loop" are not requests to run anything. They are changes to what is
             on the screen, so they take #WHOLE and a rewritten screen.
+
+            RESTARTING IT
+
+            "reboot", "restart", "reboot the machine" on a machine that is its
+            own operating system are asking it to start again. Answer with:
+
+                #REBOOT
+
+            alone, and nothing else. The editor draws whatever else you said
+            first and then restarts, so a word of explanation above it is read;
+            anything longer is not, because the machine will be gone.
+
+            This one is worth scripting, and worth scripting carefully: the
+            pattern must be the whole request and not merely contain the word.
+            "reboot" is a restart. "how do I reboot a linux box" is a question,
+            and answering it by restarting the machine somebody asked it on is
+            the worst available outcome.
+
+            Only the OS build can act on it. On macOS and iOS armedit is a
+            program inside somebody else's operating system, and the directive
+            is recognised and ignored there - so it is never wrong to answer,
+            only sometimes ineffective.
 
             HOW IT LOOKS
 
@@ -846,7 +889,8 @@ public final class Armeditd {
                         System.currentTimeMillis(), "cached", 0, instruction)));
                 return Res.json(200, Json.obj("text", withoutDirectives(hit.text()),
                         "model", hit.model(), "cached", true,
-                        "colour", colourIn(hit.text())));
+                        "colour", colourIn(hit.text()),
+                        "restart", restartIn(hit.text())));
             }
 
             // Nobody asked this exact thing before, but a model may have
@@ -863,7 +907,8 @@ public final class Armeditd {
                 return Res.json(200, Json.obj("text", withoutDirectives(scripted.text()),
                         "model", scripted.script().author(), "scripted", true,
                         "script", scripted.script().name(),
-                        "colour", colourIn(scripted.text())));
+                        "colour", colourIn(scripted.text()),
+                        "restart", restartIn(scripted.text())));
             }
         }
 
@@ -1028,7 +1073,7 @@ public final class Armeditd {
             }
             return Res.json(200, Json.obj("text", withoutDirectives(text),
                     "model", tier.name(), "whole", whole,
-                    "colour", colourIn(text),
+                    "colour", colourIn(text), "restart", restartIn(text),
                     "reboot", release.rebootPending()));
         } catch (Exception x) {
             return Res.json(502, Json.obj("error", "aicoin: " + x.getMessage()));

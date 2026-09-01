@@ -80,6 +80,22 @@ kedit_run:
         mov     w3, w21
         bl      SYM(applet_render)
         bl      platform_present        /* and only now to the display */
+
+/*
+ * And only now, with the reply on the glass, does the machine agree to stop.
+ *
+ * Somebody types "reboot" and presses Cmd+P. The answer comes back, is drawn,
+ * and then this happens - in that order, because a restart that beats the
+ * redraw looks exactly like a crash.
+ */
+        bl      SYM(backend_reboot_wanted)
+        cbz     w0, 1f
+        LEA     x0, m_restarting
+        bl      platform_puts
+        bl      platform_reboot
+        LEA     x0, m_declined
+        bl      platform_puts
+1:
         mov     w23, #0
 /*
  * Every key that is waiting, before drawing anything.
@@ -156,6 +172,8 @@ kedit_run:
         ret
 
         .section .rodata
+m_restarting: .asciz "armedit: restarting\n"
+m_declined:   .asciz "armedit: the machine declined to restart\n"
 /* A video answers to its kind, which is what a shared rule is written against. */
 s_unlabelled:
         .asciz ""

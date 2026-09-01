@@ -685,6 +685,45 @@ localop_starts:
         ret
 
 /*
+ * localop_reboot - x0 = text, out w0 = 1 if it asked for a restart.
+ *
+ * The same shape as localop_colour, and for the same reason: an operation that
+ * runs on the device has to be able to say the things an operation running on
+ * the server can say. This is the first directive that does something to the
+ * machine rather than to the document, which is exactly why it is a directive
+ * and not machine code.
+ *
+ * A downloaded page is allowed to compute an answer. It is not allowed to
+ * execute a privileged instruction: the difference between "this operation
+ * decided the answer is #REBOOT" and "this operation contains an hvc" is the
+ * difference between code whose worst outcome is a wrong answer and code whose
+ * worst outcome is anything at all. Both are gated by the same consortium, and
+ * only one of them is gated by anything else.
+ */
+        .globl  SYM(localop_reboot)
+SYM(localop_reboot):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+1:      ldrb    w9, [x19]
+        cbz     w9, 9f
+        cmp     w9, #'#'
+        b.ne    2f
+        add     x0, x19, #1
+        LEA     x1, s_reboot
+        bl      localop_starts
+        cbnz    w0, 8f
+2:      add     x19, x19, #1
+        b       1b
+8:      mov     w0, #1
+        b       10f
+9:      mov     w0, #0
+10:     ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/*
  * localop_strip - x0 = a buffer, rewritten in place.
  *
  * Drops whole lines that begin with a directive marker. The backend does this
@@ -734,6 +773,7 @@ SYM(localop_strip):
         RODATA
 s_colour:   .asciz "colour"
 s_color:    .asciz "color"
+s_reboot:   .asciz "reboot"
 
         BSS
         .p2align 3

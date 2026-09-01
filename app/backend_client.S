@@ -239,6 +239,24 @@ SYM(browse_via_backend):
         ldp     x29, x30, [sp], #80
         ret
 
+/*
+ * backend_reboot_wanted - out w0 = 1 once, if a restart was asked for.
+ *
+ * Asked by the main loop rather than acted on here, and the ordering is the
+ * point: a machine that restarts inside the request has eaten its own reply,
+ * and the person is left looking at a fresh boot with no idea whether anything
+ * happened. The loop draws first and asks afterwards.
+ *
+ * It answers once. A flag that stayed set would restart the machine again on
+ * the next pass, forever, which is a reboot loop caused by remembering.
+ */
+        .globl  SYM(backend_reboot_wanted)
+SYM(backend_reboot_wanted):
+        LEA     x9, pending_reboot
+        ldr     w0, [x9]
+        str     wzr, [x9]
+        ret
+
         .globl  SYM(backend_fetch)
 SYM(backend_fetch):
         stp     x29, x30, [sp, #-64]!
@@ -363,6 +381,10 @@ SYM(backend_fetch):
         LEA     x0, replybuf            /* the same directives, read here */
         bl      SYM(localop_colour)
         LEA     x9, reply_colour
+        str     w0, [x9]
+        LEA     x0, replybuf
+        bl      SYM(localop_reboot)
+        LEA     x9, reply_reboot
         str     w0, [x9]
         LEA     x0, replybuf
         bl      SYM(localop_strip)
@@ -621,6 +643,25 @@ SYM(backend_fetch):
         LEA     x9, reply_colour
         str     w10, [x9]
 7:
+/*
+ * And whether it asked the machine to restart.
+ *
+ * A field, not the text. Every directive is stripped before the server hands
+ * the text over - which is right, and means a client reading the text for one
+ * finds nothing. The offline path reads the text instead, because there the
+ * operation's output has not been through a server; both end up setting the
+ * same flag, which is the only thing that matters downstream.
+ */
+        LEA     x9, reply_reboot
+        str     wzr, [x9]
+        LEA     x0, respbuf
+        LEA     x1, s_key_restart
+        bl      SYM(str_find)
+        cbz     x0, 6f
+        LEA     x9, reply_reboot        /* recomputed: str_find ate x9-x15 */
+        mov     w10, #1
+        str     w10, [x9]
+6:
 
 /*
  * Did the far side say its answer supersedes the whole screen rather than the
@@ -637,7 +678,8 @@ SYM(backend_fetch):
         str     w10, [x9]
 /*
  * Empty means nothing came back at all - not "no text came back". A reply that
- * changes the colour and nothing else has no text by design: the line the
+ * changes the colour, or restarts the machine, and nothing else has no text by
+ * design: the line the
  * person typed is meant to vanish and be replaced by the editor looking
  * different. Treating that as an empty reply printed "NOTHING CHANGED" over a
  * request that had, in fact, been understood and answered.
@@ -649,6 +691,11 @@ SYM(backend_fetch):
         ldr     w10, [x9]
         cmn     w10, #1
         b.ne    5f
+        LEA     x9, reply_reboot        /* and so is "restart", which has even
+                                           less to say for itself - the machine
+                                           is about to be gone */
+        ldr     w10, [x9]
+        cbnz    w10, 5f
         LEA     x9, fetch_status
         mov     w11, #ST_EMPTY
         str     w11, [x9]
@@ -699,9 +746,19 @@ SYM(backend_apply):
 3:      LEA     x0, m_empty
 .Lap_say:
         bl      SYM(editor_insert_str)
-        b       .Lap_out
+        b       .Lap_reboot
 
 .Lap_ok:
+        LEA     x9, reply_reboot        /* asked for last, so whatever else the
+                                           answer did is on screen first - a
+                                           machine that restarts before showing
+                                           its reply has eaten it */
+        ldr     w0, [x9]
+        cbz     w0, 6f
+        LEA     x9, pending_reboot
+        mov     w10, #1
+        str     w10, [x9]
+6:
         LEA     x9, reply_colour        /* a named colour is a real answer, */
         ldr     w0, [x9]                /* even when no text came with it */
         cmn     w0, #1
@@ -728,7 +785,7 @@ SYM(backend_apply):
         bl      SYM(editor_replace)
         bl      SYM(editor_selection_clear)
         bl      SYM(editor_mark_synced)
-        b       .Lap_out
+        b       .Lap_reboot
 4:      bl      SYM(editor_length)      /* Cmd+Enter: on the end, keeping all
                                            of what is already there */
         bl      SYM(editor_cursor_set)
@@ -740,6 +797,7 @@ SYM(backend_apply):
         bl      SYM(editor_insert_str)
         bl      SYM(editor_mark_synced)
 
+.Lap_reboot:
 .Lap_out:
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #48
@@ -952,6 +1010,7 @@ s_path_behav:       .asciz "/api/behaviours"
 s_rule_dragmove:    .asciz " drag move"
 s_whole_true:       .asciz "\"whole\":true"
 s_key_colour:       .asciz "\"colour\":"
+s_key_restart:      .asciz "\"restart\":true"
 s_nothing:          .asciz ""
 s_json_url:         .asciz "{\"url\":\""
 s_path_fetch:       .asciz "/api/fetch"
@@ -999,6 +1058,8 @@ subjtext:   .space 64
 targetbuf:  .space 32
 reply_whole: .space 8
 reply_colour: .space 8
+reply_reboot: .space 8
+pending_reboot: .space 8
 bodybuf:    .space BODY_SZ
 hdrbuf:     .space HDRS_SZ
 respbuf:    .space RESP_SZ

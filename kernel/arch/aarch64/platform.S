@@ -163,6 +163,84 @@ platform_ticks:
         ret
 
 /*
+ * platform_reboot - start again.
+ *
+ * PSCI SYSTEM_RESET, through the hypervisor call. Every machine this kernel
+ * targets implements PSCI: QEMU does, macOS's Virtualization framework does,
+ * and on real Apple hardware m1n1 does. It is the one way to restart that does
+ * not require knowing anything about the board.
+ *
+ * The conduit is HVC and not SMC. A device tree says which through the psci
+ * node's `method` property, and this does not read it - not out of laziness
+ * but because guessing wrong is not a failed reboot: SMC from EL1 with no
+ * secure monitor beneath is an undefined instruction, which faults, which on
+ * this kernel means halting with a report about a reboot that never happened.
+ * A call that returns is a machine that declined, and returning is safe.
+ *
+ * It does not come back when it works, so there is nothing to report.
+ */
+        .globl  platform_reboot
+platform_reboot:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+
+/*
+ * Which instruction makes the call.
+ *
+ * The device tree says, through the psci node's `method`, and asking is not
+ * pedantry: QEMU's virt machine with EL2 disabled expects SMC, and an HVC
+ * there does nothing at all - which is what happened the first time this ran.
+ * No fault, no restart, no message. Guessing the other way is worse: SMC with
+ * no monitor beneath is an undefined instruction, and this kernel would report
+ * a fault about a reboot instead of performing one.
+ *
+ * Three spellings of the same node, because the property is stable and the
+ * compatible string is not.
+ */
+        mov     w19, #0                 /* 0 unknown, 1 hvc, 2 smc */
+        LEA     x0, s_psci_02
+        bl      reboot_method
+        cbnz    w0, 1f
+        LEA     x0, s_psci_10
+        bl      reboot_method
+        cbnz    w0, 1f
+        LEA     x0, s_psci
+        bl      reboot_method
+1:      mov     w19, w0
+
+        movz    w0, #0x0009
+        movk    w0, #0x8400, lsl #16    /* PSCI SYSTEM_RESET */
+        cmp     w19, #2
+        b.eq    2f
+        hvc     #0                      /* hvc, and by default */
+        b       3f
+2:      smc     #0
+3:      mov     w0, #-1                 /* still here: it declined */
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/* reboot_method - x0 = a compatible string, out w0 = 0 none, 1 hvc, 2 smc. */
+reboot_method:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        mov     w1, #0
+        LEA     x2, s_method
+        bl      SYM(dtb_prop)
+        cbz     x0, 9f
+        ldrb    w9, [x0]
+        cmp     w9, #'s'
+        b.ne    8f
+        mov     w0, #2
+        b       10f
+8:      mov     w0, #1
+        b       10f
+9:      mov     w0, #0
+10:     ldp     x29, x30, [sp], #16
+        ret
+
+/*
  * platform_idle - something is waiting; keep the machine listening.
  *
  * Called from the places that spin: waiting for a handshake, for an
@@ -187,6 +265,10 @@ platform_idle:
         ret
 
         .section .rodata
+s_psci_02: .asciz "arm,psci-0.2"
+s_psci_10: .asciz "arm,psci-1.0"
+s_psci:    .asciz "arm,psci"
+s_method:  .asciz "method"
 m_kbd:    .asciz "armedit: keyboard found\n"
 m_nokbd:  .asciz "armedit: no keyboard device\n"
 

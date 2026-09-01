@@ -150,8 +150,30 @@ SYM(dtb_have):
  * match against any of them counts - that is what the property means, and a
  * driver that only accepted the first would refuse hardware it can drive.
  */
+/*
+ * dtb_prop - x0 = a compatible string, w1 = which match, x2 = a property name.
+ *   out x0 = the property's bytes, x1 = how many, or x0 = 0.
+ *
+ * The same walk dtb_reg does, stopping at a property the caller names instead
+ * of at "reg". It exists because the first thing that needed it was the PSCI
+ * node, which has no address at all - only a `method` saying whether the call
+ * is hvc or smc - and getting that wrong is not a failed reboot but an
+ * undefined instruction.
+ */
+        .globl  SYM(dtb_prop)
+SYM(dtb_prop):
+        LEA     x9, dtb_want
+        str     x2, [x9]
+        b       dtb_walk
+
         .globl  SYM(dtb_reg)
 SYM(dtb_reg):
+        LEA     x9, dtb_want
+        LEA     x10, s_reg
+        str     x10, [x9]
+        b       dtb_walk
+
+dtb_walk:
         stp     x29, x30, [sp, #-96]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
@@ -257,9 +279,12 @@ SYM(dtb_reg):
 
 3:      LEA     x10, dtb_name
         ldr     x0, [x10]
-        LEA     x1, s_reg
+        LEA     x1, dtb_want            /* whichever property was asked for */
+        ldr     x1, [x1]
         bl      dtb_streq
         cbz     w0, .Ldr_advance
+        LEA     x10, dtb_found
+        str     x28, [x10]              /* where its bytes are */
         /* Two cells of address, then two of size - read as four words. */
         mov     x1, x28
         bl      dtb_be32
@@ -286,8 +311,24 @@ SYM(dtb_reg):
         b       .Ldr_token
 
 .Ldr_found:
+        /*
+         * "reg" callers want the address decoded; everyone else wants the
+         * bytes. Told apart by which property was asked for, since decoding a
+         * `method` string as two address cells would return nonsense that
+         * looks like an address.
+         */
+        LEA     x9, dtb_want
+        ldr     x0, [x9]
+        LEA     x1, s_reg
+        bl      dtb_streq
+        cbz     w0, 1f
         mov     x0, x25
         mov     x1, x26
+        b       .Ldr_out
+1:      LEA     x9, dtb_found
+        ldr     x0, [x9]
+        LEA     x9, dtb_len
+        ldr     w1, [x9]
         b       .Ldr_out
 .Ldr_none:
         mov     x0, #0
@@ -382,8 +423,19 @@ s_reg:        .asciz "reg"
 
         BSS
         .p2align 3
+/*
+ * Eight-byte fields first, then the four-byte ones.
+ *
+ * Not tidiness. A pointer placed after a lone 32-bit field starts four bytes
+ * into an eight-byte slot, and storing to it is an unaligned 64-bit access,
+ * which with the MMU off is a data abort. This file's own header says so about
+ * the device tree's data and it happened here, in this file's own variables,
+ * the first time a pointer was added in the middle.
+ */
 dtb_base:        .space 8
 dtb_name:        .space 8
+dtb_want:        .space 8
+dtb_found:       .space 8
 dtb_len:         .space 4
 dtb_addr_cells:  .space 4
 dtb_size_cells:  .space 4

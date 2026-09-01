@@ -54,7 +54,7 @@ BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S net/sock.S
-WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S net/html.S net/browse.S $(FONT_SRC))
+WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S app/reboot.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S net/html.S net/browse.S $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC)) $(B)/elf/ops_table.o
 
 QEMU      := qemu-system-aarch64
@@ -119,7 +119,7 @@ $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
 # business knowing about.
 IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 IOS_ARCH  := arm64-apple-ios16.0-simulator
-IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S \
+IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S app/reboot.S editor/editor.S \
              editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S net/str.S net/http.S \
              net/sock.S \
              net/dns.S net/html.S net/browse.S $(FONT_SRC)
