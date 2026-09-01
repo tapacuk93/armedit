@@ -145,6 +145,100 @@ SYM(backend_submit):
         ldp     x29, x30, [sp], #32
         ret
 
+/*
+ * browse_via_backend - x0 = what they wrote, x1 = out, w2 = capacity.
+ *   out w0 = bytes of text, or -1.
+ *
+ * The other half of net/browse.S. It lives here because reaching the backend
+ * means the key, the address and the request machinery, all of which are this
+ * file's business and none of which a page fetcher should have to know about.
+ *
+ * The backend gets the page as text, having already run whatever the page
+ * needed run. That is the trade for the round trip: it is the only route that
+ * works for https, and for a machine that cannot resolve a name at all.
+ */
+        .globl  SYM(browse_via_backend)
+SYM(browse_via_backend):
+        stp     x29, x30, [sp, #-80]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        mov     x23, x0                 /* what they wrote */
+        mov     x24, x1                 /* out             */
+        mov     w22, w2                 /* capacity        */
+
+        bl      resolve_backend
+        mov     x19, x0
+        mov     x20, x1
+        cbz     x20, .Lbv_fail
+
+        LEA     x0, hdrbuf
+        LEA     x1, s_hdr_key
+        bl      SYM(str_copy)
+        mov     x1, x20
+        bl      SYM(str_copy)
+        LEA     x1, s_hdr_tail
+        bl      SYM(str_copy)
+
+        LEA     x0, bodybuf             /* {"url":"..."} */
+        LEA     x1, s_json_url
+        bl      SYM(str_copy)
+        mov     x1, x23
+        mov     w2, #1024
+        bl      SYM(json_escape)
+        LEA     x1, s_json_tail
+        bl      SYM(str_copy)
+
+        LEA     x21, req
+        mov     x0, x19
+        add     x1, x21, #REQ_IP
+        add     x2, x21, #REQ_PORT
+        bl      SYM(net_parse_addr)
+        tbnz    w0, #31, .Lbv_fail
+
+        LEA     x0, s_post
+        str     x0, [x21, #REQ_METHOD]
+        LEA     x0, s_path_fetch
+        str     x0, [x21, #REQ_PATH]
+        str     x19, [x21, #REQ_HOST]
+        LEA     x0, hdrbuf
+        str     x0, [x21, #REQ_HDRS]
+        LEA     x0, bodybuf
+        str     x0, [x21, #REQ_BODY]
+        LEA     x0, bodybuf
+        bl      SYM(str_len)
+        str     w0, [x21, #REQ_BODYLEN]
+        LEA     x0, respbuf
+        str     x0, [x21, #REQ_OUT]
+        mov     w0, #RESP_SZ
+        str     w0, [x21, #REQ_OUTCAP]
+
+        mov     x0, x21
+        bl      SYM(http_request)
+        cmp     w0, #0
+        b.le    .Lbv_fail
+
+        LEA     x0, respbuf
+        bl      SYM(http_body)
+        LEA     x1, s_key_text
+        bl      SYM(json_find)
+        cbz     x0, .Lbv_fail
+        mov     x1, x0
+        mov     x0, x24
+        mov     w2, w22
+        bl      SYM(json_unescape)
+        b       .Lbv_out
+
+.Lbv_fail:
+        mov     w0, #-1
+.Lbv_out:
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #80
+        ret
+
         .globl  SYM(backend_fetch)
 SYM(backend_fetch):
         stp     x29, x30, [sp, #-64]!
@@ -174,6 +268,56 @@ SYM(backend_fetch):
         LEA     x9, region_b
         str     w1, [x9]
 20:
+
+/* ---- a site is a thing the editor opens ---------------------------------
+ *
+ * "open google", then Cmd+Enter. The same key that hands a screen to a model
+ * hands it to a website, because from here they are the same request with
+ * different sources: something is asked for, and text comes back.
+ *
+ * Which route the page arrives by is not this file's decision - net/browse.S
+ * tries directly, falls back to the backend, and remembers which worked. What
+ * matters here is that neither of those is a different feature. There is no
+ * "browser mode": there is a line that happens to name a site.
+ */
+        cmp     w23, #ED_SUBMIT
+        b.ne    .Lno_browse
+        LEA     x0, region_a
+        LEA     x1, region_b
+        bl      SYM(editor_line_bounds)
+        LEA     x9, region_a
+        ldr     w0, [x9]
+        LEA     x9, region_b
+        ldr     w1, [x9]
+        LEA     x2, instrbuf
+        mov     w3, #CTX_SZ
+        bl      SYM(editor_range_text)
+
+        LEA     x0, instrbuf
+        LEA     x1, s_open
+        bl      SYM(str_starts)
+        cbz     w0, .Lno_browse
+
+        LEA     x0, instrbuf
+        add     x0, x0, #5              /* past "open " */
+        LEA     x1, replybuf
+        mov     w2, #REPLY_SZ
+        bl      SYM(browse_open)
+        cmn     w0, #1
+        b.eq    .Lno_browse             /* neither route worked: let the normal
+                                           path have it, since "open the door"
+                                           is a sentence too */
+        LEA     x9, replybuf
+        strb    wzr, [x9, w0, uxtw]
+        LEA     x9, reply_colour
+        mov     w10, #-1
+        str     w10, [x9]
+        LEA     x9, reply_whole
+        str     wzr, [x9]
+        LEA     x9, fetch_status
+        str     wzr, [x9]               /* ST_OK */
+        b       .Lsub_out
+.Lno_browse:
 
 /* ---- what this build already knows, before anything is asked -------------
  *
@@ -809,6 +953,9 @@ s_rule_dragmove:    .asciz " drag move"
 s_whole_true:       .asciz "\"whole\":true"
 s_key_colour:       .asciz "\"colour\":"
 s_nothing:          .asciz ""
+s_json_url:         .asciz "{\"url\":\""
+s_path_fetch:       .asciz "/api/fetch"
+s_open:             .asciz "open "
 s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""

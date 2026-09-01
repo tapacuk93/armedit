@@ -69,6 +69,7 @@ public final class Armeditd {
     private final Consensus consensus = new Consensus();
     private final Behaviours behaviours;
     private final Catalogue catalogue;
+    private final Fetch fetcher = new Fetch();
     private final Consortium consortium;
     private final Distro distro;
     private final String publicAddr;
@@ -234,6 +235,7 @@ public final class Armeditd {
             case "/api/run/result" -> routeRunResult(r);
             case "/api/agents" -> routeAgentsList(r);
             case "/api/stats" -> routeStats(r);
+            case "/api/fetch" -> routeFetch(r);
             case "/api/behaviours" -> routeBehaviours(r);
             case "/api/ops" -> routeOps(r);
             case "/api/consensus" -> routeConsensus(r);
@@ -1220,6 +1222,34 @@ public final class Armeditd {
                 + ",\"catalogue\":" + catalogue.models().size()
                 + ",\"catalogue_error\":\"" + Json.escape(catalogue.lastError()) + "\"}";
         return new Res(200, "application/json", body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Fetch a page for a device that cannot fetch it itself.
+     *
+     * The editor tries directly first and only arrives here when that failed -
+     * no TLS on the device, or no resolver on a bare-metal machine. Answering
+     * with text rather than markup keeps both routes ending in the same shape,
+     * so the one that gets less use cannot quietly rot.
+     */
+    private Res routeFetch(Req r) {
+        if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        String url = Json.parse(r.body()).get("url");
+        var page = fetcher.get(url);
+        if (!page.ok()) {
+            // A failure is an answer too, and it goes on the screen as text -
+            // the device has no other channel to explain itself through, and
+            // "could not open <site>: <why>" is more use than an empty screen.
+            return Res.json(200, Json.obj("text",
+                    "could not open " + (url == null ? "that" : url) + ": " + page.error(),
+                    "fetched", false));
+        }
+        System.out.printf("armedit: %s fetched %s (%d chars)%n",
+                account.id(), page.url(), page.text().length());
+        return Res.json(200, Json.obj("text", page.text(), "fetched", true,
+                "url", page.url()));
     }
 
     private Res routeSession(Req r, boolean up) {

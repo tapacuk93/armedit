@@ -162,10 +162,6 @@ platform_ticks:
                                            beats a division by zero */
         ret
 
-        .section .rodata
-m_kbd:    .asciz "armedit: keyboard found\n"
-m_nokbd:  .asciz "armedit: no keyboard device\n"
-
 /*
  * platform_idle - something is waiting; keep the machine listening.
  *
@@ -189,6 +185,10 @@ platform_idle:
         bl      kbd_pump
 1:      ldp     x29, x30, [sp], #16
         ret
+
+        .section .rodata
+m_kbd:    .asciz "armedit: keyboard found\n"
+m_nokbd:  .asciz "armedit: no keyboard device\n"
 
         .section .bss
         .p2align 2

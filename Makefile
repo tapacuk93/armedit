@@ -34,7 +34,7 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               kernel/net.S kernel/tcp.S kernel/sock.S \
               net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
-              net/str.S app/localops.S \
+              net/str.S app/localops.S net/html.S net/browse.S kernel/dns.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 # The approved operations, turned into a table the linker can place. Generated
@@ -53,7 +53,7 @@ BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S net/sock.S
-WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S $(FONT_SRC))
+WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S net/html.S net/browse.S $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC)) $(B)/elf/ops_table.o
 
 QEMU      := qemu-system-aarch64
@@ -255,6 +255,19 @@ $(B)/optest: $(TEST_OBJ)
 
 $(B)/localtest: $(LOCAL_OBJ)
 	$(LD_MACHO) -o $@ $(LOCAL_OBJ)
+
+BROWSE_OBJ := $(B)/macho/tests/browsetest.o $(B)/macho/net/browse.o \
+              $(B)/macho/net/html.o $(B)/macho/net/dns.o $(B)/macho/net/sock.o \
+              $(B)/macho/net/str.o $(B)/macho/app/env.o $(B)/macho/net/http.o \
+              $(B)/macho/app/backend_client.o $(B)/macho/app/ops.o \
+              $(B)/macho/app/localops.o $(B)/macho/ops_table.o \
+              $(B)/macho/editor/editor.o $(B)/macho/editor/applet.o \
+              $(B)/macho/gfx/image.o $(B)/macho/gfx/video.o \
+              $(B)/macho/gfx/demo_clip.o $(B)/macho/font/font.o \
+              $(B)/macho/font/render.o $(B)/macho/app/clock.o
+
+$(B)/browsetest: $(BROWSE_OBJ)
+	$(LD_MACHO) -o $@ $(BROWSE_OBJ)
 
 .PHONY: test
 test: $(B)/optest $(B)/localtest

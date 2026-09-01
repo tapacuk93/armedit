@@ -15,6 +15,11 @@
 #define SYS_CLOSE       6
 #define SYS_SOCKET      97
 #define SYS_CONNECT     98
+#define SYS_SETSOCKOPT  105
+#define SOL_SOCKET      0xFFFF
+#define SO_RCVTIMEO     0x1006
+#define SO_SNDTIMEO     0x1005
+#define READ_SECONDS    20
 #define AF_INET         2
 #define SOCK_STREAM     1
 
@@ -56,6 +61,46 @@ SYM(sock_open):
         mov     x16, #SYS_CONNECT
         svc     #0x80
         b.cs    2f
+
+/*
+ * A read that can wait forever is a program that can stop forever.
+ *
+ * Every read here is on a socket to somebody else's machine, and "somebody
+ * else's machine stops answering without closing the connection" is not an
+ * unusual event - it is what a dropped route, a stalled proxy or an overloaded
+ * server looks like from this side. Without a timeout the editor waits on it
+ * with no caret, no key handling and no way out, which is a hang that looks
+ * exactly like a crash.
+ *
+ * Twenty seconds is long enough that a slow page still arrives and short
+ * enough that a dead one gives up while somebody is still watching. Failing to
+ * set it is not fatal: the socket still works, it just works the old way, and
+ * refusing to connect over it would trade a rare hang for a common failure.
+ */
+        LEA     x10, rcvtimeo
+        mov     x11, #READ_SECONDS
+        str     x11, [x10]
+        str     wzr, [x10, #8]
+        mov     w0, w19
+        mov     x1, #SOL_SOCKET
+        mov     x2, #SO_RCVTIMEO
+        LEA     x3, rcvtimeo
+        mov     x4, #16
+        mov     x16, #SYS_SETSOCKOPT
+        svc     #0x80
+
+        LEA     x10, rcvtimeo
+        mov     x11, #READ_SECONDS
+        str     x11, [x10]
+        str     wzr, [x10, #8]
+        mov     w0, w19
+        mov     x1, #SOL_SOCKET
+        mov     x2, #SO_SNDTIMEO
+        LEA     x3, rcvtimeo
+        mov     x4, #16
+        mov     x16, #SYS_SETSOCKOPT
+        svc     #0x80
+
         mov     w0, w19
         b       9f
 2:      mov     w0, w19                 /* connected to nothing: let it go */
@@ -96,3 +141,4 @@ SYM(sock_close):
         BSS
         .p2align 3
 sockaddr:   .space 16
+rcvtimeo:   .space 16
