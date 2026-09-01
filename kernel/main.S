@@ -49,6 +49,41 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
+#ifdef ARMEDIT_PROBE_COMPAT
+/*
+ * One bit of output from a machine that has no console.
+ *
+ * macOS's Virtualization framework provides no legacy serial port - every
+ * device it offers is virtio, and speaking virtio is precisely what this
+ * kernel cannot do until it knows where the transport is. So the first
+ * question about an unfamiliar machine cannot be asked through a console,
+ * because the console is the thing being asked about.
+ *
+ * PSCI is the way out. Every virtual machine implements SYSTEM_OFF, and a
+ * guest that powers itself off is a guest the host can see stop. So: look for
+ * the node, and power off if it is there. Halted means yes; still running
+ * means no. One bit per boot is slow and it is enough to find a transport.
+ */
+#ifdef ARMEDIT_PROBE_X0
+        LEA     x9, dtb_arg             /* was x0 even a pointer? */
+        ldr     x0, [x9]
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_TREE)
+        bl      SYM(dtb_have)           /* was there a tree at all? */
+        cbz     w0, 1f
+#else
+        LEA     x0, s_probe
+        mov     w1, #0
+        bl      SYM(dtb_reg)
+        cbz     x0, 1f
+#endif
+        movz    w0, #0x0008
+        movk    w0, #0x8400, lsl #16    /* PSCI SYSTEM_OFF */
+        hvc     #0
+1:      wfe                             /* not found: sit here and be seen to */
+        b       1b
+#endif
+
 #ifdef ARMEDIT_DTB_DUMP
 /*
  * What the tree says about this machine, for when it is a new one.
@@ -214,6 +249,9 @@ dtb_arg:  .space 8
 
         .section .rodata
 m_boot:   .asciz "armedit: boot\n"
+#if defined(ARMEDIT_PROBE_COMPAT) && !defined(ARMEDIT_PROBE_TREE)
+s_probe:  .asciz ARMEDIT_PROBE_COMPAT
+#endif
 #ifdef ARMEDIT_DTB_DUMP
 m_dtb:    .asciz "armedit: what the device tree says (virtio, pl011, pci, gpu):\n"
 m_absent: .asciz "  (absent)\n"

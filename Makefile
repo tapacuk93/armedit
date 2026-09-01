@@ -243,6 +243,17 @@ boot-fault:
 # What the machine says about itself. The first question on any unfamiliar
 # board is whether the addresses came out right, and this is how a kernel with
 # no debugger answers it.
+# armedit under macOS's Virtualization framework: a real Apple CPU at EL1,
+# which is the closest test bed to the eventual bare-metal target. Needs the
+# virtualization entitlement, so it is ad-hoc signed with one.
+$(B)/vzrun: tools/vzrun.swift tools/vz.plist
+	swiftc -O -o $@ tools/vzrun.swift
+	@codesign --entitlements tools/vz.plist -s - $@
+
+.PHONY: vz
+vz: $(B)/vzrun $(B)/kernel.img
+	VZRUN_SECONDS=$${VZRUN_SECONDS:-10} $(B)/vzrun $(B)/kernel.img
+
 .PHONY: boot-dtb
 boot-dtb:
 	@$(MAKE) --no-print-directory clean-kernel
