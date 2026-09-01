@@ -226,9 +226,195 @@ SYM(pci_cap):
 9:      mov     x0, #0
         ret
 
+
+/*
+ * pci_assign - x0 = a config-space address. Give this device its addresses.
+ *
+ * On QEMU something has already done this and the BARs read back as real
+ * addresses. Under macOS's Virtualization framework they are all zero: there
+ * is no firmware between the machine and the kernel, and a Linux guest assigns
+ * its own. So must this one, or every BAR is nothing and every device is
+ * unreachable - which is exactly how the console failed, silently, on a
+ * machine whose only way to report the failure was that console.
+ *
+ * The window comes from the host bridge's `ranges`, because inventing an
+ * address would put a device somewhere the bridge does not forward.
+ *
+ * Sizing is the standard trick: write ones, read back, and the bits that
+ * stayed zero are the ones the device does not decode. The original value is
+ * not restored, because it was zero - this only runs on unassigned devices,
+ * and running it on an assigned one would move hardware somebody else is
+ * already talking to.
+ */
+        .globl  SYM(pci_assign)
+SYM(pci_assign):
+        stp     x29, x30, [sp, #-80]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        str     x25, [sp, #64]
+        mov     x19, x0
+
+        bl      pci_window              /* where this bridge forwards memory */
+        cbz     x0, .Lpa_out
+        mov     x20, x0                 /* the next free address */
+
+        mov     w21, #0                 /* which BAR */
+.Lpa_bar:
+        cmp     w21, #6
+        b.hs    .Lpa_done
+        add     x22, x19, #CFG_BAR0
+        add     x22, x22, w21, uxtw #2
+
+        ldr     w23, [x22]
+        tbnz    w23, #0, .Lpa_next      /* I/O: this machine has none */
+        and     w24, w23, #6
+        cmp     w24, #4                 /* 64-bit, so it takes two slots */
+        cset    w25, eq
+
+        /* How much space does it want? */
+        mov     w9, #-1
+        str     w9, [x22]
+        ldr     w9, [x22]
+        and     w9, w9, #0xFFFFFFF0
+        cbz     w9, .Lpa_skip           /* decodes nothing: unimplemented */
+        neg     w9, w9                  /* ~mask + 1, which is the size */
+
+        /* Align the cursor up to that size, then take it. */
+        sub     x10, x9, #1
+        add     x20, x20, x10
+        bic     x20, x20, x10
+
+        str     w20, [x22]
+        cbz     w25, 1f
+        lsr     x10, x20, #32
+        str     w10, [x22, #4]
+1:      add     x20, x20, x9
+
+.Lpa_skip:
+        cbz     w25, .Lpa_next
+        add     w21, w21, #1            /* the upper half of a 64-bit BAR */
+.Lpa_next:
+        add     w21, w21, #1
+        b       .Lpa_bar
+
+.Lpa_done:
+        mov     x0, x19
+        bl      SYM(pci_enable)         /* only now is it safe to switch on */
+.Lpa_out:
+        ldr     x25, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #80
+        ret
+
+/*
+ * pci_window - out x0 = the first address the bridge forwards to memory.
+ *
+ * From `ranges`, whose entries are seven cells each: three describing the
+ * address on the PCI side, two on the CPU side, two of size. The top byte of
+ * the first cell says what kind of space it is, and 0b10 in bits 25:24 means
+ * 32-bit memory - which is what is wanted here, because a 32-bit BAR cannot
+ * hold anything else and the console's BARs are 32-bit.
+ *
+ * Remembered after the first call, since the allocator must not hand the same
+ * address to two devices by starting over.
+ */
+        .globl  SYM(pci_window)
+SYM(pci_window):
+        stp     x29, x30, [sp, #-80]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        str     x25, [sp, #64]
+
+        LEA     x9, pci_next
+        ldr     x0, [x9]
+        cbnz    x0, 9f
+
+        LEA     x0, s_c_ecam
+        mov     w1, #0
+        LEA     x2, s_ranges
+        bl      SYM(dtb_prop)
+        cbz     x0, 8f
+        mov     x19, x0
+        mov     w20, w1                 /* how many bytes of it */
+
+/*
+ * Either kind of memory range, 32-bit preferred.
+ *
+ * Bits 25:24 say which: 0b10 is 32-bit memory and 0b11 is 64-bit. QEMU offers
+ * both; the Virtualization framework offers only 64-bit, and looking for the
+ * 32-bit one alone found nothing at all - so every BAR stayed unassigned and
+ * the console stayed silent about it.
+ *
+ * The preference matters because a 32-bit BAR cannot hold an address above
+ * four gigabytes. Taking the low window when there is one keeps such a device
+ * addressable; when there is not, a device with only 32-bit BARs is one this
+ * cannot place, and that will be a real limitation on a real machine rather
+ * than a hypothetical.
+ */
+        mov     w21, #0
+        mov     x24, #0                 /* the best window so far */
+        mov     w25, #0                 /* what kind it was */
+1:      add     w9, w21, #28
+        cmp     w9, w20
+        b.hi    3f
+        add     x0, x19, w21, uxtw
+        bl      pci_be32                /* phys.hi */
+        ubfx    w9, w0, #24, #2
+        cmp     w9, #2
+        b.eq    2f
+        cmp     w9, #3
+        b.ne    4f
+2:      cmp     w25, #2                 /* already have a 32-bit one */
+        b.eq    4f
+        mov     w25, w9
+        add     x0, x19, w21, uxtw
+        add     x0, x0, #12             /* past three child cells */
+        bl      pci_be32                /* the CPU-side address, high half */
+        mov     x10, x0
+        lsl     x10, x10, #32
+        add     x0, x19, w21, uxtw
+        add     x0, x0, #16
+        bl      pci_be32
+        orr     x24, x10, x0
+4:      add     w21, w21, #28
+        b       1b
+3:      cbz     x24, 8f
+        LEA     x9, pci_next
+        str     x24, [x9]
+        mov     x0, x24
+        b       9f
+
+8:      mov     x0, #0
+9:      ldr     x25, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #80
+        ret
+
+/* pci_be32 - x0 = where, out w0 = the big-endian word there, read byte-wise. */
+pci_be32:
+        ldrb    w9, [x0]
+        ldrb    w10, [x0, #1]
+        ldrb    w11, [x0, #2]
+        ldrb    w12, [x0, #3]
+        lsl     w9, w9, #24
+        orr     w9, w9, w10, lsl #16
+        orr     w9, w9, w11, lsl #8
+        orr     w0, w9, w12
+        ret
+
         .section .rodata
 s_c_ecam: .asciz "pci-host-ecam-generic"
+s_ranges: .asciz "ranges"
 
         .section .bss
         .p2align 3
 pci_ecam: .space 8
+pci_next: .space 8

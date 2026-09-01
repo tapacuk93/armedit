@@ -97,8 +97,21 @@ SYM(vpci_open):
         cbz     x0, .Lvo_fail
         mov     x20, x0
 
+        /*
+         * Give it addresses if it has none, and switch it on either way.
+         * pci_assign enables at the end of its own work; a device that was
+         * already assigned needs only the second half.
+         */
         mov     x0, x20
+        mov     w1, #0
+        bl      SYM(pci_bar)
+        cbnz    x0, 1f
+        mov     x0, x20
+        bl      SYM(pci_assign)
+        b       2f
+1:      mov     x0, x20
         bl      SYM(pci_enable)
+2:
 
         /* The common configuration: status, features, queue selection. */
         mov     x0, x20
@@ -123,7 +136,29 @@ SYM(vpci_open):
          */
         LEA     x9, vpci_common
         ldr     x21, [x9]
-        strb    wzr, [x21, #COMMON_STATUS]      /* reset */
+
+/*
+ * Reset, and then wait for it.
+ *
+ * The specification says a driver that writes zero to the status register must
+ * wait for a read to return zero before touching the device again, and this
+ * did not - it wrote zero and then immediately wrote ACKNOWLEDGE. On QEMU that
+ * is invisible. Under the Virtualization framework the reset was still in
+ * progress, the acknowledgement went into it, and the register read back as
+ * zero: a device that appeared not to accept writes at all, on a machine whose
+ * only console was the device.
+ */
+        strb    wzr, [x21, #COMMON_STATUS]
+        mov     w22, #0
+1:      ldrb    w9, [x21, #COMMON_STATUS]
+        cbz     w9, 2f
+        add     w22, w22, #1
+        mov     w23, #0x8000
+        movk    w23, #0x0001, lsl #16   /* a bounded wait, not a promise */
+        cmp     w22, w23
+        b.lo    1b
+        b       .Lvo_fail
+2:
         mov     w9, #ST_ACK
         strb    w9, [x21, #COMMON_STATUS]
         mov     w9, #(ST_ACK | ST_DRIVER)
@@ -171,7 +206,8 @@ SYM(vpci_open):
  * two structures often share a BAR, and the offset is the only thing that
  * tells them apart.
  */
-vpci_structure:
+        .globl  SYM(vpci_structure)
+SYM(vpci_structure):
         stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
@@ -232,7 +268,8 @@ vpci_structure:
         ret
 
 /*
- * vpci_queue - w0 = which queue, x1 = descriptors, x2 = available, x3 = used.
+ * vpci_queue - w0 = which queue, x1 = descriptors, x2 = available, x3 = used,
+ *              w4 = how many entries those rings hold.
  *   out w0 = the queue's size, or -1.
  *
  * The rings are the caller's memory. With the MMU off a virtual address is a
@@ -249,6 +286,28 @@ SYM(vpci_queue):
         strh    w0, [x9, #COMMON_QSELECT]
         ldrh    w10, [x9, #COMMON_QSIZE]
         cbz     w10, 9f                 /* a queue the device does not have */
+
+/*
+ * Shrink the queue to the rings we actually allocated.
+ *
+ * The device proposes a size - sixty-four, a hundred and twenty-eight - and a
+ * driver may write a smaller one. Not doing so is not a performance question:
+ * the index is masked with the queue size, so a device that thinks the ring
+ * holds sixty-four entries will read and write past the end of eight, into
+ * whatever is next in .bss. It looked exactly like a device that ignored
+ * everything, because the entries it read were never the ones we wrote.
+ */
+        cmp     w10, w4
+        b.ls    1f
+        strh    w4, [x9, #COMMON_QSIZE]
+        ldrh    w10, [x9, #COMMON_QSIZE]        /* read back: a device may
+                                                   decline to shrink, and
+                                                   assuming it agreed is how
+                                                   the mask ends up disagreeing
+                                                   with the device's */
+        cmp     w10, w4
+        b.hi    9f                              /* it kept a size we cannot serve */
+1:
 
         /* Sixty-four bit fields, two aligned halves each. See the header. */
         str     w1, [x9, #COMMON_QDESC]
@@ -288,6 +347,17 @@ SYM(vpci_ready):
         mov     w10, #(ST_ACK | ST_DRIVER | ST_FEATURES_OK | ST_DRIVER_OK)
         strb    w10, [x9, #COMMON_STATUS]
 9:      ret
+
+/* vpci_status - out w0 = the device's status byte, for asking what it thinks. */
+        .globl  SYM(vpci_status)
+SYM(vpci_status):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        ldrb    w0, [x9, #COMMON_STATUS]
+        ret
+9:      mov     w0, #0
+        ret
 
 /* vpci_kick_queue - w0 = which queue. Tells the device to look. */
         .globl  SYM(vpci_kick_queue)

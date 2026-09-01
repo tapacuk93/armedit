@@ -62,13 +62,129 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_PCI
+#ifdef ARMEDIT_PROBE_UART
+        bl      uart_where              /* did we find a serial port? */
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_DRIVEROK)
+        movz    w0, #0x1043
+        bl      SYM(vpci_open)
+        cmn     w0, #1
+        b.eq    1f
+        bl      SYM(vpci_ready)
+        bl      SYM(vpci_status)        /* is DRIVER_OK set? */
+        tst     w0, #4
+        b.eq    1f
+#elif defined(ARMEDIT_PROBE_QSIZE)
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        bl      vcon_qsize              /* did it accept eight? */
+        cmp     w0, #8
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_WROTE)
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        LEA     x0, m_boot              /* did the device take a buffer? */
+        mov     w1, #5
+        bl      vcon_write
+        cbz     w0, 1f
+#elif defined(ARMEDIT_PROBE_STATUS)
+        movz    w0, #0x1AF4
+        movz    w1, #0x1043
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+        mov     x19, x0
+        bl      SYM(pci_assign)
+        mov     x0, x19
+        mov     w1, #1                  /* the common configuration */
+        bl      SYM(vpci_structure)
+        cbz     x0, 1f
+        mov     x20, x0
+        strb    wzr, [x20, #0x14]       /* reset, then acknowledge */
+        mov     w9, #1
+        strb    w9, [x20, #0x14]
+        ldrb    w9, [x20, #0x14]        /* did the write stick? */
+        tst     w9, #1
+        b.eq    1f
+#elif defined(ARMEDIT_PROBE_FEATURES)
+        movz    w0, #0x1AF4
+        movz    w1, #0x1043
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+        mov     x19, x0
+        bl      SYM(pci_assign)
+        mov     x0, x19
+        mov     w1, #1
+        bl      SYM(vpci_structure)
+        cbz     x0, 1f
+        mov     x20, x0
+        mov     w9, #1                  /* does it offer VERSION_1 at all? */
+        str     w9, [x20, #0x00]
+        ldr     w9, [x20, #0x04]
+        tst     w9, #1
+        b.eq    1f
+#elif defined(ARMEDIT_PROBE_WINDOW)
+        bl      SYM(pci_window)         /* does the bridge declare a window? */
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_ASSIGN)
+        movz    w0, #0x1AF4
+        movz    w1, #0x1043
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+        mov     x19, x0
+        bl      SYM(pci_assign)
+        mov     x0, x19
+        mov     w1, #0
+        bl      SYM(pci_bar)            /* did BAR 0 end up with an address? */
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_STRUCT)
+        movz    w0, #0x1AF4
+        movz    w1, #0x1043
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+        mov     x19, x0
+        bl      SYM(pci_assign)
+        mov     x0, x19
+        mov     w1, #ARMEDIT_PROBE_STRUCT
+        bl      SYM(vpci_structure)
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_BAR)
+        movz    w0, #0x1AF4
+        movz    w1, #0x1043
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+        mov     w1, #ARMEDIT_PROBE_BAR
+        bl      SYM(pci_bar)
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_VCON)
+        bl      vcon_init               /* did a console come up? */
+        cmn     w0, #1
+        b.eq    1f
+#elif defined(ARMEDIT_PROBE_VOPEN)
+        movz    w0, #0x1043             /* the console, opened */
+        bl      SYM(vpci_open)
+        cmn     w0, #1
+        b.eq    1f
+#elif defined(ARMEDIT_PROBE_CAP)
+        movz    w0, #0x1AF4
+        movz    w1, #0x1043
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+        mov     w1, #0x09               /* any vendor capability at all */
+        bl      SYM(pci_cap)
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_PCI)
 #ifdef ARMEDIT_PROBE_VENDOR
         movz    w0, ARMEDIT_PROBE_VENDOR
 #else
         movz    w0, #0x1AF4             /* the virtio vendor */
 #endif
+#ifdef ARMEDIT_PROBE_DEV
+        movz    w1, ARMEDIT_PROBE_DEV
+#else
         movz    w1, #0xFFFF             /* any of its devices */
+#endif
         bl      SYM(pci_find)
         cbz     x0, 1f
 #elif defined(ARMEDIT_PROBE_ECAM)
@@ -95,6 +211,32 @@ kmain:
 #endif
 
 
+/*
+ * Find out where this machine keeps things, and find a way to talk, before
+ * saying anything at all.
+ *
+ * The order is the lesson. The boot message used to come first, which is fine
+ * on a machine with a PL011 at the address this kernel assumed and useless on
+ * one without: the write goes to unmapped memory, faults, and the machine
+ * appears never to have started. Reading the tree costs nothing and finding a
+ * console costs a bus walk, and both are cheaper than being mute.
+ */
+        LEA     x9, dtb_arg
+        ldr     x0, [x9]
+        bl      SYM(dtb_init)
+
+/*
+ * A virtio console, but only if there is no serial port.
+ *
+ * A machine with a PL011 already has the simplest possible channel, and
+ * bringing up a PCI device it will never use costs a bus scan on every boot
+ * for nothing. Asking first is one call and it keeps the common path exactly
+ * as short as it was.
+ */
+        bl      uart_where
+        cbnz    x0, 1f
+        bl      vcon_init
+1:
         LEA     x0, m_boot
         bl      platform_puts
 
@@ -112,10 +254,6 @@ kmain:
         add     x0, x0, #1
         ldr     w1, [x0]
 #endif
-
-        LEA     x9, dtb_arg             /* now that there is somewhere to complain to */
-        ldr     x0, [x9]
-        bl      SYM(dtb_init)
 
 
 #ifdef ARMEDIT_DTB_DUMP

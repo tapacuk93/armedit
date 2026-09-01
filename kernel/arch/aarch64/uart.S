@@ -6,6 +6,15 @@
  * push a byte out, and FR bit 5 (TXFF) telling us the FIFO is full.  This is
  * the kernel's only debug channel before the framebuffer is alive.
  */
+/*
+ * Where the PL011 is when there is one.
+ *
+ * The `virt` machine puts it here. Other machines put it elsewhere, and macOS's
+ * Virtualization framework has none at all - where writing to this address is
+ * a store to unmapped memory, which with the MMU off is a data abort. So the
+ * address is asked for, and "no PL011" is an answer this file now has a way to
+ * give.
+ */
 #define UART_BASE       0x09000000
 #define UART_DR         0x00
 #define UART_FR         0x18
@@ -15,9 +24,57 @@
         .section .text
         .p2align 2
 
+/*
+ * uart_where - out x0 = the PL011's address, or 0 if this machine has none.
+ *
+ * Asked once. A machine with no tree gets the historical address, because a
+ * kernel loaded as an ELF is told nothing and has always been on QEMU.
+ */
+        .globl  uart_where
+uart_where:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        LEA     x9, uart_addr
+        ldr     x0, [x9]
+        cbnz    x0, 9f
+        bl      SYM(dtb_have)
+        cbnz    w0, 1f
+        mov     x0, #UART_BASE          /* no tree: the way it always was */
+        b       2f
+1:      LEA     x0, s_c_pl011
+        mov     w1, #0
+        bl      SYM(dtb_reg)
+2:      LEA     x9, uart_addr           /* recomputed: the calls ate x9-x15 */
+        cbnz    x0, 3f
+        mov     x1, #1                  /* remember "none" as something */
+        str     x1, [x9]
+        mov     x0, #0
+        b       9f
+3:      str     x0, [x9]
+9:      LEA     x9, uart_addr
+        ldr     x0, [x9]
+        cmp     x0, #1
+        csel    x0, xzr, x0, eq
+        ldp     x29, x30, [sp], #16
+        ret
+
         .globl  uart_putc
 uart_putc:
-        mov     x1, #UART_BASE
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     w19, w0
+        bl      uart_where
+        mov     x1, x0
+        cbz     x1, 8f
+        mov     w0, w19
+        bl      uart_putc_at
+8:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/* uart_putc_at - w0 = a byte, x1 = the PL011. */
+uart_putc_at:
 1:      ldr     w2, [x1, #UART_FR]
         tbnz    w2, #UART_FR_TXFF, 1b   /* spin while the TX FIFO is full */
         strb    w0, [x1, #UART_DR]
@@ -48,12 +105,20 @@ uart_puts:
  */
         .globl  uart_getc
 uart_getc:
-        mov     x1, #UART_BASE
+        stp     x29, x30, [sp, #-16]!   /* it calls something, so it has a frame:
+                                           without one the ret goes back into
+                                           this function and stays there */
+        mov     x29, sp
+        bl      uart_where              /* this machine may have none */
+        mov     x1, x0
+        cbz     x1, 1f
         ldr     w2, [x1, #UART_FR]
         tbnz    w2, #UART_FR_RXFE, 1f
         ldrb    w0, [x1, #UART_DR]
+        ldp     x29, x30, [sp], #16
         ret
 1:      mov     w0, #-1
+        ldp     x29, x30, [sp], #16
         ret
 
 /* uart_puthex - w0 as 8 hex digits, for poking at registers. */
@@ -77,3 +142,10 @@ uart_puthex:
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #32
         ret
+
+        .section .rodata
+s_c_pl011: .asciz "arm,pl011"
+
+        .section .bss
+        .p2align 3
+uart_addr: .space 8

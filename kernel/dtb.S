@@ -283,8 +283,17 @@ dtb_walk:
         ldr     x1, [x1]
         bl      dtb_streq
         cbz     w0, .Ldr_advance
-        LEA     x10, dtb_found
-        str     x28, [x10]              /* where its bytes are */
+        LEA     x10, dtb_found          /* where its bytes are, and how many -
+                                           both captured now, because the walk
+                                           carries on through the rest of the
+                                           node's properties and dtb_len will
+                                           be the last one's by the time this
+                                           returns */
+        str     x28, [x10]
+        LEA     x10, dtb_len
+        ldr     w10, [x10]
+        LEA     x11, dtb_found_len
+        str     w10, [x11]
         /* Two cells of address, then two of size - read as four words. */
         mov     x1, x28
         bl      dtb_be32
@@ -327,7 +336,7 @@ dtb_walk:
         b       .Ldr_out
 1:      LEA     x9, dtb_found
         ldr     x0, [x9]
-        LEA     x9, dtb_len
+        LEA     x9, dtb_found_len
         ldr     w1, [x9]
         b       .Ldr_out
 .Ldr_none:
@@ -437,5 +446,6 @@ dtb_name:        .space 8
 dtb_want:        .space 8
 dtb_found:       .space 8
 dtb_len:         .space 4
+dtb_found_len:   .space 4
 dtb_addr_cells:  .space 4
 dtb_size_cells:  .space 4

@@ -104,7 +104,30 @@ platform_present:
 
         .globl  platform_puts
 platform_puts:
-        b       uart_puts
+/*
+ * Whichever channel this machine has.
+ *
+ * A PL011 when there is one, and a virtio console when there is not. Both, if
+ * both exist, would double every line, so it is one or the other and the
+ * serial port wins: it is simpler, it needs no queue, and a machine that has
+ * one is a machine where it already worked.
+ */
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+        bl      uart_where
+        cbz     x0, 1f
+        mov     x0, x19
+        bl      uart_puts
+        b       9f
+1:      bl      vcon_ready
+        cbz     w0, 9f
+        mov     x0, x19
+        bl      vcon_puts
+9:      ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
 
 /*
  * platform_getc - one byte from the console, or -1 if none is waiting.
