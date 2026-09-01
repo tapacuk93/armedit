@@ -62,7 +62,19 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_X0
+#ifdef ARMEDIT_PROBE_PCI
+#ifdef ARMEDIT_PROBE_VENDOR
+        movz    w0, ARMEDIT_PROBE_VENDOR
+#else
+        movz    w0, #0x1AF4             /* the virtio vendor */
+#endif
+        movz    w1, #0xFFFF             /* any of its devices */
+        bl      SYM(pci_find)
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_ECAM)
+        bl      SYM(pci_base)
+        cbz     x0, 1f
+#elif defined(ARMEDIT_PROBE_X0)
         LEA     x9, dtb_arg             /* was x0 even a pointer? */
         ldr     x0, [x9]
         cbz     x0, 1f

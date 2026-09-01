@@ -35,7 +35,7 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S app/localops.S net/html.S net/browse.S kernel/dns.S \
-              kernel/dtb.S \
+              kernel/dtb.S kernel/pci.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 # The approved operations, turned into a table the linker can place. Generated
