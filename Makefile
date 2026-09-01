@@ -116,8 +116,14 @@ IOS_ARCH  := arm64-apple-ios16.0-simulator
 IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S \
              editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S net/str.S net/http.S \
              net/sock.S \
-             net/dns.S $(FONT_SRC)
-IOS_OBJ   := $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
+             net/dns.S net/html.S net/browse.S $(FONT_SRC)
+# The same table the other targets get: an iPhone with no signal is exactly the
+# machine that should still answer what this build already knows.
+IOS_OBJ   := $(B)/ios/ops_table.o $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
+
+$(B)/ios/ops_table.o: $(OPS_TABLE)
+	@mkdir -p $(dir $@)
+	$(CC) $(INC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) -c $< -o $@
 
 $(B)/ios/%.o: %.S
 	@mkdir -p $(dir $@)
