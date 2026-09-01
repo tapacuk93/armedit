@@ -393,6 +393,20 @@ public final class Armeditd {
             System.out.printf("armedit: agent %s has not called in for %ds%n",
                     a.name, a.idleMillis() / 1000);
         }
+        // A run finishing is news, and a laptop-hosted backend has no way to be
+        // told it - so we look, on the same schedule we reap on.
+        for (var account : accounts.all()) {
+            try {
+                if (runner.collect(account, aws)) {
+                    System.out.printf("armedit: %s - a run finished, output collected%n",
+                            account.id());
+                }
+                runner.expire(account, aws);
+            } catch (Exception x) {
+                // Next sweep.
+            }
+        }
+
         long limit = idleMinutes * 60_000L;
         for (var account : accounts.all()) {
             if (account.instance().isBlank() || account.idleMillis() < limit) continue;
@@ -484,6 +498,25 @@ public final class Armeditd {
 
             When in doubt, leave it out. A reply that lands in the wrong place
             is a nuisance; one that deletes the screen is not.
+
+            RUNNING IT
+
+            If they asked you to run something - "run this", "what does it
+            print", "run on linux nodejs" - then run it. Do not describe what
+            the output would be; they can read the code themselves, and a
+            guessed answer is worth less than no answer because it looks the
+            same as a real one. Write:
+
+                #RUN aws smallest  <shell command>
+
+            on its own line. The backend brings up a machine, runs it, and the
+            output comes back to you before you answer. Anything the command
+            needs must be in the command, since the machine starts empty:
+
+                #RUN aws smallest  sudo dnf install -y nodejs >/dev/null 2>&1 && node -e 'console.log(2+2)'
+
+            The machine is terminated when it goes idle, so this costs a few
+            minutes of the smallest instance there is and nothing after that.
             """;
 
 
@@ -765,6 +798,16 @@ public final class Armeditd {
                         in one line.
                         """;
                 text = AwsAgent.redact(aicoin.ask(account.wallet(), tier, followUp, 16000));
+                // The follow-up replaces everything decided above, markers and
+                // all - so it gets the same treatment, or #WHOLE arrives on the
+                // user's screen as four literal characters.
+                text = plainText(text);
+                String lead2 = text.stripLeading();
+                if (lead2.startsWith("#WHOLE")) {
+                    whole = true;
+                    int nl = lead2.indexOf('\n');
+                    text = nl < 0 ? "" : lead2.substring(nl + 1);
+                }
             }
 
             // Did this land somebody else's answer too?  If enough different
@@ -777,9 +820,16 @@ public final class Armeditd {
 
             account.otp().account((long) text.length() * 8);
             account.lastModel(tier.name());
-            if (cacheKey != null) {
-                // Nothing here was marked private, so the next person to ask
-                // for the same thing gets this without paying for it again.
+            // A directive is an instruction to do something, not an answer.
+            // Caching a reply that still contains one hands the next person the
+            // literal text "#RUN aws smallest ..." and never runs anything -
+            // and worse, hands it back to the person who asked, so the run they
+            // requested silently stops happening from the second attempt on.
+            boolean directive = text.contains("#RUN ") || text.contains("#AWS ")
+                    || text.contains("#AGENT ");
+            if (cacheKey != null && !directive && results.isBlank()) {
+                // Nothing here was marked private and nothing had to be run, so
+                // the next person to ask gets this without paying for it again.
                 cache.put(cacheKey, text, tier.name());
             }
             if ("swipe".equals(mode) && !selection.isBlank()) {

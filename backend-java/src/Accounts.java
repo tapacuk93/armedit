@@ -155,6 +155,16 @@ final class Accounts {
                 long nanos = Long.parseLong(f[2]);
                 var account = new Account(id, nanos, f[3], f[4], f[5], f[6], f[7],
                         new Otp(serverSecret, nanos, id, f[7]));
+                // Credentials came back above, but the cloud binding built from
+                // them did not - and without it the model is never told it can
+                // run anything, which looks like the model refusing rather than
+                // like a field that was not written down.
+                if (!account.awsKey().isBlank() && !account.awsSecret().isBlank()) {
+                    account.clouds().bind(Clouds.Provider.AWS, java.util.Map.of(
+                            "access_key", account.awsKey(),
+                            "secret_key", account.awsSecret(),
+                            "region", account.region()));
+                }
                 byKey.put(key, account);
                 long n = Long.parseLong(id.substring(id.lastIndexOf('-') + 1));
                 if (n > seq.get()) seq.set(n);

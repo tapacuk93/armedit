@@ -123,17 +123,138 @@ final class Runner {
     private String cloudInit(String command, String token) {
         return """
                 #!/bin/bash
-                exec > /var/log/armedit-run.log 2>&1
-                set -x
                 OUT=$( { %s ; } 2>&1 )
                 CODE=$?
-                curl -s -X POST '%s/api/run/result' \\
+
+                # Two ways home, because only one of them works everywhere.
+                #
+                # The console, first: everything between these markers can be
+                # read back with GetConsoleOutput, which needs nothing routable
+                # on our side. A backend on somebody's laptop has no address an
+                # instance could reach, and that is the common case.
+                {
+                  echo '%s%s'
+                  echo "exit:$CODE"
+                  printf '%%s\\n' "$OUT" | head -c 40000
+                  echo '%s%s'
+                } > /dev/console 2>&1
+
+                # And the callback, which is faster and exact when the backend
+                # does have an address. Failing is fine: the console already has
+                # it.
+                curl -s -m 20 -X POST '%s/api/run/result' \\
                   -H 'Content-Type: application/json' \\
                   --data-binary @<(printf '{"token":"%s","code":%%s,"output":%%s}' \\
                       "$CODE" "$(printf '%%s' "$OUT" | head -c 60000 | python3 -c \\
                       'import json,sys; print(json.dumps(sys.stdin.read()))')") || true
+
+                # Do not rush off. A terminated instance has no console, so
+                # shutting down the instant the work finished threw away the
+                # only copy of the answer on any backend that could not be
+                # called back - which is how the first real run ended up with a
+                # correctly executed command and nothing to show for it.
+                #
+                # The backend terminates this machine as soon as it has read the
+                # output. This is only the backstop for a backend that never
+                # comes: quiet, bounded, and cheaper than a machine left running
+                # because something crashed.
+                sleep %d
                 shutdown -h now
-                """.formatted(command, callbackBase, token);
+                """.formatted(command, BEGIN, token, END, token, callbackBase, token,
+                        LINGER_SECONDS);
+    }
+
+    /** Marks this run's output in a console full of everything else. */
+    static final String BEGIN = "---armedit-begin:";
+    static final String END = "---armedit-end:";
+
+    /**
+     * How long a machine waits after finishing, so its console can be read.
+     *
+     * Long enough for the sweep to come round twice, since AWS refreshes the
+     * console buffer on its own schedule and the first look is often empty.
+     */
+    private static final int LINGER_SECONDS = 300;
+
+    /**
+     * And how long before a run is given up on entirely.
+     *
+     * A machine that never reports has either failed in a way we cannot see or
+     * never booted. Either way it stops being interesting long before it stops
+     * being billable, so it is terminated and the run is closed with what we
+     * know, which is that it did not come back.
+     */
+    private static final long GIVE_UP_MILLIS = 15 * 60_000L;
+
+    /**
+     * Terminate anything that has outstayed its usefulness.
+     *
+     * Called on the reaping sweep. The session instance's clock is extended by
+     * use - every request touches it - but a run has no user to be idle on
+     * behalf of: it is finished or it is stuck, and this is what handles stuck.
+     */
+    void expire(Accounts.Account account, Aws aws) {
+        long now = System.currentTimeMillis();
+        for (var e : new java.util.ArrayList<>(pending.entrySet())) {
+            var run = e.getValue();
+            if (!run.accountId().equals(account.id())) continue;
+            if (now - run.startedMillis() < GIVE_UP_MILLIS) continue;
+            pending.remove(e.getKey());
+            try {
+                var cred = account.clouds().get(run.provider());
+                var impl = Provisioners.of(run.provider(), aws);
+                if (cred != null && impl != null) impl.destroy(cred, run.machineId());
+            } catch (Exception ignored) {
+                // It has its own timer too.
+            }
+            record(account, "gave up on %s after %d minutes; machine %s terminated"
+                    .formatted(run.provider().id, GIVE_UP_MILLIS / 60_000L, run.machineId()));
+        }
+    }
+
+    /**
+     * Pull a finished run's output out of the machine's console, if it is there.
+     *
+     * Called on the same sweep that reaps idle instances, so a laptop-hosted
+     * backend collects results without anything having to reach it. Returns
+     * true when this run is done and has been recorded.
+     */
+    boolean collect(Accounts.Account account, Aws aws) {
+        for (var e : pending.entrySet()) {
+            var run = e.getValue();
+            if (!run.machineId().isBlank()) {
+                try {
+                    String console = aws.consoleOutput(account, run.machineId());
+                    String begin = BEGIN + e.getKey(), end = END + e.getKey();
+                    int a = console.indexOf(begin), b = console.indexOf(end);
+                    if (a < 0 || b <= a) continue;
+                    String block = console.substring(a + begin.length(), b).strip();
+                    int code = 0;
+                    if (block.startsWith("exit:")) {
+                        int nl = block.indexOf('\n');
+                        String num = (nl < 0 ? block : block.substring(0, nl)).substring(5).strip();
+                        try { code = Integer.parseInt(num); } catch (NumberFormatException ignored) { }
+                        block = nl < 0 ? "" : block.substring(nl + 1);
+                    }
+                    result(e.getKey(), code, block);
+                    // Read, therefore finished. Terminating here rather than
+                    // waiting for the machine's own timer is the difference
+                    // between paying for the work and paying for the backstop.
+                    try {
+                        var cred = account.clouds().get(run.provider());
+                        var impl = Provisioners.of(run.provider(), aws);
+                        if (cred != null && impl != null) impl.destroy(cred, run.machineId());
+                    } catch (Exception x) {
+                        // It shuts itself down anyway; this only makes it sooner.
+                    }
+                    return true;
+                } catch (Exception x) {
+                    // The console is not ready, or the instance is gone. Either
+                    // way there is another sweep along shortly.
+                }
+            }
+        }
+        return false;
     }
 
     /** A machine reporting what happened. Returns false for an unknown token. */

@@ -79,6 +79,35 @@ final class Aws {
     }
 
     /** Terminate it and forget it. Doing this twice is not an error. */
+    /**
+     * What the machine has printed to its serial console, or "" if nothing yet.
+     *
+     * This exists because the obvious way for a run to report back - the
+     * machine posting its output to us - needs us to be reachable from EC2,
+     * and a backend running on somebody's laptop is not. The console is the
+     * one channel that flows the other way: the instance writes, we read,
+     * nothing has to route inward.
+     *
+     * It is slower and coarser than a callback. AWS refreshes the buffer every
+     * few minutes rather than instantly, and everything the kernel says is in
+     * there too, which is why the run brackets its own output with markers.
+     * The callback stays the better path when the backend has an address; this
+     * is what makes a laptop work at all.
+     */
+    String consoleOutput(Accounts.Account a, String instanceId) throws Exception {
+        String body = "Action=GetConsoleOutput&Version=%s&InstanceId=%s&Latest=true"
+                .formatted(EC2_VERSION, enc(instanceId));
+        String xml = call(a, body);
+        var m = java.util.regex.Pattern.compile("<output>([^<]*)</output>").matcher(xml);
+        if (!m.find()) return "";
+        try {
+            return new String(Base64.getMimeDecoder().decode(m.group(1)),
+                    StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException bad) {
+            return "";
+        }
+    }
+
     void deprovision(Accounts.Account a) throws Exception {
         if (a.instance().isBlank()) return;
         String body = "Action=TerminateInstances&Version=%s&InstanceId.1=%s"
@@ -265,8 +294,79 @@ final class Aws {
         return res.body();
     }
 
+    /**
+     * Start a machine for one run, from credentials rather than an account.
+     *
+     * The session instance and a run's machine are different things and this is
+     * where that stops being blurred. A session is one long-lived box per
+     * account, brought up from a fixed image; a run wants its own throwaway of
+     * a stated size, carrying its own script, terminated when it is done. They
+     * happen to be the same API call and nothing else.
+     *
+     * Tagged with its name so a machine that outlives its run can still be
+     * recognised, which matters when the thing that would have cleaned it up is
+     * the thing that crashed.
+     */
+    String runInstance(Clouds.Credential cred, String image, String type,
+                       String name, String userData) throws Exception {
+        String body = ("Action=RunInstances&Version=%s&MinCount=1&MaxCount=1"
+                + "&ImageId=%s&InstanceType=%s&UserData=%s"
+                + "&InstanceInitiatedShutdownBehavior=terminate"
+                + "&TagSpecification.1.ResourceType=instance"
+                + "&TagSpecification.1.Tag.1.Key=Name"
+                + "&TagSpecification.1.Tag.1.Value=%s")
+                .formatted(EC2_VERSION, enc(image), enc(type),
+                        enc(Base64.getEncoder().encodeToString(
+                                userData.getBytes(StandardCharsets.UTF_8))),
+                        enc(name));
+        String xml = callWith(cred, body);
+        var m = INSTANCE_ID.matcher(xml);
+        if (!m.find()) throw new IllegalStateException("no instanceId in reply: " + trim(xml));
+        return m.group(1);
+    }
+
+    /** Terminate one machine, from credentials rather than an account. */
+    void terminate(Clouds.Credential cred, String instanceId) throws Exception {
+        callWith(cred, "Action=TerminateInstances&Version=%s&InstanceId.1=%s"
+                .formatted(EC2_VERSION, enc(instanceId)));
+    }
+
+    /** As {@link #consoleOutput} but for a run's own credentials. */
+    String consoleOutput(Clouds.Credential cred, String instanceId) throws Exception {
+        String xml = callWith(cred,
+                "Action=GetConsoleOutput&Version=%s&InstanceId=%s&Latest=true"
+                        .formatted(EC2_VERSION, enc(instanceId)));
+        var m = java.util.regex.Pattern.compile("<output>([^<]*)</output>").matcher(xml);
+        if (!m.find()) return "";
+        try {
+            return new String(Base64.getMimeDecoder().decode(m.group(1)), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException bad) {
+            return "";
+        }
+    }
+
     private String call(Accounts.Account a, String body) throws Exception {
-        String host = endpointHost(a.region());
+        return sign(a.awsKey(), a.awsSecret(), a.region(), body);
+    }
+
+    /**
+     * The same request, signed from a cloud credential.
+     *
+     * A run's machine is started with the credential the account bound, not
+     * with the account object, because a run belongs to a cloud binding rather
+     * than to a session. Same signature, same endpoint; only where the key
+     * comes from differs.
+     */
+    private String callWith(Clouds.Credential cred, String body) throws Exception {
+        var f = cred.fields();
+        String region = f.getOrDefault("region", "us-east-1");
+        if (region == null || region.isBlank()) region = "us-east-1";
+        return sign(f.get("access_key"), f.get("secret_key"), region, body);
+    }
+
+    private String sign(String awsKey, String awsSecret, String region, String body)
+            throws Exception {
+        String host = endpointHost(region);
         var now = ZonedDateTime.now(ZoneOffset.UTC);
         String amzDate = AMZ.format(now);
         String stamp = STAMP.format(now);
@@ -283,20 +383,20 @@ final class Aws {
                 SIGNED_HEADERS,
                 payloadHash);
 
-        String scope = "%s/%s/%s/aws4_request".formatted(stamp, a.region(), SERVICE);
+        String scope = "%s/%s/%s/aws4_request".formatted(stamp, region, SERVICE);
         String toSign = String.join("\n", ALGO, amzDate, scope,
                 hex(sha256(canonical.getBytes(StandardCharsets.UTF_8))));
 
-        byte[] k = hmac(("AWS4" + a.awsSecret()).getBytes(StandardCharsets.UTF_8), stamp);
-        k = hmac(k, a.region());
+        byte[] k = hmac(("AWS4" + awsSecret).getBytes(StandardCharsets.UTF_8), stamp);
+        k = hmac(k, region);
         k = hmac(k, SERVICE);
         k = hmac(k, "aws4_request");
         String signature = hex(hmac(k, toSign));
 
         String authorization = "%s Credential=%s/%s, SignedHeaders=%s, Signature=%s"
-                .formatted(ALGO, a.awsKey(), scope, SIGNED_HEADERS, signature);
+                .formatted(ALGO, awsKey, scope, SIGNED_HEADERS, signature);
 
-        var req = HttpRequest.newBuilder(URI.create(endpointUrl(a.region())))
+        var req = HttpRequest.newBuilder(URI.create(endpointUrl(region)))
                 .timeout(Duration.ofSeconds(60))
                 .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
                 .header("x-amz-date", amzDate)

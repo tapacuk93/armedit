@@ -59,17 +59,30 @@ final class Provisioners {
 
     /* --------------------------------------------------------------- AWS */
 
-    /** EC2 already has a signed client in {@link Aws}; this only adapts it. */
+    /**
+     * EC2 already has a signed client in {@link Aws}; this only adapts it.
+     *
+     * This used to refuse, on the grounds that EC2 machines came up through the
+     * session endpoint. That was true of the session's own long-lived box and
+     * had nothing to do with a run, which wants its own throwaway - so asking
+     * to run anything on AWS failed with an explanation of where machines come
+     * from, and the model dutifully repeated that explanation to the user
+     * instead of running their code.
+     */
     private record AwsBacked(Aws aws) implements Provisioner {
         @Override
-        public Machine create(Clouds.Credential cred, Machines.Spec spec, String name, String cloudInit) {
-            throw new UnsupportedOperationException(
-                    "EC2 machines are created through the session endpoint, not here");
+        public Machine create(Clouds.Credential cred, Machines.Spec spec, String name, String cloudInit)
+                throws Exception {
+            String image = System.getenv("ARMEDIT_AMI");
+            if (image == null || image.isBlank()) {
+                throw new IllegalStateException("ARMEDIT_AMI is not set, so there is no image to boot");
+            }
+            return new Machine(aws.runInstance(cred, image, spec.type(), name, cloudInit), "");
         }
 
         @Override
-        public void destroy(Clouds.Credential cred, String id) {
-            throw new UnsupportedOperationException("terminate through the session endpoint");
+        public void destroy(Clouds.Credential cred, String id) throws Exception {
+            aws.terminate(cred, id);
         }
     }
 
