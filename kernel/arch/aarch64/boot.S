@@ -21,7 +21,39 @@ _start:
         str     xzr, [x1], #8
         b       1b
 
-2:      bl      kmain                   /* x0 still holds the DTB pointer */
+/*
+ * Somewhere to land when something goes wrong, installed before anything can.
+ *
+ * VBAR_EL1 comes out of reset holding whatever it holds, so until this runs a
+ * fault vectors into nowhere and the machine stops without a word. That was
+ * the behaviour for the whole first half of this kernel's life, and it is the
+ * reason two separate bugs each took a day: a silent stop looks the same
+ * whether the cause was a bad pointer or an infinite loop.
+ *
+ * It goes here, before .bss is even useful, because the window it protects
+ * includes the driver bring-up that is most likely to fault.
+ */
+2:      LEA     x2, trap_vectors
+/*
+ * Whichever exception level we actually woke up at.
+ *
+ * QEMU's virt machine starts us at EL1 with virtualization off and at EL2 with
+ * it on, and the vector base is a different register in each - writing the
+ * wrong one is accepted silently and does exactly nothing, which is
+ * indistinguishable from not having written it at all. That is a trap-handling
+ * bug that only shows up as the absence of trap handling, so it is worth the
+ * three instructions to ask rather than assume.
+ */
+        mrs     x1, CurrentEL
+        lsr     x1, x1, #2
+        cmp     x1, #2
+        b.lo    3f
+        msr     vbar_el2, x2
+        b       4f
+3:      msr     vbar_el1, x2
+4:      isb
+
+        bl      kmain                   /* x0 still holds the DTB pointer */
 
 3:      wfe                             /* kmain is not expected to return */
         b       3b

@@ -16,7 +16,8 @@ SDK      := $(shell xcrun -sdk macosx --show-sdk-path)
 CC       := clang
 INC      := -Iinclude
 AS_MACHO := $(CC) $(INC) -arch arm64 -c
-AS_ELF   := $(CC) $(INC) -target aarch64-none-elf -c
+KERNEL_DEFS ?=
+AS_ELF   := $(CC) $(INC) $(KERNEL_DEFS) -target aarch64-none-elf -c
 LD_MACHO := ld -lSystem -syslibroot $(SDK) -arch arm64
 B        := build
 , := ,
@@ -194,6 +195,25 @@ serve: $(B)/armeditd
 boot: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) $(QEMU_KEY) -device ramfb \
 	  -display cocoa,zoom-to-fit=on,left-command-key=on -serial mon:stdio
+
+# Prove the fault handler by faulting: builds a kernel that takes an unaligned
+# load on the way up, and expects a report rather than a silence.
+.PHONY: boot-fault
+boot-fault:
+	@$(MAKE) --no-print-directory clean-kernel
+	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DARMEDIT_FAULT_TEST
+	@echo "--- booting a kernel that faults on purpose:"
+	@$(QEMU) $(QEMU_ARGS) -nographic > $(B)/fault.log 2>&1 & \
+	 P=$$!; sleep 5; kill $$P 2>/dev/null; true
+	@grep -q "KERNEL FAULT" $(B)/fault.log \
+	  && sed -n '1,8p' $(B)/fault.log \
+	  || (echo "    the kernel faulted and said nothing - the vectors are not installed"; \
+	      cat $(B)/fault.log; exit 1)
+	@$(MAKE) --no-print-directory clean-kernel
+
+.PHONY: clean-kernel
+clean-kernel:
+	@rm -rf $(B)/elf $(B)/kernel.elf
 
 boot-tty: $(B)/kernel.elf
 	$(QEMU) $(QEMU_ARGS) -nographic

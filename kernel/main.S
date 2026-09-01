@@ -18,6 +18,21 @@ kmain:
         LEA     x0, m_boot
         bl      platform_puts
 
+#ifdef ARMEDIT_FAULT_TEST
+/*
+ * Break on purpose, so that not breaking is a thing that can be checked.
+ *
+ * An unaligned 32-bit load, which is legal on every machine this editor also
+ * runs on and illegal here, because the MMU is off and Device memory does not
+ * allow it. It is the single most common way this kernel goes wrong, and it
+ * used to go wrong silently - so `make boot-fault` exists to prove that the
+ * vectors are installed and that the report says what happened.
+ */
+        LEA     x0, m_boot
+        add     x0, x0, #1
+        ldr     w1, [x0]
+#endif
+
         bl      platform_init           /* a display, if this machine has one */
         tbnz    w0, #31, .Lno_display
         bl      console_init
