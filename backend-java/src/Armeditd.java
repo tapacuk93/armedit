@@ -594,7 +594,8 @@ public final class Armeditd {
             Only when running is the request itself - "run this", "what does it
             print", "run it on linux" - and then it is the whole answer, because
             a described output is worth less than none: it looks exactly like a
-            real one and is not. In that case, write:
+            real one and is not. Never write what a program "would" print. If
+            it did not run, that is the answer. In that case, write:
 
                 #RUN aws smallest  <shell command>
 
@@ -604,9 +605,11 @@ public final class Armeditd {
 
                 #RUN aws smallest  sudo dnf install -y nodejs >/dev/null 2>&1 && node -e 'console.log(2+2)'
 
-            The machine is terminated as soon as it has reported, so this costs
-            a couple of minutes of the smallest instance there is. That is not
-            free, which is the other reason not to reach for it uninvited.
+            A machine is brought up for the command and terminated as soon as
+            it has reported, so this costs a couple of minutes of the smallest
+            instance there is. There is nothing to set up and nothing left
+            running afterwards. That is not free, which is the other reason not
+            to reach for it uninvited.
 
             "sort it manually", "do it without the library", "rewrite it as a
             loop" are not requests to run anything. They are changes to what is
@@ -944,6 +947,16 @@ public final class Armeditd {
                         happened. Only when the thing they asked for genuinely
                         depended on it is the failure worth mentioning, and then
                         in one line.
+
+                        If a command did not run, you do not know what it would
+                        have printed. Do not write it down. Saying "it would
+                        output [ 'apple', 'banana' ]" is the one thing this
+                        whole mechanism exists to prevent: the person asked to
+                        run something precisely because they wanted the machine
+                        to tell them and not you, and a guess in that position
+                        is indistinguishable from a result. Either the output
+                        above is real and you may use it, or there is none and
+                        there is none to report.
                         """;
                 text = AwsAgent.redact(aicoin.ask(account.wallet(), tier, followUp, 16000));
                 // The follow-up replaces everything decided above, markers and

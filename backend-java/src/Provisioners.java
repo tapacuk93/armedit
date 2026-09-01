@@ -73,11 +73,21 @@ final class Provisioners {
         @Override
         public Machine create(Clouds.Credential cred, Machines.Spec spec, String name, String cloudInit)
                 throws Exception {
-            String image = System.getenv("ARMEDIT_AMI");
-            if (image == null || image.isBlank()) {
-                throw new IllegalStateException("ARMEDIT_AMI is not set, so there is no image to boot");
-            }
-            return new Machine(aws.runInstance(cred, image, spec.type(), name, cloudInit), "");
+            /*
+             * The image is asked for, not configured.
+             *
+             * This used to throw when ARMEDIT_AMI was unset, and that string
+             * did not stop here: it went into the run transcript, into the
+             * follow-up prompt, and a model read "no image is available", told
+             * the user so, and then printed the output the run would have had.
+             * A missing environment variable became a fabricated answer on
+             * somebody's screen.
+             *
+             * Nothing needs configuring now. Somebody types, a machine comes
+             * up, the command runs, the machine goes away.
+             */
+            return new Machine(aws.runInstance(cred, aws.currentImage(cred),
+                    spec.type(), name, cloudInit), "");
         }
 
         @Override

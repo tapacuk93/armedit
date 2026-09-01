@@ -307,6 +307,78 @@ final class Aws {
      * recognised, which matters when the thing that would have cleaned it up is
      * the thing that crashed.
      */
+    /**
+     * The current Amazon Linux image for this architecture, asked for rather
+     * than configured.
+     *
+     * ARMEDIT_AMI used to be a required environment variable, which meant a
+     * backend nobody had configured refused every run - and refused it by
+     * throwing a message that travelled into the run transcript, into the
+     * follow-up prompt, and out to a model that read "no image is available",
+     * told the user so, and then printed the output the run would have
+     * produced. One unset variable, and the editor confidently displayed a
+     * fabricated answer.
+     *
+     * Asked through DescribeImages rather than through SSM's public parameter,
+     * which is the more obvious route and needs a permission this project does
+     * not grant: AwsPolicy allows ec2:Describe* and nothing from ssm, and
+     * widening a deliberately narrow policy to save one call is the wrong way
+     * round. The filter is tight enough that the reply is a handful of images.
+     *
+     * ARMEDIT_AMI still wins when it is set, because somebody who pinned an
+     * image meant to.
+     */
+    String currentImage(Clouds.Credential cred) throws Exception {
+        if (ami != null && !ami.isBlank()) return ami;
+        var f = cred.fields();
+        String region = f.getOrDefault("region", "us-east-1");
+        if (region == null || region.isBlank()) region = "us-east-1";
+
+        String cached = images.get(region);
+        if (cached != null) return cached;
+
+        String xml = callWith(cred, ("Action=DescribeImages&Version=%s"
+                + "&Owner.1=amazon"
+                + "&Filter.1.Name=name&Filter.1.Value.1=%s"
+                + "&Filter.2.Name=state&Filter.2.Value.1=available"
+                + "&Filter.3.Name=architecture&Filter.3.Value.1=arm64")
+                .formatted(EC2_VERSION, enc("al2023-ami-2023.*-kernel-6.1-arm64")));
+
+        // Newest wins. Creation dates are ISO-8601, so they sort as strings,
+        // and an image list that arrives in an arbitrary order is exactly what
+        // "latest" has to be computed from rather than assumed.
+        var m = IMAGE_ENTRY.matcher(xml);
+        String best = null, bestDate = "";
+        while (m.find()) {
+            // Either order matched, so take whichever pair of groups is present.
+            String id = m.group(1) != null ? m.group(1) : m.group(4);
+            String date = m.group(1) != null ? m.group(2) : m.group(3);
+            if (id == null || date == null) continue;
+            if (best == null || date.compareTo(bestDate) > 0) { best = id; bestDate = date; }
+        }
+        if (best == null) {
+            throw new IllegalStateException("no image matched in " + region + ": " + trim(xml));
+        }
+        images.put(region, best);
+        System.out.printf("armedit: newest image in %s is %s (%s)%n", region, best, bestDate);
+        return best;
+    }
+
+    /**
+     * imageId and creationDate, in either order.
+     *
+     * EC2 does not promise the order of elements within an item, and pairing
+     * them by position across the whole document would happily match one
+     * image's id with another's date.
+     */
+    private static final java.util.regex.Pattern IMAGE_ENTRY = java.util.regex.Pattern.compile(
+            "<imageId>(ami-[0-9a-f]+)</imageId>.{0,4000}?<creationDate>([^<]+)</creationDate>"
+            + "|<creationDate>([^<]+)</creationDate>.{0,4000}?<imageId>(ami-[0-9a-f]+)</imageId>",
+            java.util.regex.Pattern.DOTALL);
+
+    /** One image id per region, for as long as this process runs. */
+    private final java.util.Map<String, String> images = new java.util.concurrent.ConcurrentHashMap<>();
+
     String runInstance(Clouds.Credential cred, String image, String type,
                        String name, String userData) throws Exception {
         String body = ("Action=RunInstances&Version=%s&MinCount=1&MaxCount=1"
@@ -366,48 +438,68 @@ final class Aws {
 
     private String sign(String awsKey, String awsSecret, String region, String body)
             throws Exception {
-        String host = endpointHost(region);
+        return signed(awsKey, awsSecret, region, SERVICE, endpointHost(region), body,
+                "application/x-amz-www-form-urlencoded", null);
+    }
+
+    /**
+     * SigV4 for whichever service is being asked.
+     *
+     * The EC2 path used to sign "ec2" and post form-encoded, which is every
+     * call this made until one of them needed to be SSM. Naming the service and
+     * the host rather than assuming them is the whole change; the signature is
+     * the same one, and the header set grows by x-amz-target when there is one.
+     */
+    private String signed(String awsKey, String awsSecret, String region,
+                          String service, String host, String body,
+                          String contentType, String amzTarget) throws Exception {
         var now = ZonedDateTime.now(ZoneOffset.UTC);
         String amzDate = AMZ.format(now);
         String stamp = STAMP.format(now);
         String payloadHash = hex(sha256(body.getBytes(StandardCharsets.UTF_8)));
 
-        String canonical = String.join("\n",
-                "POST",
-                "/",
-                "",
-                "host:" + host,
-                "x-amz-content-sha256:" + payloadHash,
-                "x-amz-date:" + amzDate,
-                "",
-                SIGNED_HEADERS,
-                payloadHash);
+        String headers = amzTarget == null
+                ? SIGNED_HEADERS
+                : "host;x-amz-content-sha256;x-amz-date;x-amz-target";
+        var canonicalHeaders = new StringBuilder()
+                .append("host:").append(host).append('\n')
+                .append("x-amz-content-sha256:").append(payloadHash).append('\n')
+                .append("x-amz-date:").append(amzDate).append('\n');
+        if (amzTarget != null) canonicalHeaders.append("x-amz-target:").append(amzTarget).append('\n');
 
-        String scope = "%s/%s/%s/aws4_request".formatted(stamp, region, SERVICE);
+        String canonical = String.join("\n",
+                "POST", "/", "",
+                canonicalHeaders.toString().stripTrailing(), "",
+                headers, payloadHash);
+
+        String scope = "%s/%s/%s/aws4_request".formatted(stamp, region, service);
         String toSign = String.join("\n", ALGO, amzDate, scope,
                 hex(sha256(canonical.getBytes(StandardCharsets.UTF_8))));
 
         byte[] k = hmac(("AWS4" + awsSecret).getBytes(StandardCharsets.UTF_8), stamp);
         k = hmac(k, region);
-        k = hmac(k, SERVICE);
+        k = hmac(k, service);
         k = hmac(k, "aws4_request");
         String signature = hex(hmac(k, toSign));
 
         String authorization = "%s Credential=%s/%s, SignedHeaders=%s, Signature=%s"
-                .formatted(ALGO, awsKey, scope, SIGNED_HEADERS, signature);
+                .formatted(ALGO, awsKey, scope, headers, signature);
 
-        var req = HttpRequest.newBuilder(URI.create(endpointUrl(region)))
+        String url = "ec2".equals(service) ? endpointUrl(region) : "https://" + host + "/";
+        var b = HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(60))
-                .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+                .header("Content-Type", "ec2".equals(service)
+                        ? "application/x-www-form-urlencoded; charset=utf-8" : contentType)
                 .header("x-amz-date", amzDate)
                 .header("x-amz-content-sha256", payloadHash)
-                .header("Authorization", authorization)
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
+                .header("Authorization", authorization);
+        if (amzTarget != null) b = b.header("x-amz-target", amzTarget);
 
-        var res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        var res = http.send(b.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString());
         if (res.statusCode() / 100 != 2) {
-            throw new IllegalStateException("ec2 %d: %s".formatted(res.statusCode(), trim(res.body())));
+            throw new IllegalStateException("%s %d: %s"
+                    .formatted(service, res.statusCode(), trim(res.body())));
         }
         return res.body();
     }
