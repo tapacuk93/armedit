@@ -72,6 +72,7 @@ public final class Armeditd {
     private final Fetch fetcher = new Fetch();
     private final Consortium consortium;
     private final Distro distro;
+    private final Release release = new Release();
     private final String publicAddr;
     /** Promotion is slow and nobody is waiting for it. */
     private final ExecutorService promoter = Executors.newVirtualThreadPerTaskExecutor();
@@ -238,6 +239,7 @@ public final class Armeditd {
             case "/api/fetch" -> routeFetch(r);
             case "/api/behaviours" -> routeBehaviours(r);
             case "/api/ops" -> routeOps(r);
+            case "/api/release" -> routeRelease(r);
             case "/api/consensus" -> routeConsensus(r);
             case "/api/agents/register" -> routeAgentRegister(r);
             case "/api/agents/poll" -> routeAgentPoll(r);
@@ -337,6 +339,25 @@ public final class Armeditd {
             System.out.printf("armedit: %s is in the tree: %s%n", op.name(),
                     written.stream().map(java.nio.file.Path::toString)
                             .collect(java.util.stream.Collectors.joining(", ")));
+
+            /*
+             * And then it is in the project.
+             *
+             * This is the end of the cycle rather than a convenience: somebody
+             * writes a feature, it compiles to machine code, several models
+             * across two vendors separately agree it should exist, and it is
+             * pushed. A feature that stops in a directory waiting to be noticed
+             * is a feature that has not been added to anything.
+             *
+             * An operation needs no reboot. It is a page of machine code the
+             * running editor can install and call, so a device that asks
+             * /api/ops has the new behaviour without restarting - which is why
+             * the cycle is worth having at all. Boot code is the other case,
+             * and Release.needsReboot is where that is decided.
+             */
+            System.out.printf("armedit: %s - %s%n", op.name(),
+                    distro.publish(written, op, verdict));
+            release.record(op.name(), written);
         } catch (Exception x) {
             System.out.printf("armedit: not shipping \"%s\": %s%n", op.name(), x);
         }
@@ -999,9 +1020,16 @@ public final class Armeditd {
                         parseInt(cursor.isBlank() ? "0" : cursor, 0),
                         text.length() > 200 ? text.substring(0, 200) + "..." : text)));
             }
+            // A restart owed is said once, on the next thing the person does,
+            // and then not again. See Release.takeNotice.
+            String notice = release.takeNotice();
+            if (!notice.isBlank()) {
+                text = text.isBlank() ? notice : text + "\n\n" + notice;
+            }
             return Res.json(200, Json.obj("text", withoutDirectives(text),
                     "model", tier.name(), "whole", whole,
-                    "colour", colourIn(text)));
+                    "colour", colourIn(text),
+                    "reboot", release.rebootPending()));
         } catch (Exception x) {
             return Res.json(502, Json.obj("error", "aicoin: " + x.getMessage()));
         }
@@ -1139,6 +1167,32 @@ public final class Armeditd {
      * answers from /api/agent instead. The operation is identical either way;
      * only who runs it differs.
      */
+    /**
+     * What has changed lately, and whether this machine is out of date.
+     *
+     * A device asks this when it wants to know whether the operations it holds
+     * are still the current ones - and, more usefully, whether the binary it is
+     * running has been superseded. The second question is the one a running
+     * kernel cannot answer for itself: it knows what it is, not what it should
+     * be.
+     */
+    private Res routeRelease(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        var b = new StringBuilder("{\"reboot\":");
+        b.append(release.rebootPending()).append(",\"changes\":[");
+        var recent = release.recent();
+        for (int i = 0; i < recent.size(); i++) {
+            var c = recent.get(i);
+            if (i > 0) b.append(',');
+            b.append(Json.obj("what", c.what(), "reboot", c.reboot(),
+                    "why", c.why(), "at", c.at()));
+        }
+        b.append("]}");
+        return new Res(200, "application/json",
+                b.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     private Res routeOps(Req r) {
         var account = authorise(r);
         if (account == null) return unauthorised();

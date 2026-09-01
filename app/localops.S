@@ -56,6 +56,24 @@
 #define MAX_VARS        4
 #define VAR_SZ          128             /* per captured word, aligned */
 
+/*
+ * Operations that arrived while this was running.
+ *
+ * The built-in table is fixed at link time, and that is right for what shipped
+ * - but the whole point of compiling operations ahead of time is that a new
+ * one is a page of machine code, and a running program can be handed a page of
+ * machine code. So there is a second table, filled at run time, and it is
+ * searched first: a device that has just been told about a better version of
+ * an operation should use it rather than the one it was built with.
+ *
+ * Small on purpose. This is not a package manager; it is the gap between
+ * writing a feature and using it, which should be one round trip and should
+ * not accumulate.
+ */
+#define LEARNED         8
+#define PAT_SZ          128
+#define CODE_SZ         8192
+
         CODE
         .p2align 2
 
@@ -92,6 +110,24 @@ SYM(localop_run):
         mov     x22, x3                 /* selection   */
         mov     x23, x4                 /* out         */
         mov     w24, w5                 /* out size    */
+
+/*
+ * What arrived at run time goes first.
+ *
+ * Not because newer is better in general, but because the only reason an
+ * operation is here rather than in the image is that somebody just published
+ * it - and answering with the older built-in version of something that was
+ * just replaced is the one behaviour that would make the cycle pointless.
+ */
+        mov     x0, x19
+        mov     x1, x20
+        mov     x2, x21
+        mov     x3, x22
+        mov     x4, x23
+        mov     w5, w24
+        bl      localop_learned
+        cmn     w0, #1
+        b.ne    .Lout
 
         LEA     x9, SYM(ops_builtin_count)
         ldr     x25, [x9]
@@ -165,6 +201,165 @@ SYM(localop_run):
 
 .Lnone: mov     w0, #-1
 .Lout:  ldr     x27, [sp, #80]
+        ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #96
+        ret
+
+/*
+ * localop_learn - x0 = pattern, w1 = variable count, x2 = code, w3 = length.
+ *   out w0 = 0 if it was taken, -1 if not.
+ *
+ * The pattern arrives in the same shape the built-in table uses - types
+ * already spent, "{}" and "{*}" - because the device decides arity and the
+ * server decided everything else. Installing happens here rather than at first
+ * use, so that a failure to make the page executable is a failure to learn,
+ * reported now, instead of an operation that silently never matches.
+ */
+        .globl  SYM(localop_learn)
+SYM(localop_learn):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        mov     x19, x0
+        mov     w20, w1
+        mov     x21, x2
+        mov     w22, w3
+
+        cmp     w22, #CODE_SZ
+        b.hi    .Ll_no
+        cbz     w22, .Ll_no
+
+        LEA     x9, learned_count
+        ldr     w23, [x9]
+        cmp     w23, #LEARNED
+        b.hs    .Ll_no                  /* full: this is a gap, not a store */
+
+        /* The code, copied somewhere it can be made executable. */
+        LEA     x9, learned_code
+        mov     w10, #CODE_SZ
+        madd    x24, x23, x10, x9
+        mov     w9, #0
+1:      cmp     w9, w22
+        b.hs    2f
+        ldrb    w10, [x21, w9, uxtw]
+        strb    w10, [x24, w9, uxtw]
+        add     w9, w9, #1
+        b       1b
+2:
+        mov     x0, x24
+        mov     w1, w22
+        bl      SYM(op_install)
+        cbz     x0, .Ll_no
+        LEA     x9, learned_entry       /* recomputed: the call ate x9-x15 */
+        str     x0, [x9, x23, lsl #3]
+
+        /* The pattern, copied too - the caller's buffer is its own. */
+        LEA     x9, learned_pat
+        mov     w10, #PAT_SZ
+        madd    x24, x23, x10, x9
+        mov     w9, #0
+3:      cmp     w9, #(PAT_SZ - 1)
+        b.hs    4f
+        ldrb    w10, [x19, w9, uxtw]
+        strb    w10, [x24, w9, uxtw]
+        cbz     w10, 5f
+        add     w9, w9, #1
+        b       3b
+4:      strb    wzr, [x24, w9, uxtw]
+5:
+        LEA     x9, learned_vars
+        str     w20, [x9, x23, lsl #2]
+        add     w23, w23, #1
+        LEA     x9, learned_count
+        str     w23, [x9]
+        mov     w0, #0
+        b       .Ll_out
+.Ll_no: mov     w0, #-1
+.Ll_out:
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * localop_learned - the same search as localop_run, over the runtime table.
+ *   x0 = instruction, x1 = screen, x2 = subject, x3 = selection,
+ *   x4 = out, w5 = capacity.  out w0 = bytes, or -1.
+ */
+localop_learned:
+        stp     x29, x30, [sp, #-96]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        mov     x19, x0
+        mov     x20, x1
+        mov     x21, x2
+        mov     x22, x3
+        mov     x23, x4
+        mov     w24, w5
+
+        LEA     x9, learned_count
+        ldr     w25, [x9]
+        mov     w26, #0
+.Lle_next:
+        cmp     w26, w25
+        b.hs    .Lle_none
+
+        LEA     x9, learned_pat
+        mov     w10, #PAT_SZ
+        madd    x0, x26, x10, x9
+        mov     x1, x19
+        bl      localop_match
+        cbz     w0, .Lle_skip
+
+        LEA     x9, learned_vars
+        ldr     w12, [x9, w26, uxtw #2]
+        LEA     x9, localop_values
+        LEA     x10, localop_vars
+        mov     x13, #0
+1:      cmp     x13, x12
+        b.hs    2f
+        mov     x14, #VAR_SZ
+        madd    x14, x13, x14, x10
+        orr     x14, x14, #1
+        str     x14, [x9, x13, lsl #3]
+        add     x13, x13, #1
+        b       1b
+2:      orr     x14, x20, #1
+        str     x14, [x9, x13, lsl #3]
+        add     x13, x13, #1
+        orr     x14, x21, #1
+        str     x14, [x9, x13, lsl #3]
+        add     x13, x13, #1
+        orr     x14, x22, #1
+        str     x14, [x9, x13, lsl #3]
+
+        LEA     x9, learned_entry
+        ldr     x0, [x9, w26, uxtw #3]
+        cbz     x0, .Lle_skip
+        LEA     x1, localop_values
+        mov     x2, x23
+        mov     w3, w24
+        bl      SYM(op_run)
+        cmn     w0, #1
+        b.eq    .Lle_skip
+        cbz     w0, .Lle_skip
+        b       .Lle_out
+
+.Lle_skip:
+        add     w26, w26, #1
+        b       .Lle_next
+.Lle_none:
+        mov     w0, #-1
+.Lle_out:
         ldp     x25, x26, [sp, #64]
         ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
@@ -546,3 +741,11 @@ localop_installed:  .space (8 * 32)
 localop_values:     .space (8 * (MAX_VARS + 3))
         .p2align 3
 localop_vars:       .space (VAR_SZ * MAX_VARS)
+        .p2align 3
+learned_entry:      .space (8 * LEARNED)
+learned_vars:       .space (4 * LEARNED)
+learned_count:      .space 4
+        .p2align 3
+learned_pat:        .space (PAT_SZ * LEARNED)
+        .p2align 3
+learned_code:       .space (CODE_SZ * LEARNED)

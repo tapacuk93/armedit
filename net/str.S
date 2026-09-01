@@ -176,6 +176,74 @@ SYM(str_find):
  * EC2 takes instance user-data base64-encoded, which is the only reason this
  * exists.  out w0 = output length.
  */
+/*
+ * base64_decode - x0 = text, x1 = output, w2 = capacity.
+ *   out w0 = bytes written, or -1 if the input is not base64.
+ *
+ * The other direction, needed the moment a device could be handed machine code
+ * over a JSON API: the code has to travel as text and arrive as bytes. Anything
+ * that is not a base64 character ends the input rather than being skipped -
+ * a decoder that ignores rubbish will happily turn a truncated or corrupted
+ * reply into a shorter, plausible-looking program, and this one is used to
+ * produce pages that will then be executed.
+ */
+        .globl  SYM(base64_decode)
+SYM(base64_decode):
+        mov     x3, x0                  /* in    */
+        mov     x4, x1                  /* out   */
+        mov     w5, w2                  /* room  */
+        mov     w6, #0                  /* written */
+        mov     w7, #0                  /* bits held */
+        mov     w8, #0                  /* accumulator */
+
+1:      ldrb    w9, [x3], #1
+        cbz     w9, 8f
+        cmp     w9, #'='
+        b.eq    8f
+        cmp     w9, #' '                /* whitespace is layout, not data */
+        b.ls    1b
+
+        /* A-Z 0..25, a-z 26..51, 0-9 52..61, + 62, / 63 */
+        sub     w10, w9, #'A'
+        cmp     w10, #25
+        b.ls    2f
+        sub     w10, w9, #'a'
+        cmp     w10, #25
+        b.hi    3f
+        add     w10, w10, #26
+        b       2f
+3:      sub     w10, w9, #'0'
+        cmp     w10, #9
+        b.hi    4f
+        add     w10, w10, #52
+        b       2f
+4:      cmp     w9, #'+'
+        b.ne    5f
+        mov     w10, #62
+        b       2f
+5:      cmp     w9, #'/'
+        b.ne    9f                      /* not base64 at all */
+        mov     w10, #63
+
+2:      lsl     w8, w8, #6
+        orr     w8, w8, w10
+        add     w7, w7, #6
+        cmp     w7, #8
+        b.lo    1b
+        sub     w7, w7, #8
+        lsr     w11, w8, w7
+        and     w11, w11, #0xFF
+        cmp     w6, w5
+        b.hs    9f                      /* no room: refuse rather than truncate */
+        strb    w11, [x4, w6, uxtw]
+        add     w6, w6, #1
+        b       1b
+
+8:      mov     w0, w6
+        ret
+9:      mov     w0, #-1
+        ret
+
         .globl  SYM(base64_encode)
 SYM(base64_encode):
         LEA     x3, b64_alphabet

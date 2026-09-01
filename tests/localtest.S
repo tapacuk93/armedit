@@ -25,6 +25,31 @@ _main:
         cmp     w19, #2
         b.lt    .Lfail
 
+/*
+ * Learn one at run time before asking anything, so the two tables can be told
+ * apart: this pattern is not in the built-in table, and answering it proves
+ * the operation arrived rather than shipped.
+ */
+        LEA     x9, blob
+        mov     w10, #0
+1:      cmp     w10, #16
+        b.hs    2f
+        LEA     x11, probe_code
+        ldrb    w12, [x11, w10, uxtw]
+        strb    w12, [x9, w10, uxtw]
+        add     w10, w10, #1
+        b       1b
+2:      LEA     x0, s_learned_pat
+        mov     w1, #0
+        LEA     x2, blob
+        mov     w3, #16
+        bl      SYM(localop_learn)
+        LEA     x0, s_learn_ok
+        cmn     w0, #1
+        b.ne    3f
+        LEA     x0, s_learn_no
+3:      bl      say
+
         mov     w21, #1
 1:      cmp     w21, w19
         b.hs    .Ldone
@@ -81,7 +106,29 @@ s_declined: .asciz "(declined)"
 s_nl:       .asciz "\n"
 s_empty:    .asciz ""
 s_screen:   .asciz "a document that was already on the screen"
+s_learned_pat: .asciz "arrived at runtime"
+s_learn_ok:    .asciz "learned an operation at run time\n"
+s_learn_no:    .asciz "could not learn at run time\n"
+        .p2align 2
+/*
+ * The smallest operation that answers.
+ *
+ * op_run hands a blob the values, an output buffer and its size, and expects
+ * bytes written back - not a tagged value. A blob that returns 0 has declined,
+ * which is a perfectly good answer and a useless test, so this one writes a
+ * character and says it wrote one. It exists to prove the runtime table is
+ * consulted at all; what it writes does not matter.
+ *
+ *     mov  w9, #'!'      strb w9, [x1]      mov w0, #1      ret
+ */
+probe_code:
+        .long   0x52800429
+        .long   0x39000029
+        .long   0x52800020
+        .long   0xD65F03C0
 
         BSS
         .p2align 3
 outbuf:     .space 4096
+        .p2align 2
+blob:       .space 64

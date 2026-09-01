@@ -3,6 +3,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
+import java.util.concurrent.TimeUnit;
+
 /**
  * Where an operation goes once the consortium has agreed to ship it.
  *
@@ -30,12 +32,21 @@ import java.util.List;
  * changed - without that, "the consortium approved it" is a claim about a
  * conversation nobody kept.
  *
- * <h2>What this does not do</h2>
+ * <h2>Committing, and why that changed</h2>
  *
- * It does not run git. A daemon that commits to a repository on its own is a
- * daemon that can rewrite history while nobody is looking, and the value here
- * is in the files being reviewable, not in them being committed unattended.
- * The files land in the working tree; a person - or a build - commits them.
+ * This used to stop at writing files, on the argument that a daemon which
+ * commits on its own can rewrite history while nobody is looking. That
+ * argument was about an unsupervised daemon. It is now the development cycle
+ * itself: somebody writes a feature, it compiles to machine code, several
+ * models across two vendors separately agree it should exist, and the point is
+ * that it is then *in the project* rather than in a directory waiting for
+ * somebody to notice.
+ *
+ * The safety moved rather than disappeared. Only the operation's own three
+ * files are staged - never `git add -A`, which would sweep up whatever
+ * somebody happened to be editing at the time. Nothing is committed if those
+ * paths are unchanged. And the consortium remains the gate: a push happens
+ * because several models agreed, not because a compiler succeeded.
  */
 final class Distro {
 
@@ -115,6 +126,93 @@ final class Distro {
         s = s.replaceAll("[^a-z0-9._-]", "-").replaceAll("^[.-]+", "");
         if (s.length() > 60) s = s.substring(0, 60);
         return s.isEmpty() ? "unnamed" : s;
+    }
+
+    /**
+     * Commit the operation and push it, so writing a feature ends with the
+     * feature being in the project.
+     *
+     * @return what happened, for the log and for the person who asked
+     */
+    String publish(java.util.List<Path> written, Scripts.Script op,
+                   Consortium.Verdict verdict) {
+        Path root = dir.toAbsolutePath().getParent();
+        if (root == null || !java.nio.file.Files.isDirectory(root.resolve(".git"))) {
+            return "not a git repository, so it stays in the working tree";
+        }
+        try {
+            var paths = new java.util.ArrayList<String>();
+            for (var w : written) paths.add(root.relativize(w.toAbsolutePath()).toString());
+
+            // Only these files. Staging everything would commit whatever
+            // somebody was in the middle of writing, which is the difference
+            // between a development cycle and a hazard.
+            var add = new java.util.ArrayList<String>(java.util.List.of("git", "add", "--"));
+            add.addAll(paths);
+            String bad = run(root, add);
+            if (bad != null) return "could not stage: " + bad;
+
+            var staged = new java.util.ArrayList<String>(
+                    java.util.List.of("git", "diff", "--cached", "--quiet", "--"));
+            staged.addAll(paths);
+            if (run(root, staged) == null) {
+                return "nothing changed - this operation was already in the project";
+            }
+
+            String message = """
+                    %s: an operation the consortium agreed to ship
+
+                    %s
+
+                    Matches "%s", takes %s, and compiles to %d bytes of aarch64.
+                    %s
+
+                    Written by %s, agreed by %d of %d members. Their reasoning is
+                    in %s alongside the code, because a decision without it is
+                    not reviewable later.
+                    """.formatted(op.name(),
+                            op.js() == null ? "" : op.js().strip().lines().findFirst().orElse(""),
+                            op.pattern(), String.join(", ", op.arguments()),
+                            op.blob().code().length, verdict.why(),
+                            op.author(), verdict.voters(), verdict.votes().size(),
+                            paths.get(paths.size() - 1));
+
+            var commit = new java.util.ArrayList<>(java.util.List.of(
+                    "git", "commit", "-m", message, "--"));
+            commit.addAll(paths);
+            bad = run(root, commit);
+            if (bad != null) return "could not commit: " + bad;
+
+            String branch = capture(root, java.util.List.of(
+                    "git", "rev-parse", "--abbrev-ref", "HEAD"));
+            branch = branch == null ? "HEAD" : branch.strip();
+            bad = run(root, java.util.List.of("git", "push", "origin", branch));
+            if (bad != null) return "committed to " + branch + " but not pushed: " + bad;
+            return "pushed to " + branch;
+        } catch (Exception x) {
+            return "not published: " + x;
+        }
+    }
+
+    /** Run a command in the repository. Returns null on success, else why not. */
+    private static String run(Path in, java.util.List<String> argv) throws Exception {
+        var p = new ProcessBuilder(argv).directory(in.toFile())
+                .redirectErrorStream(true).start();
+        var out = new String(p.getInputStream().readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        if (!p.waitFor(120, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+            return "timed out";
+        }
+        return p.exitValue() == 0 ? null : out.strip();
+    }
+
+    private static String capture(Path in, java.util.List<String> argv) throws Exception {
+        var p = new ProcessBuilder(argv).directory(in.toFile()).start();
+        var out = new String(p.getInputStream().readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        p.waitFor(30, TimeUnit.SECONDS);
+        return p.exitValue() == 0 ? out : null;
     }
 
     private static String indent(String s) {

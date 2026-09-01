@@ -295,4 +295,5 @@ test: $(B)/optest $(B)/localtest
 	@$(B)/localtest "colours blue" "colours red" "COLOURS Blue" \
 	   "$$(printf 'colours blue\n')" "  colours   blue  " \
 	   "colours chartreuse" "colours" "colours blue please" "hello" \
+	   "arrived at runtime" \
 	   | sed 's/^/    /' 
