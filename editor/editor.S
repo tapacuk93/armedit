@@ -857,6 +857,23 @@ SYM(editor_length):
         ldp     x29, x30, [sp], #16
         ret
 
+/*
+ * editor_colour - w0 = a slot in the palette, 0..9.
+ *
+ * The same thing Cmd+0..9 does, reachable from somewhere other than a keypress
+ * - because "colours blue" is the same request as pressing Cmd+3, arriving in
+ * words instead of in a chord. Out-of-range is ignored rather than wrapped: a
+ * far side that names a colour this palette does not have should change
+ * nothing, not something arbitrary.
+ */
+        .globl  SYM(editor_colour)
+SYM(editor_colour):
+        cmp     w0, #9
+        b.hi    9f
+        LEA     x9, ed_state
+        str     w0, [x9, #EDS_COLOUR]
+9:      ret
+
 /* editor_subject - x0 = destination, w1 = capacity.  Empty when unbound. */
         .globl  SYM(editor_subject)
 SYM(editor_subject):

@@ -469,6 +469,29 @@ public final class Armeditd {
      */
 
     /**
+     * Which palette slot a reply asked for, or -1 for none.
+     *
+     * A slot, not a name. There used to be a table here mapping "blue" to 3,
+     * which is a decision about what words mean sitting in the one place that
+     * cannot learn - and it had to be consulted by a briefing declared above
+     * it, which meant the briefing read it before it existed. Two problems
+     * from one table.
+     *
+     * The model knows what blue is. It picks the slot, the briefing says which
+     * slot is which, and this only has to read a digit. Anything an operation
+     * learns about colour names it learns for itself, and a colour the palette
+     * does not have is a colour nothing here has to have an opinion about.
+     */
+    private static final java.util.regex.Pattern COLOUR_DIRECTIVE =
+            java.util.regex.Pattern.compile("(?mi)^#COLou?R\\s+([0-9])\\s*$");
+
+    static int colourIn(String reply) {
+        if (reply == null) return -1;
+        var m = COLOUR_DIRECTIVE.matcher(reply);
+        return m.find() ? m.group(1).charAt(0) - '0' : -1;
+    }
+
+    /**
      * When a reply is about the screen rather than about the line.
      *
      * Cmd+P replaces exactly what was typed, which is right when somebody asked
@@ -527,6 +550,31 @@ public final class Armeditd {
             "sort it manually", "do it without the library", "rewrite it as a
             loop" are not requests to run anything. They are changes to what is
             on the screen, so they take #WHOLE and a rewritten screen.
+
+            HOW IT LOOKS
+
+            "colours blue", "make the text red", "green please" are asking the
+            editor to change its own appearance. The palette is fixed and this
+            is all of it:
+
+                0 green   1 white   2 amber   3 blue   4 red
+                5 violet  6 cyan    7 yellow  8 grey   9 pink
+
+            Answer with the number of the one they asked for, alone, and
+            nothing else - no explanation, no code:
+
+                #COLOUR 6      <- if, and only if, they asked for cyan
+
+            Look the number up; do not copy the one in that example. It is the
+            entire content of the answer, and an answer that is the example
+            rather than the request turns "green please" blue.
+
+            A colour the palette does not have is one the editor cannot show,
+            so choose the nearest slot rather than inventing a number. The line
+            they typed vanishes and the colour changes, which is the whole of
+            what they asked for.
+
+            Worth scripting: the answer depends on nothing but the colour named.
             """;
 
 
@@ -576,6 +624,7 @@ public final class Armeditd {
         }
         return out.toString().strip();
     }
+
 
     private Res routeAgent(Req r) {
         if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
@@ -711,7 +760,8 @@ public final class Armeditd {
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "cached", 0, instruction)));
                 return Res.json(200, Json.obj("text", withoutDirectives(hit.text()),
-                        "model", hit.model(), "cached", true));
+                        "model", hit.model(), "cached", true,
+                        "colour", colourIn(hit.text())));
             }
 
             // Nobody asked this exact thing before, but a model may have
@@ -722,9 +772,13 @@ public final class Armeditd {
             if (scripted != null) {
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "scripted", 0, instruction)));
+                // A scripted or compiled answer can change the colour too - it
+                // is the same directive, and an operation the model wrote is
+                // exactly as entitled to ask for one as the model itself.
                 return Res.json(200, Json.obj("text", withoutDirectives(scripted.text()),
                         "model", scripted.script().author(), "scripted", true,
-                        "script", scripted.script().name()));
+                        "script", scripted.script().name(),
+                        "colour", colourIn(scripted.text())));
             }
         }
 
@@ -872,7 +926,8 @@ public final class Armeditd {
                         text.length() > 200 ? text.substring(0, 200) + "..." : text)));
             }
             return Res.json(200, Json.obj("text", withoutDirectives(text),
-                    "model", tier.name(), "whole", whole));
+                    "model", tier.name(), "whole", whole,
+                    "colour", colourIn(text)));
         } catch (Exception x) {
             return Res.json(502, Json.obj("error", "aicoin: " + x.getMessage()));
         }

@@ -400,6 +400,27 @@ SYM(backend_fetch):
         bl      SYM(json_unescape)
 
 /*
+ * A colour, if it named one. The palette is the client's, so what crosses the
+ * wire is a slot in it rather than a pixel value - the far side does not get to
+ * pick colours this editor never agreed to.
+ */
+        LEA     x9, reply_colour
+        mov     w10, #-1
+        str     w10, [x9]
+        LEA     x0, respbuf
+        LEA     x1, s_key_colour
+        bl      SYM(str_find)
+        cbz     x0, 7f                  /* str_find lands past the match, so
+                                           this is already the digit */
+        ldrb    w10, [x0]
+        sub     w10, w10, #'0'
+        cmp     w10, #9
+        b.hi    7f
+        LEA     x9, reply_colour
+        str     w10, [x9]
+7:
+
+/*
  * Did the far side say its answer supersedes the whole screen rather than the
  * line that asked for it?  "add a loop" is about the program above, not a
  * request for a new one, and only the model can tell those apart - so it says,
@@ -412,14 +433,26 @@ SYM(backend_fetch):
         cmp     x0, #0
         cset    w10, ne
         str     w10, [x9]
-        LEA     x9, replybuf            /* nothing came back: change nothing */
+/*
+ * Empty means nothing came back at all - not "no text came back". A reply that
+ * changes the colour and nothing else has no text by design: the line the
+ * person typed is meant to vanish and be replaced by the editor looking
+ * different. Treating that as an empty reply printed "NOTHING CHANGED" over a
+ * request that had, in fact, been understood and answered.
+ */
+        LEA     x9, replybuf
         ldrb    w10, [x9]
-        LEA     x9, fetch_status
         cbnz    w10, 5f
+        LEA     x9, reply_colour        /* a colour on its own is an answer */
+        ldr     w10, [x9]
+        cmn     w10, #1
+        b.ne    5f
+        LEA     x9, fetch_status
         mov     w11, #ST_EMPTY
         str     w11, [x9]
         b       .Lsub_out
-5:      str     wzr, [x9]               /* ST_OK */
+5:      LEA     x9, fetch_status        /* recomputed: str_find ate x9-x15 */
+        str     wzr, [x9]               /* ST_OK */
 
 .Lsub_out:
         ldr     x23, [sp, #48]
@@ -467,6 +500,12 @@ SYM(backend_apply):
         b       .Lap_out
 
 .Lap_ok:
+        LEA     x9, reply_colour        /* a named colour is a real answer, */
+        ldr     w0, [x9]                /* even when no text came with it */
+        cmn     w0, #1
+        b.eq    8f
+        bl      SYM(editor_colour)
+8:
         cmp     w19, #ED_AIFY
         b.ne    4f
         LEA     x9, reply_whole         /* the whole screen, when the answer is
@@ -710,6 +749,7 @@ s_get:              .asciz "GET"
 s_path_behav:       .asciz "/api/behaviours"
 s_rule_dragmove:    .asciz " drag move"
 s_whole_true:       .asciz "\"whole\":true"
+s_key_colour:       .asciz "\"colour\":"
 s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
@@ -751,6 +791,7 @@ fetch_status: .space 8
 subjtext:   .space 64
 targetbuf:  .space 32
 reply_whole: .space 8
+reply_colour: .space 8
 bodybuf:    .space BODY_SZ
 hdrbuf:     .space HDRS_SZ
 respbuf:    .space RESP_SZ

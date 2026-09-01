@@ -62,7 +62,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve clean
+.PHONY: all tty window kernel backend app ios ios-run ios-device agent run win boot boot-tty serve test clean
 all: tty window kernel backend
 tty: $(B)/armedit-tty
 window: $(B)/armedit-window
@@ -200,3 +200,29 @@ boot-tty: $(B)/kernel.elf
 
 clean:
 	rm -rf $(B)
+
+# ---------------------------------------------------------------- tests
+# Two halves of the same claim. The Java side proves an appearance change
+# survives every stage the server can answer from - model, cache, script,
+# compiler. The assembly side takes the aarch64 the compiler emitted and
+# actually runs it, because "it compiled" and "it works" are different
+# statements and only one of them is worth making.
+TEST_OBJ := $(B)/macho/tests/optest.o $(B)/macho/app/ops.o \
+            $(B)/macho/net/str.o $(B)/macho/app/env.o
+
+$(B)/optest: $(TEST_OBJ)
+	$(LD_MACHO) -o $@ $(TEST_OBJ)
+
+.PHONY: test
+test: $(B)/optest
+	@cd backend-java && ./gradlew -q installDist
+	@javac -cp backend-java/build/classes/java/main -d $(B)/tests tests/ColourTest.java
+	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
+	   ColourTest $(B)/tests/colour.bin $(B)/tests/shout.bin
+	@echo "  --- and the aarch64 it emitted, executed:"
+	@for c in blue red green chartreuse; do \
+	   printf "    set-colour %-11s -> [%s]\n" "$$c" \
+	     "$$(ARMEDIT_TAG=1 $(B)/optest $(B)/tests/colour.bin "$$c" "a document" "" "")"; \
+	 done
+	@printf "    shout %-17s -> [%s]\n" "(screen only)" \
+	   "$$(ARMEDIT_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"

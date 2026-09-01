@@ -113,12 +113,26 @@ final class Scripts {
             "clojure", "elixir", "erlang", "dart", "zig", "nim", "ocaml", "r",
             "julia", "matlab", "objective-c", "csharp", "c#", "vb", "groovy");
 
+    /**
+     * The colours the editor actually has.
+     *
+     * A closed set for the same reason languages are one: it is what lets
+     * "colours {c:colour}" be a specific enough pattern to keep, while
+     * "colours {c:word}" is not. The editor's palette is ten slots, so a
+     * pattern that binds one of their names is saying something real about the
+     * request rather than leaving a hole in it.
+     */
+    private static final Set<String> COLOURS = Set.of(
+            "green", "white", "amber", "orange", "blue", "red",
+            "violet", "purple", "cyan", "yellow", "grey", "gray", "pink", "magenta");
+
     /** What a variable will accept. */
     enum Kind {
         WORDS,      // one or more words - free, and does not make a pattern specific
         WORD,       // exactly one word
         NUM,        // an integer
-        LANG        // a language we know by name
+        LANG,       // a language we know by name
+        COLOUR      // a colour the editor has
     }
 
     record Var(String name, Kind kind) {}
@@ -152,6 +166,28 @@ final class Scripts {
                String selection, String subject) {}
 
     /**
+     * What every operation is handed, on top of the variables it named itself.
+     *
+     * An operation used to see only the words it matched: "colours {name}" got
+     * {@code name} and nothing else. That is enough to answer a question about
+     * the sentence, and not enough to answer a question about the document -
+     * and the interesting operations are all about the document. "sort these",
+     * "renumber the list", "make the second one a loop" cannot be written at
+     * all without the text they are talking about.
+     *
+     * So the screen goes to every operation, scripted and compiled alike, at a
+     * fixed position after its own variables. Fixed because the compiled form
+     * addresses arguments by index: once a blob is built, the order it was
+     * built with is the order it will read forever, and appending is the only
+     * change that leaves old blobs meaning what they meant.
+     *
+     * The cost is that every operation pays for the whole screen whether it
+     * looks at it or not. That is a copy of a few kilobytes against an
+     * operation that can only otherwise be told what it already matched.
+     */
+    static final List<String> AMBIENT = List.of("screen", "subject", "selection");
+
+    /**
      * {@code code} is set when the model wrote a method body and it compiled;
      * {@code body} is the template it falls back to. A script may be either,
      * and on a native image - where there is no compiler - it is always the
@@ -167,6 +203,23 @@ final class Scripts {
             var names = new ArrayList<String>();
             for (var t : tokens) if (t.isVar()) names.add(t.var().name());
             return names;
+        }
+
+        /** Those, then the ambient ones - the order the operation was built with. */
+        List<String> arguments() {
+            var names = parameters();
+            names.addAll(AMBIENT);
+            return names;
+        }
+
+        /** The same order, filled in: what to actually hand it. */
+        List<String> argumentsFor(Map<String, String> bound, Ctx ctx) {
+            var out = new ArrayList<String>();
+            for (var p : parameters()) out.add(bound.getOrDefault(p, ""));
+            out.add(ctx.context() == null ? "" : ctx.context());
+            out.add(ctx.subject() == null ? "" : ctx.subject());
+            out.add(ctx.selection() == null ? "" : ctx.selection());
+            return out;
         }
     }
 
@@ -196,6 +249,7 @@ final class Scripts {
                     case "word" -> Kind.WORD;
                     case "num", "number" -> Kind.NUM;
                     case "lang", "language" -> Kind.LANG;
+                    case "colour", "color" -> Kind.COLOUR;
                     default -> Kind.WORDS;
                 };
                 out.add(new Token(null, new Var(m.group(1), kind)));
@@ -213,6 +267,7 @@ final class Scripts {
             case WORD -> !value.isBlank() && !value.contains(" ");
             case NUM -> value.matches("-?\\d+");
             case LANG -> LANGS.contains(value);
+            case COLOUR -> COLOURS.contains(value);
         };
     }
 
@@ -227,7 +282,8 @@ final class Scripts {
         int score = 0;
         for (var t : tokens) {
             if (t.isVar()) {
-                if (t.var().kind() == Kind.LANG || t.var().kind() == Kind.NUM) score++;
+                var k = t.var().kind();
+                if (k == Kind.LANG || k == Kind.NUM || k == Kind.COLOUR) score++;
             } else if (t.literal().length() >= 2) {
                 score++;
             }
@@ -277,6 +333,7 @@ final class Scripts {
         for (var e : bound.entrySet()) out = out.replace("{" + e.getKey() + "}", e.getValue());
         out = out.replace("{subject}", ctx.subject() == null ? "" : ctx.subject());
         out = out.replace("{selection}", ctx.selection() == null ? "" : ctx.selection());
+        out = out.replace("{screen}", ctx.context() == null ? "" : ctx.context());
         return out;
     }
 
@@ -300,10 +357,8 @@ final class Scripts {
             if (s.js() != null) {
                 // Answer with the operation itself, here, now. The device may
                 // instead have been handed the compiled form and never asked.
-                var order = new ArrayList<String>();
-                for (var p : s.parameters()) order.add(bound.getOrDefault(p, ""));
                 try {
-                    text = Js.run(s.js(), s.parameters(), order);
+                    text = Js.run(s.js(), s.arguments(), s.argumentsFor(bound, ctx));
                 } catch (RuntimeException x) {
                     System.out.printf("armedit: script \"%s\" failed: %s%n", s.name(), x);
                     continue;
@@ -313,9 +368,10 @@ final class Scripts {
                 // Compiled: it may still look at what it was handed and decide
                 // this one is not for it, in which case we carry on as though
                 // it had never matched.
-                var vars = new LinkedHashMap<>(bound);
-                vars.put("subject", ctx.subject() == null ? "" : ctx.subject());
-                vars.put("selection", ctx.selection() == null ? "" : ctx.selection());
+                var vars = new LinkedHashMap<String, String>();
+                var names = s.arguments();
+                var values = s.argumentsFor(bound, ctx);
+                for (int i = 0; i < names.size(); i++) vars.put(names.get(i), values.get(i));
                 text = vm.run(s.code(), vars);
                 if (text == null || text.isBlank()) {
                     // A script that keeps hanging is taken out of service. It
@@ -387,10 +443,25 @@ final class Scripts {
             // A script that does not compile is refused here, on the server,
             // where the error can be read - rather than shipped to a device
             // that has no way to report it.
+            // Both forms are built against the argument list they will be
+            // called with - own variables first, then the ambient ones - so a
+            // blob compiled today still reads argument 2 as argument 2 next
+            // year.
+            var params = new ArrayList<String>();
+            for (var t : tokens) if (t.isVar()) params.add(t.var().name());
+            for (var a : AMBIENT) {
+                if (!params.contains(a)) continue;
+                System.out.printf("armedit: script \"%s\" refused: \"%s\" is given to every "
+                        + "operation already%n", name, a);
+                refused.incrementAndGet();
+                params = null;
+                break;
+            }
+            if (params == null) continue;
+            params.addAll(AMBIENT);
+
             NativeOp.Blob blob = null;
             if (script != null) {
-                var params = new ArrayList<String>();
-                for (var t : tokens) if (t.isVar()) params.add(t.var().name());
                 try {
                     blob = Js.compile(name, script, params);
                 } catch (RuntimeException x) {
@@ -402,10 +473,8 @@ final class Scripts {
 
             ScriptBody code = null;
             if (source != null) {
-                var names = new ArrayList<String>();
-                for (var t : tokens) if (t.isVar()) names.add(t.var().name());
                 var why = new StringBuilder();
-                code = vm.compile(name, names, source, why);
+                code = vm.compile(name, params, source, why);
                 if (code == null) {
                     // The code was refused, but a template may have come with
                     // it, and half a script is better than none.
@@ -458,6 +527,7 @@ final class Scripts {
                     {name:word}     exactly one word
                     {name:num}      an integer
                     {name:lang}     a programming language, by name
+                    {name:colour}   a colour the editor has
 
                 So {lang:lang} hello world matches "c hello world" and "python
                 hello world", and does NOT match "my hello world" - which is
@@ -472,8 +542,9 @@ final class Scripts {
                     subject ~ <words>      what this screen is about
                     context ~ <words>      what is visible on it
 
-                In the body, {name} puts a binding back, and {subject} and
-                {selection} are available too. For example:
+                In the body, {name} puts a binding back. So are {screen} -
+                everything the editor is showing - and {subject} and
+                {selection}. For example:
 
                     #SCRIPT hello-world :: {lang:lang} hello world
                     #WHEN screen = empty
@@ -484,6 +555,15 @@ final class Scripts {
                 what was bound - which is usually - write code instead, as a
                 Java method body under #JAVA. Every variable arrives as a
                 local String, and you return the answer:
+
+                Three more locals arrive whether you named them or not:
+                "screen" is the entire document the person is looking at,
+                "subject" what it is about, "selection" what they had picked.
+                An operation that rewrites what is on screen - sorting it,
+                renumbering it, changing one line of it - reads "screen",
+                returns the new text, and asks for #WHOLE. That is the whole
+                mechanism; there is nothing else it needs.
+
 
                     #SCRIPT hello-world :: {lang:lang} hello world
                     #JAVA
