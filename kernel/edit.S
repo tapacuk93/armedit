@@ -57,27 +57,11 @@ kedit_run:
         bl      SYM(applet_clear)
 
         /*
-         * The same video widget the window build shows, decoded by the same
-         * ARMV1 decoder. Nothing about it is different here - which is the
-         * point of the editor core being shared rather than reimplemented.
+         * The video widget is built and works - see gfx/video.S and the demo
+         * clip - but it is scenery while the editor is the thing being used,
+         * and a square bouncing in the corner of a text screen is a
+         * distraction. Left out rather than deleted: applet_add is one call.
          */
-        LEA     x0, SYM(demo_clip)
-        LEA     x9, SYM(demo_clip_end)
-        sub     x9, x9, x0
-        mov     w1, w9
-        bl      SYM(video_open)
-        cmn     w0, #1
-        b.eq    1f
-        bl      SYM(video_next)
-        mov     w0, #AP_KIND_VIDEO
-        mov     w1, #6000               /* basis points, so the same layout */
-        mov     w2, #1000               /* lands correctly on any surface */
-        mov     w3, #3400
-        mov     w4, #3400
-        mov     w5, #0
-        LEA     x6, s_unlabelled
-        bl      SYM(applet_add)
-1:
 
         mov     w23, #1                 /* redraw wanted */
         bl      platform_ticks

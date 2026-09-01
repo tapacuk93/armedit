@@ -501,11 +501,16 @@ public final class Armeditd {
 
             RUNNING IT
 
-            If they asked you to run something - "run this", "what does it
-            print", "run on linux nodejs" - then run it. Do not describe what
-            the output would be; they can read the code themselves, and a
-            guessed answer is worth less than no answer because it looks the
-            same as a real one. Write:
+            Almost never. Writing the code is the answer to almost every
+            request, and somebody who asked for a sorting function wants a
+            sorting function - not a machine in a datacentre, a wait, and its
+            output. Provisioning when nobody asked spends their money and their
+            time on something they did not want.
+
+            Only when running is the request itself - "run this", "what does it
+            print", "run it on linux" - and then it is the whole answer, because
+            a described output is worth less than none: it looks exactly like a
+            real one and is not. In that case, write:
 
                 #RUN aws smallest  <shell command>
 
@@ -515,8 +520,13 @@ public final class Armeditd {
 
                 #RUN aws smallest  sudo dnf install -y nodejs >/dev/null 2>&1 && node -e 'console.log(2+2)'
 
-            The machine is terminated when it goes idle, so this costs a few
-            minutes of the smallest instance there is and nothing after that.
+            The machine is terminated as soon as it has reported, so this costs
+            a couple of minutes of the smallest instance there is. That is not
+            free, which is the other reason not to reach for it uninvited.
+
+            "sort it manually", "do it without the library", "rewrite it as a
+            loop" are not requests to run anything. They are changes to what is
+            on the screen, so they take #WHOLE and a rewritten screen.
             """;
 
 
@@ -533,6 +543,29 @@ public final class Armeditd {
      * would start guessing at which asterisks were formatting and which were
      * multiplication, and getting that wrong silently edits somebody's code.
      */
+    /**
+     * Directives are addressed to the server, never to the person.
+     *
+     * #RUN, #SCRIPT, #WHOLE and the rest are how the model asks this process to
+     * do something. Every one of them is supposed to be consumed by whatever
+     * handles it - and every one of them has, at some point, failed to be, and
+     * arrived on somebody's screen as literal text in the middle of their
+     * document.
+     *
+     * So this is the last thing the text passes through, and it does not care
+     * why a marker survived: a directive that reached here was not acted on,
+     * and showing it to the user is strictly worse than dropping it. The
+     * handlers upstream stay responsible for acting; this is only responsible
+     * for the invariant that a document never fills up with protocol.
+     */
+    private static final java.util.regex.Pattern DIRECTIVE =
+            java.util.regex.Pattern.compile("(?m)^#[A-Z]{2,}\\b.*$\\n?");
+
+    static String withoutDirectives(String reply) {
+        if (reply == null) return "";
+        return DIRECTIVE.matcher(reply).replaceAll("").strip();
+    }
+
     static String plainText(String reply) {
         if (reply == null || reply.isBlank()) return "";
         var out = new StringBuilder();
@@ -677,7 +710,7 @@ public final class Armeditd {
                 if (settled != null) promote(settled, Router.cheapest());
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "cached", 0, instruction)));
-                return Res.json(200, Json.obj("text", hit.text(),
+                return Res.json(200, Json.obj("text", withoutDirectives(hit.text()),
                         "model", hit.model(), "cached", true));
             }
 
@@ -689,7 +722,7 @@ public final class Armeditd {
             if (scripted != null) {
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
                         System.currentTimeMillis(), "scripted", 0, instruction)));
-                return Res.json(200, Json.obj("text", scripted.text(),
+                return Res.json(200, Json.obj("text", withoutDirectives(scripted.text()),
                         "model", scripted.script().author(), "scripted", true,
                         "script", scripted.script().name()));
             }
@@ -838,7 +871,8 @@ public final class Armeditd {
                         parseInt(cursor.isBlank() ? "0" : cursor, 0),
                         text.length() > 200 ? text.substring(0, 200) + "..." : text)));
             }
-            return Res.json(200, Json.obj("text", text, "model", tier.name(), "whole", whole));
+            return Res.json(200, Json.obj("text", withoutDirectives(text),
+                    "model", tier.name(), "whole", whole));
         } catch (Exception x) {
             return Res.json(502, Json.obj("error", "aicoin: " + x.getMessage()));
         }
