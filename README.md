@@ -115,6 +115,95 @@ See [docs/aws-and-the-model.md](docs/aws-and-the-model.md) — it matters most
 because aicoin shares one provider key across users, so anything in a prompt
 should be considered disclosed.
 
+## Operations the editor learns
+
+The same request, asked by enough different people, stops being a question and
+becomes a feature.
+
+`Cmd`+`P` starts by asking a model. That is slow and it costs money, so the
+answer is cached — but a cache only helps the person who asks the identical
+thing. What helps everyone is the model noticing, mid-answer, that what it just
+wrote was not about this person at all, and teaching the server to answer the
+next one itself:
+
+```
+#SCRIPT set-colour :: colours {name:colour}
+#JS
+if (name == "blue") { return "#COLOUR 3"; }
+return "";
+#END
+```
+
+That is an *operation*. Its pattern has typed holes, so it understands rather
+than merely matches — `{name:colour}` accepts a colour the editor has and
+nothing else, and returning empty means "not me", which sends the request back
+to a model as though the operation had never matched. Declining is half of what
+these are for; an operation that guesses is worse than none, because a wrong
+fast answer looks exactly like a right one.
+
+Operations are compiled ahead of time to aarch64. The device can then run one
+without a network at all, which is the point: `colours blue` works on a laptop
+with the wifi off, and on bare metal where there is no operating system to fall
+back to.
+
+Every operation is handed the whole screen, after its own variables. An
+operation that matched two words can rewrite the entire document — the
+difference between answering a sentence and answering a request.
+
+### The consortium
+
+Machine code that ships to everybody is not the kind of decision one model
+should make alone.
+
+An answer on your screen is yours: you can see it, and if it is wrong you
+retype the line. A compiled operation committed to this repository is none of
+those things — it runs on machines whose owners never asked for it, and by the
+time it is wrong it is wrong everywhere. So the last gate before the repository
+is not the model that wrote the operation. It is every model the wallet can
+reach, asked separately:
+
+```
+armedit: consortium seats 6 of 40 eligible models, across 2 provider(s)
+bench: [openai:o4-mini, anthropic:claude-sonnet-5, openai:o3-mini,
+        anthropic:claude-opus-5, openai:o3, anthropic:claude-haiku-4-5]
+VERDICT COMMIT - 4 of 6 members, unanimous
+```
+
+Seats go round the providers rather than down the list. Sorted by name, one
+vendor's models occupy the whole front of the queue — the first sitting this
+ran filled all six seats with one vendor, which is a single opinion with five
+corroborations, and worse than one opinion because it looks like agreement.
+
+Members do not see each other's votes. A consortium that passes opinions along
+manufactures agreement without producing evidence, and agreement is the thing
+being measured.
+
+A commit needs everyone who answered to agree, above a quorum of three — one
+credible objection is enough, because holding costs a release and committing
+costs everybody. But unanimity has a failure mode, and it appeared immediately:
+the cheapest model on the bench answered "this should be verified and audited",
+which is true of all code, names nothing, and blocks everything forever. So an
+objection is put back to the members who did not raise it, and stands unless
+most of them say it is wrong or says nothing.
+
+What gets written, on approval, is three files under `ops/`: the machine code,
+its source and pattern, and every member's reasoning. The reasoning is
+committed because a decision without it is not reviewable later — "the
+consortium approved it" is otherwise a claim about a conversation nobody kept.
+
+Nothing here runs `git`. A daemon that commits on its own is one that can
+rewrite history while nobody is looking; the value is in the files being
+reviewable, not in them appearing unattended.
+
+**What this is not.** It is not a fact-checker. On its first sitting over its
+own source, a member held the change because an API parameter "does not exist"
+— specific, confident, and false: both spellings had been put to the proxy
+before the code was written, and the newer one is the one that works. A
+consortium is good at vagueness and at real defects in code in front of it, and
+bad at the world having moved since it was trained. That is why the appeal asks
+whether an objection is *correct* rather than merely specific, and why claims
+about the world get checked by making the call.
+
 ### Backend configuration
 
 Server-side settings, all environment, none committed.
@@ -294,51 +383,68 @@ decides only *where* the windows fall, never what the pad contains.
 | `net/` | sockets, HTTP/1.1 client and server, JSON and string primitives |
 | `crypto/` | SHA-256, HMAC, ChaCha20, Poly1305, AEAD, HKDF, X25519 |
 | `backend-java/src/` | the backend: routing, accounts, aicoin, EC2, the pad |
+| `backend-java/src/Scripts.java` | operations: patterns with typed holes, and what they may know |
+| `backend-java/src/Js.java` | the JavaScript subset, compiled ahead of time to aarch64 |
+| `backend-java/src/Consortium.java` | several models, asked separately, before anything ships |
+| `ops/` | approved operations: the machine code, its source, and the votes |
+| `tests/` | `make test` — the backend's judgement, and the aarch64 it emits, run |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
 
 ## Status
 
 Verified by running it, against published test vectors where they exist:
 
-- [x] hand-built 5×7 font, 69 glyphs, one shared rasterizer
+- [x] hand-built 5x7 font, 95 glyphs, one shared rasterizer
 - [x] hosted terminal mode and hosted window mode
-- [x] bare-metal kernel: boots, brings up a framebuffer, scrolling console
-- [x] editor: screens, caret, mouse, paging, edit-aware rewrite
+- [x] bare-metal kernel: boots, framebuffer, scrolling console, back buffer
+- [x] editor: screens, caret, mouse, paging, edit-aware rewrite, colours
 - [x] SHA-256 (FIPS), HMAC (RFC 4231), AWS SigV4 (byte-identical to an
       independent reference)
 - [x] ChaCha20, Poly1305 and the AEAD (RFC 8439), HKDF (RFC 5869),
-      X25519 (RFC 7748) — the whole symmetric and key-agreement half of TLS 1.3
-- [x] backend round trip: registration, key issue, aicoin call, signed EC2
-      run/terminate — proven against the assembly implementation
-
-Written but not yet compiled or run:
-
-- [ ] the Java 25 backend in `backend-java/` — a like-for-like replacement for
-      the assembly one, plus the pad ledger, the workspace tiers, the idle
-      reaper, the AWS agent with its policy gates, the model router and
-      handoff, multi-cloud credentials, and the edit/gesture journals
-- [ ] `Cmd`+`Shift`+arrows, `Cmd`+`+`/`-`, `Cmd`+`0`…`9`, the one-property key,
-      and the no-key no-op
+      X25519 (RFC 7748) - the whole symmetric and key-agreement half of TLS 1.3
+- [x] **keyboard and networking on bare metal**: virtio-input and virtio-net
+      drivers, then ARP, IPv4 and TCP written from scratch. `Cmd`+`P` in the
+      kernel reaches the backend over our own stack. Found by packet capture
+      rather than by reading: a SYN that did not consume a sequence number, an
+      address byte order that disagreed with itself, and an unaligned 32-bit
+      load that hangs silently because the MMU is off and every page is Device
+      memory
+- [x] the Java backend, running: routing, accounts that survive a restart,
+      aicoin, the pad ledger, the workspace tiers, the model router
+- [x] real EC2 provisioning: an instance is brought up, runs the command,
+      reports, and is terminated as soon as its output has been read
+- [x] operations: cached, scripted, compiled to aarch64, and run on the device
+      without a network. `make test` proves the answer survives every stage and
+      then executes the machine code the compiler emitted
+- [x] the consortium: several models, two vendors, asked separately before
+      anything is committed to `ops/`
 
 Next, in rough order:
 
-- [ ] **TLS 1.3 client in assembly** — the primitives are done and verified; the
+- [ ] **exception vectors in the kernel** - any fault is currently a silent
+      hang, which has cost real debugging time twice
+- [ ] **TLS 1.3 client in assembly** - the primitives are done and verified; the
       handshake, record layer and certificate pinning are not. Until then the
       backend reaches AWS and aicoin over TLS from Java, and the editor talks
       to its backend in the clear
-- [ ] local persistence on the device itself: everything typed written to disk
-      asynchronously, rotating at 1 MB, so a screen survives losing the backend
+- [ ] the browser: `net/html.S` and `net/dns.S` exist and parse, but nothing
+      yet balances fetching a page directly against fetching it through the
+      backend
+- [ ] keystrokes are dropped while `Cmd`+`P` is in flight - the poll loop
+      blocks inside the request
+- [ ] offline mode: the editor should keep working from `ops/` and local
+      widgets when the backend is gone, rather than reporting it is gone
+- [ ] local persistence on the device itself, so a screen survives losing the
+      backend
 - [ ] mounting the account's folders into the provisioned machine's home
       directory, so the agent works on the same files you are typing into
 - [ ] the editor emitting edits and gestures: the journal endpoint and storage
       exist, nothing sends to them yet
-- [ ] provisioning on anything but AWS — the other clouds take credentials and
+- [ ] provisioning on anything but AWS - the other clouds take credentials and
       are compared on price, but only EC2 is actually brought up
-- [ ] iOS: the same editor core behind a UIKit front end — paste,
-      tap-as-cursor, and landscape
-- [ ] keyboard and networking in the bare-metal kernel (it renders; it does not
-      yet type or talk)
-- [ ] accounts survive only as long as the daemon does
+- [ ] iOS gestures the macOS front end does not have yet
+- [ ] baking proven operations into the shipped image, so a release carries
+      what the previous one learned
 
 ## Ground rules
 
@@ -351,3 +457,7 @@ Next, in rough order:
    macOS, nothing at all on bare metal — never to draw a glyph, sign a request
    or parse a reply.
 3. **No credentials in the tree.** See above.
+4. **Nothing ships on one opinion.** Machine code reaches `ops/` only after
+   enough distinct people were independently given the same answer, only after
+   it compiled, and only after several models — across vendors, asked
+   separately — agreed it should exist. Their reasoning is committed with it.

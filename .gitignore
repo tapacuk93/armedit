@@ -24,3 +24,9 @@ backend-java/gradle/
 
 # workspaces hold users' text and audit logs
 workspaces/
+
+# Build output is ignored above, and ops/ is not build output: those blobs are
+# the operations the consortium agreed to ship, and they are the only reason
+# the editor can answer without a network. Committed with their source and the
+# votes that approved them.
+!ops/*.bin

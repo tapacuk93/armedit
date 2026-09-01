@@ -1,0 +1,15 @@
+verdict  COMMIT
+because  4 of 6 members, unanimous
+
+openai:o4-mini-2025-04-16  COMMIT
+    It implements exactly the intended mapping of "blue", "red", and "green" to their colour codes while declining all other names.
+    would change: openai:o4-mini-2025-04-16: Pre-normalize the input name to lowercase (e.g. name = name.toLowerCase()) so the match is case-insensitive.
+anthropic:claude-sonnet-5  did not vote: java.lang.IllegalStateException: the model ran out of output room before answering
+openai:o3-mini-2025-01-31  COMMIT
+    The operation precisely implements its intended mapping for "blue", "red", and "green" and correctly declines any other input.
+    would change: openai:o3-mini-2025-01-31: Consider adding inline comments in the source to explain the magic colour codes for future maintainability.
+anthropic:claude-opus-5  did not vote: java.lang.IllegalStateException: the model declined to answer: {"model":"claude-opus-5","id":"msg_011CedF5Eg47YJ9VwLoxA1kd","type":"message","role":"assistant","content":[],"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":"This request triggered restrictions on violative cyber content and was blocked under Anthropic's Usage Policy. To learn more, see https://platform.claude.com/docs/en/build-with-c...
+openai:o3-2025-04-16  COMMIT
+    The compiled aarch64 returns the correct #COLOUR values for “blue”, “red”, and “green” and cleanly declines every other accepted colour name, exactly matching the checked-in source logic without over- or under-matching.
+anthropic:claude-haiku-4-5-20251001  COMMIT
+    The operation correctly implements the three colour mappings specified in the source, rejects all other colours, and the machine code execution results match the source logic precisely.

@@ -1,0 +1,29 @@
+name       set-colour
+matches    colours {name:colour}
+arguments  name, screen, subject, selection
+bytes      488
+sha        c5edb10b35b47791eb178acfc6ed54e3611c1f214d5135b63c81cb7da6119b67
+author     opus
+
+source
+    if (name == "blue") { return "#COLOUR 3"; }
+    if (name == "red") { return "#COLOUR 4"; }
+    if (name == "green") { return "#COLOUR 0"; }
+    return "";
+
+observed
+    colours amber  ->  (declined)
+        colours blue  ->  #COLOUR 3
+        colours cyan  ->  (declined)
+        colours gray  ->  (declined)
+        colours green  ->  #COLOUR 0
+        colours grey  ->  (declined)
+        colours magenta  ->  (declined)
+        colours orange  ->  (declined)
+        colours pink  ->  (declined)
+        colours purple  ->  (declined)
+        colours red  ->  #COLOUR 4
+        colours violet  ->  (declined)
+        colours white  ->  (declined)
+        colours yellow  ->  (declined)
+        colours chartreuse  ->  (declined)

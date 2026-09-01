@@ -216,9 +216,12 @@ $(B)/optest: $(TEST_OBJ)
 .PHONY: test
 test: $(B)/optest
 	@cd backend-java && ./gradlew -q installDist
-	@javac -cp backend-java/build/classes/java/main -d $(B)/tests tests/ColourTest.java
+	@javac -cp backend-java/build/classes/java/main -d $(B)/tests \
+	   tests/ColourTest.java tests/ConsortiumTest.java
 	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   ColourTest $(B)/tests/colour.bin $(B)/tests/shout.bin
+	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
+	   ConsortiumTest
 	@echo "  --- and the aarch64 it emitted, executed:"
 	@for c in blue red green chartreuse; do \
 	   printf "    set-colour %-11s -> [%s]\n" "$$c" \

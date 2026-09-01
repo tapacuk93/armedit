@@ -25,19 +25,39 @@ final class Aicoin {
      * in the caller.
      */
     enum Provider {
-        ANTHROPIC("anthropic", "/v1/messages", "claude-opus-5"),
-        OPENAI("openai", "/v1/chat/completions", "gpt-4o"),
-        MISTRAL("mistral", "/v1/chat/completions", "mistral-large-latest"),
-        COHERE("cohere", "/v1/chat/completions", "command-r-plus");
+        ANTHROPIC("anthropic", "/v1/messages", "claude-opus-5", "max_tokens"),
+        OPENAI("openai", "/v1/chat/completions", "gpt-4o", "max_completion_tokens"),
+        MISTRAL("mistral", "/v1/chat/completions", "mistral-large-latest", "max_tokens"),
+        COHERE("cohere", "/v1/chat/completions", "command-r-plus", "max_tokens");
 
         final String header;    // the value of X-AI
         final String path;      // the provider's own path, forwarded verbatim
         final String model;
+        /**
+         * What this provider calls the output cap.
+         *
+         * OpenAI renamed it when reasoning models arrived, and its newer ones
+         * reject the old name outright rather than accepting it - so a single
+         * hardcoded "max_tokens" reaches gpt-4o and fails on gpt-5, which is
+         * the failure that looks like the model being unreachable.
+         *
+         * A reviewing model held this change on the grounds that
+         * max_completion_tokens does not exist and would break every
+         * /v1/chat/completions call. Both names were put to the proxy before
+         * this was written: gpt-4o answers 200 to max_completion_tokens, and
+         * gpt-5 answers 400 to max_tokens with "use max_completion_tokens
+         * instead". The objection was specific, confidently argued, and about
+         * a world that had moved - which is the failure mode of asking models
+         * about facts rather than about code, and the reason this note is here
+         * rather than a silent revert.
+         */
+        final String cap;
 
-        Provider(String header, String path, String model) {
+        Provider(String header, String path, String model, String cap) {
             this.header = header;
             this.path = path;
             this.model = model;
+            this.cap = cap;
         }
 
         static Provider of(String name) {
@@ -87,13 +107,25 @@ final class Aicoin {
         return send(wallet, provider, model, prompt, maxTokens);
     }
 
+    /**
+     * Ask one named model at one named provider, outside the routing table.
+     *
+     * The router chooses between the three tiers this editor is tuned for.
+     * This reaches anything the proxy fronts, which is what a consortium needs:
+     * its whole point is asking models the router would never have picked.
+     */
+    String askDirect(String wallet, String providerName, String model,
+                     String prompt, int maxTokens) throws Exception {
+        return send(wallet, Provider.of(providerName), model, prompt, maxTokens);
+    }
+
     private String send(String wallet, Provider provider, String model,
                         String prompt, int maxTokens) throws Exception {
         // Every provider aicoin fronts takes model/messages in this shape, so
         // one template covers them; the proxy forwards it untouched.
         String body = """
-                {"model":"%s","max_tokens":%d,"messages":[{"role":"user","content":"%s"}]}"""
-                .formatted(model, maxTokens, Json.escape(prompt));
+                {"model":"%s","%s":%d,"messages":[{"role":"user","content":"%s"}]}"""
+                .formatted(model, provider.cap, maxTokens, Json.escape(prompt));
 
         var req = HttpRequest.newBuilder(base.resolve(provider.path))
                 .timeout(Duration.ofMinutes(5))
@@ -115,7 +147,29 @@ final class Aicoin {
      * Pull the reply text out. Providers disagree about where it lives, so try
      * each shape rather than assume one.
      */
-    private String extract(String json) {
+    static String extract(String json) {
+        /*
+         * Anthropic replies are a list of blocks, and with thinking on, the
+         * first one is a thinking block whose text lives under a different key.
+         * Reading "the text field" out of a flattened object finds the thinking
+         * block's empty string and concludes the model said nothing - so find
+         * the block that is actually a text block, by its type.
+         */
+        var m = TEXT_BLOCK.matcher(json);
+        if (m.find()) {
+            String t = Json.unescape(m.group(1));
+            if (!t.isBlank()) return t;
+        }
+        // A refusal is an answer. Saying so beats "no reply text in {...}",
+        // which reads like a transport fault and sends people to look at the
+        // network.
+        if (json.contains("\"stop_reason\":\"refusal\"")) {
+            throw new IllegalStateException("the model declined to answer: " + trim(json));
+        }
+        if (json.contains("\"finish_reason\": \"length\"")
+                || json.contains("\"stop_reason\":\"max_tokens\"")) {
+            throw new IllegalStateException("the model ran out of output room before answering");
+        }
         Map<String, String> flat = Json.parse(json);
         // Anthropic: content[0].text.  OpenAI-shaped: choices[0].message.content.
         for (var key : new String[]{"text", "content"}) {
@@ -126,6 +180,9 @@ final class Aicoin {
         if (v != null) return v;
         throw new IllegalStateException("no reply text in: " + trim(json));
     }
+
+    private static final java.util.regex.Pattern TEXT_BLOCK = java.util.regex.Pattern.compile(
+            "\"type\"\\s*:\\s*\"text\"\\s*,\\s*\"text\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
 
     private static String trim(String s) {
         return s.length() <= 400 ? s : s.substring(0, 400) + "...";

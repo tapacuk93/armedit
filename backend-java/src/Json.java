@@ -84,6 +84,44 @@ final class Json {
     }
 
     /** obj("key", "value", "n", 3) - strings get quoted, numbers do not. */
+    /**
+     * The inverse of {@link #escape}, for a string already lifted out of JSON.
+     *
+     * Only the escapes this project's replies actually contain. A model's
+     * answer is prose and code, not arbitrary Unicode games, and a decoder
+     * that quietly mangles what it does not know is worse than one that copies
+     * it through unchanged.
+     */
+    static String unescape(String s) {
+        if (s == null || s.indexOf('\\') < 0) return s;
+        var b = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c != '\\' || i + 1 >= s.length()) { b.append(c); continue; }
+            char n = s.charAt(++i);
+            switch (n) {
+                case 'n' -> b.append('\n');
+                case 't' -> b.append('\t');
+                case 'r' -> b.append('\r');
+                case 'b' -> b.append('\b');
+                case 'f' -> b.append('\f');
+                case '"' -> b.append('"');
+                case '\\' -> b.append('\\');
+                case '/' -> b.append('/');
+                case 'u' -> {
+                    if (i + 4 < s.length()) {
+                        b.append((char) Integer.parseInt(s.substring(i + 1, i + 5), 16));
+                        i += 4;
+                    } else {
+                        b.append("\\u");
+                    }
+                }
+                default -> b.append('\\').append(n);
+            }
+        }
+        return b.toString();
+    }
+
     static String obj(Object... kv) {
         var b = new StringBuilder("{");
         for (int i = 0; i + 1 < kv.length; i += 2) {

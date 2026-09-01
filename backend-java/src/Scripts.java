@@ -231,6 +231,108 @@ final class Scripts {
     private final AtomicLong evicted = new AtomicLong();
     private final ScriptVm vm = new ScriptVm();
 
+    /**
+     * A handful of sentences this operation would match, and the arguments
+     * they bind to - so it can be run before anybody is asked to judge it.
+     *
+     * These are not tests: nothing here knows what the right answer is. They
+     * exist so that a reviewer sees what the operation does rather than what
+     * its source suggests it does, and so that an operation which declines
+     * everything is visibly one that declines everything.
+     *
+     * The closed kinds - colours, languages - are walked through, because
+     * those are exactly the cases where an operation covers three of them and
+     * silently drops the fourth. Open kinds get one placeholder; there is
+     * nothing to enumerate.
+     */
+    record Probe(String sentence, List<String> values) {}
+
+    static List<Probe> probes(Script s) {
+        var out = new ArrayList<Probe>();
+        var vars = new ArrayList<Var>();
+        for (var t : s.tokens()) if (t.isVar()) vars.add(t.var());
+
+        // Which variable, if any, is worth walking through exhaustively.
+        int walk = -1;
+        List<String> values = List.of();
+        for (int i = 0; i < vars.size(); i++) {
+            var k = vars.get(i).kind();
+            if (k == Kind.COLOUR) { walk = i; values = List.copyOf(COLOURS); break; }
+            if (k == Kind.LANG && walk < 0) { walk = i; values = List.copyOf(LANGS); }
+        }
+        if (walk < 0) { values = List.of(""); walk = 0; }
+
+        /*
+         * Every member of a closed kind, in a fixed order.
+         *
+         * This used to stop at eight, taken from an unordered set - so which
+         * eight varied between runs, and the cases that did not make the cut
+         * simply were not there. A reviewer reading the result saw "blue"
+         * absent from a list of colours and concluded, correctly given what it
+         * was shown, that the operation did not handle blue. It handled blue
+         * fine; the evidence was truncated and did not say so.
+         *
+         * Closed kinds are small - a dozen colours, a few languages - so there
+         * is no reason to sample them at all. Sorting is what makes two runs
+         * comparable; a review that changes because a hash order changed is
+         * not a review.
+         */
+        var walked = new ArrayList<>(values);
+        java.util.Collections.sort(walked);
+        values = List.copyOf(walked);
+
+        for (int n = 0; n < Math.max(1, values.size()); n++) {
+            var bound = new ArrayList<String>();
+            for (int i = 0; i < vars.size(); i++) {
+                bound.add(i == walk && !values.isEmpty() && !values.get(0).isEmpty()
+                        ? values.get(n) : placeholder(vars.get(i)));
+            }
+            var sentence = new StringBuilder();
+            int at = 0;
+            for (var t : s.tokens()) {
+                if (sentence.length() > 0) sentence.append(' ');
+                sentence.append(t.isVar() ? bound.get(at++) : t.literal());
+            }
+            // The ambient arguments come last, as they do everywhere else.
+            var all = new ArrayList<>(bound);
+            all.add("the document, such as it is");
+            all.add("");
+            all.add("");
+            out.add(new Probe(sentence.toString(), List.copyOf(all)));
+        }
+
+        // And one it should not match on the closed kinds, because declining is
+        // half of what these operations are for.
+        if (!values.isEmpty() && !values.get(0).isEmpty()) {
+            var bound = new ArrayList<String>();
+            for (int i = 0; i < vars.size(); i++) {
+                bound.add(i == walk ? "chartreuse" : placeholder(vars.get(i)));
+            }
+            var sentence = new StringBuilder();
+            int at = 0;
+            for (var t : s.tokens()) {
+                if (sentence.length() > 0) sentence.append(' ');
+                sentence.append(t.isVar() ? bound.get(at++) : t.literal());
+            }
+            var all = new ArrayList<>(bound);
+            all.add("the document, such as it is");
+            all.add("");
+            all.add("");
+            out.add(new Probe(sentence.toString(), List.copyOf(all)));
+        }
+        return out;
+    }
+
+    private static String placeholder(Var v) {
+        return switch (v.kind()) {
+            case NUM -> "2";
+            case LANG -> "c";
+            case COLOUR -> "blue";
+            case WORD -> "thing";
+            case WORDS -> "the thing they meant";
+        };
+    }
+
     /** Case and spacing are noise; everything else is the request. */
     static String normalise(String s) {
         return s == null ? "" : s.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");

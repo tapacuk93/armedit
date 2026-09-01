@@ -69,6 +69,8 @@ public final class Armeditd {
     private final Consensus consensus = new Consensus();
     private final Behaviours behaviours;
     private final Catalogue catalogue;
+    private final Consortium consortium;
+    private final Distro distro;
     private final String publicAddr;
     /** Promotion is slow and nobody is waiting for it. */
     private final ExecutorService promoter = Executors.newVirtualThreadPerTaskExecutor();
@@ -93,6 +95,8 @@ public final class Armeditd {
         this.behaviours = new Behaviours(root);
         this.catalogue = new Catalogue(env("ARMEDIT_AICOIN", "http://127.0.0.1:8081"),
                 java.util.List.of("anthropic", "openai", "google", "mistral", "cohere"));
+        this.consortium = new Consortium(aicoin, catalogue);
+        this.distro = new Distro(env("ARMEDIT_OPS_DIR", "../ops"));
         this.publicAddr = env("ARMEDIT_PUBLIC_ADDR", "");
         // Machines post their output back here, so they need an address that
         // works from outside this host.
@@ -298,11 +302,66 @@ public final class Armeditd {
                             op.blob() != null
                                 ? " (" + op.blob().code().length + " bytes of machine code)"
                                 : "");
+                    if (op.blob() != null) ship(wallet, op);
                 }
             } catch (Exception x) {
                 System.out.printf("armedit: promotion skipped: %s%n", x);
             }
         });
+    }
+
+    /**
+     * Put one compiled operation to the consortium, and ship it if they agree.
+     *
+     * This is the only place machine code enters the source tree, and it is
+     * deliberately the narrowest one: an operation gets here only after enough
+     * distinct people were independently given the same answer, only after the
+     * backend turned that answer into something that compiles, and only after
+     * every model this wallet can reach has separately said it should exist.
+     *
+     * Any of those three can decline, and declining is the ordinary outcome.
+     */
+    private void ship(String wallet, Scripts.Script op) {
+        try {
+            String observed = exercise(op);
+            var verdict = consortium.decide(wallet, op.name(),
+                    Consortium.aboutBlob(op.name(), op.pattern(), op.arguments(),
+                            op.js(), op.blob().code(), op.blob().sha(), observed));
+            System.out.printf("armedit: consortium on \"%s\": %s - %s%n",
+                    op.name(), verdict.commit() ? "COMMIT" : "HOLD", verdict.why());
+            for (var c : verdict.changes()) System.out.printf("armedit:   %s%n", c);
+            if (!verdict.commit()) return;
+            var written = distro.commit(op, verdict, observed);
+            System.out.printf("armedit: %s is in the tree: %s%n", op.name(),
+                    written.stream().map(java.nio.file.Path::toString)
+                            .collect(java.util.stream.Collectors.joining(", ")));
+        } catch (Exception x) {
+            System.out.printf("armedit: not shipping \"%s\": %s%n", op.name(), x);
+        }
+    }
+
+    /**
+     * Run the operation on its own pattern before anyone is asked about it.
+     *
+     * A reviewer given only source is reviewing a claim. Given what the thing
+     * actually printed, it is reviewing the thing - and the difference shows
+     * up most on the operations that compile cleanly and then decline
+     * everything, which read fine and do nothing.
+     */
+    private String exercise(Scripts.Script op) {
+        var b = new StringBuilder();
+        for (var probe : Scripts.probes(op)) {
+            String out;
+            try {
+                out = Js.run(op.js(), op.arguments(), probe.values());
+            } catch (RuntimeException x) {
+                out = "(failed: " + x + ")";
+            }
+            b.append("    ").append(probe.sentence()).append("  ->  ")
+             .append(out == null || out.isBlank() ? "(declined)" : out.replace("\n", "\\n"))
+             .append('\n');
+        }
+        return b.length() == 0 ? "    (nothing to try)" : b.toString().stripTrailing();
     }
 
     private void startRefresher() {

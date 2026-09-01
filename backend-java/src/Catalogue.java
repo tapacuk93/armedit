@@ -41,11 +41,17 @@ final class Catalogue {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
+    /** One model, and the provider it has to be asked through. */
+    record Member(String provider, String model) {
+        @Override public String toString() { return provider + ":" + model; }
+    }
+
     private final String base;
     private final List<String> providers;
 
     /** Everything seen, most recently refreshed. */
     private volatile List<String> models = List.of();
+    private volatile List<Member> members = List.of();
     private volatile String lastError = "";
     private volatile long refreshedAt;
 
@@ -55,6 +61,9 @@ final class Catalogue {
     }
 
     List<String> models() { return models; }
+
+    /** The same list, still knowing where each one lives. */
+    List<Member> members() { return members; }
 
     long refreshedAt() { return refreshedAt; }
 
@@ -80,10 +89,13 @@ final class Catalogue {
             return;
         }
         var found = new LinkedHashSet<String>();
+        var pairs = new ArrayList<Member>();
         var errors = new StringBuilder();
         for (var p : providers) {
             try {
-                found.addAll(ask(wallet, p));
+                var ids = ask(wallet, p);
+                found.addAll(ids);
+                for (var id : ids) pairs.add(new Member(p, id));
             } catch (Exception x) {
                 if (errors.length() > 0) errors.append("; ");
                 errors.append(p).append(": ").append(x.getMessage());
@@ -91,6 +103,7 @@ final class Catalogue {
         }
         if (!found.isEmpty()) {
             models = List.copyOf(found);
+            members = List.copyOf(pairs);
             refreshedAt = System.currentTimeMillis();
         }
         lastError = errors.toString();
