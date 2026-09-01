@@ -34,8 +34,17 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               kernel/net.S kernel/tcp.S kernel/sock.S \
               net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
-              net/str.S \
+              net/str.S app/localops.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
+
+# The approved operations, turned into a table the linker can place. Generated
+# rather than written: ops/ is the source of truth, and a hand-kept copy of it
+# would be wrong the first time one is added.
+OPS_TABLE := $(B)/ops_table.S
+
+$(OPS_TABLE): $(wildcard ops/*.op) $(wildcard ops/*.bin) tools/mkops.py
+	@mkdir -p $(B)
+	@python3 tools/mkops.py ops $@
 
 BACKEND_SRC := backend/daemon.S backend/page.S backend/util.S backend/aicoin.S \
                backend/aws.S backend/sigv4.S crypto/sha256.S crypto/hmac.S \
@@ -44,8 +53,8 @@ BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S net/sock.S
-WIN_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S $(FONT_SRC))
-KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC))
+WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S $(FONT_SRC))
+KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC)) $(B)/elf/ops_table.o
 
 QEMU      := qemu-system-aarch64
 QEMU_ARGS := -M virt -cpu cortex-a72 -m 256 -kernel $(B)/kernel.elf
@@ -74,6 +83,14 @@ $(B)/macho/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(AS_MACHO) $< -o $@
 
+$(B)/macho/ops_table.o: $(OPS_TABLE)
+	@mkdir -p $(dir $@)
+	$(AS_MACHO) $< -o $@
+
+$(B)/elf/ops_table.o: $(OPS_TABLE)
+	@mkdir -p $(dir $@)
+	$(AS_ELF) $< -o $@
+
 $(B)/elf/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(AS_ELF) $< -o $@
@@ -96,7 +113,7 @@ $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
 # business knowing about.
 IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 IOS_ARCH  := arm64-apple-ios16.0-simulator
-IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S editor/editor.S \
+IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S editor/editor.S \
              editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S net/str.S net/http.S \
              net/sock.S \
              net/dns.S $(FONT_SRC)
@@ -229,12 +246,18 @@ clean:
 # statements and only one of them is worth making.
 TEST_OBJ := $(B)/macho/tests/optest.o $(B)/macho/app/ops.o \
             $(B)/macho/net/str.o $(B)/macho/app/env.o
+LOCAL_OBJ := $(B)/macho/tests/localtest.o $(B)/macho/app/localops.o \
+             $(B)/macho/app/ops.o $(B)/macho/net/str.o $(B)/macho/app/env.o \
+             $(B)/macho/ops_table.o
 
 $(B)/optest: $(TEST_OBJ)
 	$(LD_MACHO) -o $@ $(TEST_OBJ)
 
+$(B)/localtest: $(LOCAL_OBJ)
+	$(LD_MACHO) -o $@ $(LOCAL_OBJ)
+
 .PHONY: test
-test: $(B)/optest
+test: $(B)/optest $(B)/localtest
 	@cd backend-java && ./gradlew -q installDist
 	@javac -cp backend-java/build/classes/java/main -d $(B)/tests \
 	   tests/ColourTest.java tests/ConsortiumTest.java
@@ -249,3 +272,8 @@ test: $(B)/optest
 	 done
 	@printf "    shout %-17s -> [%s]\n" "(screen only)" \
 	   "$$(ARMEDIT_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"
+	@echo "  --- and the operations this build ships with, answering offline:"
+	@$(B)/localtest "colours blue" "colours red" "COLOURS Blue" \
+	   "$$(printf 'colours blue\n')" "  colours   blue  " \
+	   "colours chartreuse" "colours" "colours blue please" "hello" \
+	   | sed 's/^/    /' 

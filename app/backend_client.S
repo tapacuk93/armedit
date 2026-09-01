@@ -175,6 +175,64 @@ SYM(backend_fetch):
         str     w1, [x9]
 20:
 
+/* ---- what this build already knows, before anything is asked -------------
+ *
+ * The operations baked into this binary get the request first. They were put
+ * there because enough people asked for them, they compiled, and several
+ * models agreed they should exist - so consulting a server about them would be
+ * asking permission to know something already known.
+ *
+ * This runs before the key is even looked at, which is the whole point: an
+ * editor with no key, no link and no backend still answers everything it has
+ * been taught. Most requests are not in the table and fall straight through,
+ * costing one pass over a handful of patterns.
+ */
+        cmp     w23, #ED_AIFY
+        b.ne    .Lno_local
+        LEA     x9, region_a
+        ldr     w0, [x9]
+        LEA     x9, region_b
+        ldr     w1, [x9]
+        LEA     x2, instrbuf
+        mov     w3, #CTX_SZ
+        bl      SYM(editor_range_text)
+        LEA     x0, ctxbuf
+        mov     w1, #CTX_SZ
+        bl      SYM(editor_context)
+        LEA     x0, subjtext
+        mov     w1, #64                 /* what subjtext actually holds */
+        bl      SYM(editor_subject)
+
+        LEA     x0, instrbuf
+        LEA     x1, ctxbuf
+        LEA     x2, subjtext
+        LEA     x3, s_nothing
+        LEA     x4, replybuf
+        mov     w5, #REPLY_SZ
+        bl      SYM(localop_run)
+        cmn     w0, #1
+        b.eq    .Lno_local
+
+        LEA     x9, replybuf            /* recomputed: the call ate x9-x15 */
+        strb    wzr, [x9, w0, uxtw]
+
+        LEA     x0, replybuf            /* the same directives, read here */
+        bl      SYM(localop_colour)
+        LEA     x9, reply_colour
+        str     w0, [x9]
+        LEA     x0, replybuf
+        bl      SYM(localop_strip)
+
+        LEA     x9, reply_whole         /* a local answer replaces what it was
+                                           asked about, never the whole screen:
+                                           nothing offline can have been told
+                                           that the screen was the subject */
+        str     wzr, [x9]
+        LEA     x9, fetch_status
+        str     wzr, [x9]               /* ST_OK */
+        b       .Lsub_out
+.Lno_local:
+
 /* ---- one property: the key, which carries where to reach the backend ---- */
         bl      resolve_backend         /* x0 = address, x1 = key, or x1 = 0 */
         mov     x19, x0
@@ -750,6 +808,7 @@ s_path_behav:       .asciz "/api/behaviours"
 s_rule_dragmove:    .asciz " drag move"
 s_whole_true:       .asciz "\"whole\":true"
 s_key_colour:       .asciz "\"colour\":"
+s_nothing:          .asciz ""
 s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
@@ -783,6 +842,7 @@ saved_cursor: .space 8
 keybuf:     .space KEY_SZ           /* the key with any @address stripped off */
 rawbuf:     .space CTX_SZ           /* the screen as it is, before redaction */
 ctxbuf:     .space CTX_SZ
+instrbuf:   .space CTX_SZ
 basebuf:    .space CTX_SZ
 selbuf:     .space CTX_SZ
 region_a:   .space 8
