@@ -82,6 +82,20 @@ SYM(pci_base):
  */
         .globl  SYM(pci_find)
 SYM(pci_find):
+        mov     w2, #0                  /* the first match, as before */
+        b       SYM(pci_find_n)
+
+/*
+ * pci_find_n - x0 = vendor, x1 = device, w2 = which match to return.
+ *
+ * Because there can be more than one. The Virtualization framework puts two
+ * virtio consoles on the bus and attaches the host's end to one of them; a
+ * driver that always took the first configured a device nothing was listening
+ * to, which accepts every register write and services no queue - and looks
+ * exactly like a device that ignores its queues.
+ */
+        .globl  SYM(pci_find_n)
+SYM(pci_find_n):
         stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
@@ -89,6 +103,8 @@ SYM(pci_find):
         stp     x23, x24, [sp, #48]
         mov     w19, w0                 /* wanted vendor */
         mov     w20, w1                 /* wanted device */
+        LEA     x9, pci_skip            /* how many matches to pass over */
+        str     w2, [x9]
 
         bl      SYM(pci_base)
         cbz     x0, .Lpf_none
@@ -141,7 +157,13 @@ SYM(pci_find):
         b       .Lpf_dev
 
 .Lpf_found:
-        mov     x0, x24
+        LEA     x9, pci_skip
+        ldr     w10, [x9]
+        cbz     w10, 1f
+        sub     w10, w10, #1
+        str     w10, [x9]
+        b       .Lpf_next_fn
+1:      mov     x0, x24
         b       .Lpf_out
 .Lpf_none:
         mov     x0, #0
@@ -246,6 +268,55 @@ SYM(pci_cap):
  * and running it on an assigned one would move hardware somebody else is
  * already talking to.
  */
+/*
+ * pci_count - x0 = vendor, x1 = device. out w0 = how many are on the bus.
+ *
+ * pci_find returns the first match, which is the right answer only when there
+ * is one. A machine that exposes two consoles and attaches the host end to the
+ * second would look exactly like a machine whose console ignores its queues.
+ */
+        .globl  SYM(pci_count)
+SYM(pci_count):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        mov     w19, w0
+        mov     w20, w1
+        mov     w25, #0
+        bl      SYM(pci_base)
+        cbz     x0, 8f
+        mov     x21, x0
+        mov     w22, #0
+        mov     w24, #0                 /* how many found */
+1:      cmp     w22, #32
+        b.hs    8f
+        mov     w23, #0
+2:      cmp     w23, #8
+        b.hs    3f
+        lsl     x9, x22, #15
+        add     x9, x9, x23, lsl #12
+        add     x9, x21, x9
+        ldr     w10, [x9]
+        and     w11, w10, #0xFFFF
+        cmp     w11, w19
+        b.ne    4f
+        lsr     w12, w10, #16
+        cmp     w12, w20
+        b.ne    4f
+        add     w24, w24, #1
+4:      add     w23, w23, #1
+        b       2b
+3:      add     w22, w22, #1
+        b       1b
+8:      mov     w0, w24
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
         .globl  SYM(pci_assign)
 SYM(pci_assign):
         stp     x29, x30, [sp, #-80]!
@@ -418,3 +489,4 @@ s_ranges: .asciz "ranges"
         .p2align 3
 pci_ecam: .space 8
 pci_next: .space 8
+pci_skip: .space 4

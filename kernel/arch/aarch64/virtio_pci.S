@@ -89,16 +89,24 @@
  */
         .globl  SYM(vpci_open)
 SYM(vpci_open):
+        mov     w1, #0
+        b       SYM(vpci_open_n)
+
+/* vpci_open_n - w0 = a device id, w1 = which of them. */
+        .globl  SYM(vpci_open_n)
+SYM(vpci_open_n):
         stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
         str     x23, [sp, #48]
         mov     w19, w0
+        mov     w22, w1                 /* which one */
 
         movz    w0, #VIRTIO_VENDOR
         mov     w1, w19
-        bl      SYM(pci_find)
+        mov     w2, w22
+        bl      SYM(pci_find_n)
         cbz     x0, .Lvo_fail
         mov     x20, x0
 
@@ -195,7 +203,11 @@ SYM(vpci_open):
         mov     w9, #1
         str     w9, [x21, #COMMON_GFSELECT]
         mov     w9, #1                          /* bit 32 is bit 0 up here */
-        str     w9, [x21, #COMMON_GF]
+        LEA     x10, vpci_want_packed           /* and bit 34, when asked for */
+        ldr     w10, [x10]
+        cbz     w10, 3f
+        orr     w9, w9, #4
+3:      str     w9, [x21, #COMMON_GF]
 
         mov     w9, #(ST_ACK | ST_DRIVER | ST_FEATURES_OK)
         strb    w9, [x21, #COMMON_STATUS]
@@ -379,6 +391,58 @@ SYM(vpci_enabled):
         cbz     x9, 9f
         strh    w0, [x9, #COMMON_QSELECT]
         ldrh    w0, [x9, #COMMON_QENABLE]
+        ret
+9:      mov     w0, #0
+        ret
+
+/*
+ * vpci_offers - w0 = a feature bit in the low half. out w0 = 1 if offered.
+ *
+ * Read after the device has been reset and taken through the handshake, which
+ * the first attempt at this did not do - it read the register on a device in
+ * whatever state it happened to be in, and a device that has not been reset
+ * owes no particular answer.
+ */
+        .globl  SYM(vpci_offers)
+SYM(vpci_offers):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        mov     w10, w0
+        str     wzr, [x9, #COMMON_DFSELECT]
+        ldr     w11, [x9, #COMMON_DF]
+        lsr     w11, w11, w10
+        and     w0, w11, #1
+        ret
+9:      mov     w0, #0
+        ret
+
+/*
+ * vpci_packed - w0 = 1 to ask for packed rings on the next open.
+ *
+ * A choice rather than a default. The memory-mapped devices this kernel
+ * already drives use split rings and there is no reason to change them; the
+ * framework's console appears not to service split rings at all, which is a
+ * different situation and gets a different answer.
+ */
+        .globl  SYM(vpci_packed)
+SYM(vpci_packed):
+        LEA     x9, vpci_want_packed
+        str     w0, [x9]
+        ret
+
+/* vpci_offers_hi - w0 = a bit in the upper half (feature 32 + w0). */
+        .globl  SYM(vpci_offers_hi)
+SYM(vpci_offers_hi):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        mov     w10, w0
+        mov     w11, #1
+        str     w11, [x9, #COMMON_DFSELECT]
+        ldr     w11, [x9, #COMMON_DF]
+        lsr     w11, w11, w10
+        and     w0, w11, #1
         ret
 9:      mov     w0, #0
         ret
@@ -606,6 +670,7 @@ vpci_common:      .space 8
 vpci_notify:      .space 8
 vpci_kick:        .space (8 * VPCI_QUEUES)
 vpci_notify_mult: .space 4
+vpci_want_packed: .space 4
         .p2align 12
 st_desc:   .space 64
         .p2align 12

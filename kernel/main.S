@@ -62,7 +62,29 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_TXQ
+#ifdef ARMEDIT_PROBE_COUNT
+        movz    w0, #0x1AF4
+        movz    w1, #ARMEDIT_PROBE_DEVID
+        bl      SYM(pci_count)
+        cmp     w0, #ARMEDIT_PROBE_COUNT
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_HI)
+        movz    w0, #0x1043
+        bl      SYM(vpci_open)
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #ARMEDIT_PROBE_HI
+        bl      SYM(vpci_offers_hi)
+        cbz     w0, 1f
+#elif defined(ARMEDIT_PROBE_OFFERS)
+        movz    w0, #0x1043
+        bl      SYM(vpci_open)
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #ARMEDIT_PROBE_OFFERS
+        bl      SYM(vpci_offers)
+        cbz     w0, 1f
+#elif defined(ARMEDIT_PROBE_TXQ)
         movz    w0, #0x1043
         mov     w1, #ARMEDIT_PROBE_TXQ
         bl      SYM(vpci_txtest)

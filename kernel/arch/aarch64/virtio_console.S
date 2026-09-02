@@ -32,6 +32,7 @@
 
 #define VCON_DEVICE     0x1043          /* modern virtio console */
 #define QSIZE           8               /* we use one entry of it */
+#define VCON_MAX        4               /* consoles to try before giving up */
 
 #define DESC_ADDR       0
 #define DESC_LEN        8
@@ -63,23 +64,54 @@ vcon_init:
         mov     x29, sp
         str     x19, [sp, #16]
 
+/*
+ * Packed rings, because this device does not answer split ones.
+ *
+ * Every configuration step verified correct and the device took nothing, on
+ * any of its queues, in either direction - while the entropy device on the
+ * same bus, through the same code, serviced a split ring immediately. The
+ * console offers VIRTIO_F_RING_PACKED and the difference between the two
+ * devices is which layout each actually implements.
+ *
+ * A packed ring is one array instead of three. A descriptor is available when
+ * its AVAIL flag matches the driver's wrap counter and its USED flag does not;
+ * the device flips USED to match when it is done. There is no separate
+ * available ring and no used ring - the flags in the descriptor are both.
+ */
+        mov     w0, #1
+        bl      SYM(vpci_packed)
+
+/*
+ * Whichever console the host is actually listening to.
+ *
+ * There is more than one on this bus and only one of them has anything
+ * attached to its far end. Both accept every register write, both enable their
+ * queues, and only one ever completes a descriptor - so the way to tell them
+ * apart is to write to each and see which answers. A newline is the quietest
+ * thing to send.
+ */
+        mov     w19, #0
+.Lvi_try:
+        cmp     w19, #VCON_MAX
+        b.hs    .Lvi_no
         movz    w0, #VCON_DEVICE
-        bl      SYM(vpci_open)
+        mov     w1, w19
+        bl      SYM(vpci_open_n)
         cmn     w0, #1
-        b.eq    .Lvi_no
+        b.eq    .Lvi_next
 
         /* The receive queue, enabled and ignored. See the header. */
         mov     w0, #RXQ
         LEA     x1, rx_desc
-        LEA     x2, rx_avail
-        LEA     x3, rx_used
+        LEA     x2, rx_drv
+        LEA     x3, rx_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
 
         mov     w0, #TXQ
         LEA     x1, tx_desc
-        LEA     x2, tx_avail
-        LEA     x3, tx_used
+        LEA     x2, tx_drv
+        LEA     x3, tx_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
         cmn     w0, #1
@@ -87,66 +119,45 @@ vcon_init:
         LEA     x9, tx_size
         str     w0, [x9]
 
-/*
- * Somewhere for input to go, before the device is told it may run.
- *
- * Nothing here reads it. It exists because a device with an empty receive
- * queue has nowhere to put a keystroke, and an implementation that checks for
- * that before doing anything at all would refuse to transmit either - which is
- * a plausible reason for a correctly configured queue to sit untouched.
- */
-        LEA     x9, rx_desc
-        LEA     x10, rx_buf
-        str     x10, [x9, #DESC_ADDR]
-        mov     w11, #64
-        str     w11, [x9, #DESC_LEN]
-        mov     w11, #2                 /* device-writable */
-        strh    w11, [x9, #DESC_FLAGS]
-        strh    wzr, [x9, #DESC_NEXT]
-        LEA     x9, rx_avail
-        strh    wzr, [x9, #AVAIL_RING]
-        dsb     sy
-        mov     w11, #1
-        strh    w11, [x9, #AVAIL_IDX]
-        dsb     sy
-
-/*
- * Every queue the device declares, configured, whether or not this driver
- * intends to use it.
- *
- * The framework's console reports four - the port's pair and a control pair -
- * and the specification does not require a driver to configure queues it will
- * not use. An implementation that walks all of them at DRIVER_OK and finds two
- * disabled is a plausible reason for a correctly configured transmit queue to
- * sit untouched, and giving them rings costs two pages.
- */
         bl      SYM(vpci_numq)
         mov     w19, w0
         cmp     w19, #2
         b.ls    3f
         mov     w0, #2
         LEA     x1, c0_desc
-        LEA     x2, c0_avail
-        LEA     x3, c0_used
+        LEA     x2, c0_drv
+        LEA     x3, c0_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
         cmp     w19, #3
         b.ls    3f
         mov     w0, #3
         LEA     x1, c1_desc
-        LEA     x2, c1_avail
-        LEA     x3, c1_used
+        LEA     x2, c1_drv
+        LEA     x3, c1_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
 3:
         bl      SYM(vpci_ready)
 
-        mov     w0, #RXQ                /* and tell it there is one */
-        bl      SYM(vpci_kick_queue)
-
-        LEA     x9, vcon_up
+        LEA     x9, vcon_up             /* provisionally, so vcon_write runs */
         mov     w10, #1
         str     w10, [x9]
+
+        LEA     x0, s_probe_nl          /* does anything answer? */
+        mov     w1, #1
+        bl      vcon_write
+        cbnz    w0, .Lvi_yes
+
+        LEA     x9, vcon_up             /* no: put it back and try the next */
+        str     wzr, [x9]
+.Lvi_next:
+        add     w19, w19, #1
+        LEA     x9, tx_next             /* a fresh ring for a fresh device */
+        str     wzr, [x9]
+        b       .Lvi_try
+
+.Lvi_yes:
         mov     w0, #0
         b       .Lvi_out
 .Lvi_no:
@@ -210,57 +221,81 @@ vcon_write:
         add     w9, w9, #1
         b       1b
 2:
-        /* One descriptor, device-readable, pointing at what we just copied. */
+/*
+ * One packed descriptor, made available.
+ *
+ * addr, len, id, then the flags last - the flags are what publishes it, so
+ * everything the device will read has to be in memory before they are written,
+ * which is what the barrier between them is for.
+ */
         LEA     x9, tx_desc
-        str     x21, [x9, #DESC_ADDR]
-        str     w20, [x9, #DESC_LEN]
-        strh    wzr, [x9, #DESC_FLAGS]
-        strh    wzr, [x9, #DESC_NEXT]
+        LEA     x10, tx_next
+        ldr     w11, [x10]              /* which slot */
+        mov     w12, #16
+        madd    x9, x11, x12, x9
 
-        /*
-         * Offer it. The index is not masked - it is a free-running counter and
-         * the device does the masking - but the slot it names is, which is the
-         * one place a driver commonly gets this backwards.
-         */
-        LEA     x9, tx_avail
-        ldrh    w10, [x9, #AVAIL_IDX]
-        LEA     x11, tx_size
-        ldr     w11, [x11]
-        sub     w12, w11, #1
-        and     w12, w10, w12
-        add     x13, x9, #AVAIL_RING
-        strh    wzr, [x13, w12, uxtw #1]        /* descriptor zero */
+        str     x21, [x9, #0]           /* addr */
+        str     w20, [x9, #8]           /* len  */
+        strh    w11, [x9, #12]          /* id, which comes back in the used one */
         dsb     sy
-        add     w10, w10, #1
-        strh    w10, [x9, #AVAIL_IDX]
+
+        LEA     x10, tx_wrap
+        ldr     w13, [x10]
+        cbz     w13, 5f
+        mov     w14, #0x0080            /* AVAIL set, USED clear */
+        b       6f
+5:      mov     w14, #0x8000            /* the other way round on odd laps */
+6:      strh    w14, [x9, #14]
         dsb     sy
 
         mov     w0, #TXQ
         bl      SYM(vpci_kick_queue)
 
-        /*
-         * Wait for it to be taken. Bounded, because a device that never
-         * answers must not stop a kernel whose only remaining job is to say
-         * what went wrong.
-         */
-        LEA     x9, tx_used
-        ldrh    w10, [x9, #USED_IDX]
-        LEA     x11, tx_last
-        ldrh    w12, [x11]
-        mov     w13, #0
-3:      LEA     x9, tx_used
-        ldrh    w10, [x9, #USED_IDX]
-        cmp     w10, w12
-        b.ne    4f
-        add     w13, w13, #1
-        mov     w14, #0x8000
-        movk    w14, #0x000F, lsl #16   /* about a million turns */
-        cmp     w13, w14
-        b.lo    3b
-        mov     w19, #0                 /* gave up: the message is lost, not the kernel */
+/*
+ * Wait for the device to turn it round.
+ *
+ * A descriptor is used when its two flags agree with the wrap counter, which
+ * is the packed ring's whole completion protocol: there is nowhere else to
+ * look, because there is no used ring.
+ */
+        LEA     x9, tx_desc
+        LEA     x10, tx_next
+        ldr     w11, [x10]
+        mov     w12, #16
+        madd    x9, x11, x12, x9
+        mov     w15, #0
+7:      ldrh    w16, [x9, #14]
+        and     w17, w16, #0x0080
+        lsr     w17, w17, #7
+        and     w0, w16, #0x8000
+        lsr     w0, w0, #15
+        cmp     w17, w0
+        b.ne    8f                      /* still ours */
+        LEA     x10, tx_wrap
+        ldr     w13, [x10]
+        cmp     w17, w13
+        b.eq    9f                      /* the device has finished with it */
+8:      add     w15, w15, #1
+        mov     w0, #0x8000
+        movk    w0, #0x000F, lsl #16
+        cmp     w15, w0
+        b.lo    7b
+        mov     w19, #0
         b       .Lvw_done
-4:      LEA     x11, tx_last
-        strh    w10, [x11]
+
+9:      /* On to the next slot, flipping the lap when it wraps. */
+        LEA     x10, tx_next
+        ldr     w11, [x10]
+        add     w11, w11, #1
+        cmp     w11, #QSIZE
+        b.lo    10f
+        mov     w11, #0
+        LEA     x12, tx_wrap
+        ldr     w13, [x12]
+        eor     w13, w13, #1
+        str     w13, [x12]
+        LEA     x10, tx_next
+10:     str     w11, [x10]
         mov     w19, #1
 
 .Lvw_done:
@@ -292,36 +327,38 @@ vcon_puts:
         ldp     x29, x30, [sp], #32
         ret
 
+        .section .rodata
+s_probe_nl: .asciz "\n"
+
         .section .bss
         .p2align 12
 tx_desc:   .space (16 * QSIZE)
         .p2align 12
-tx_avail:  .space (6 + 2 * QSIZE)
+tx_drv:    .space 8        /* driver event suppression */
         .p2align 12
-tx_used:   .space (6 + 8 * QSIZE)
+tx_dev:    .space 8        /* device event suppression */
         .p2align 12
 rx_desc:   .space (16 * QSIZE)
         .p2align 12
-rx_avail:  .space (6 + 2 * QSIZE)
+rx_drv:    .space 8
         .p2align 12
-rx_used:   .space (6 + 8 * QSIZE)
-        .p2align 12
-tx_buf:    .space 512
-        .p2align 12
-rx_buf:    .space 64
+rx_dev:    .space 8
         .p2align 12
 c0_desc:   .space (16 * QSIZE)
         .p2align 12
-c0_avail:  .space (6 + 2 * QSIZE)
+c0_drv:    .space 8
         .p2align 12
-c0_used:   .space (6 + 8 * QSIZE)
+c0_dev:    .space 8
         .p2align 12
 c1_desc:   .space (16 * QSIZE)
         .p2align 12
-c1_avail:  .space (6 + 2 * QSIZE)
+c1_drv:    .space 8
         .p2align 12
-c1_used:   .space (6 + 8 * QSIZE)
+c1_dev:    .space 8
+        .p2align 12
+tx_buf:    .space 512
         .p2align 3
 vcon_up:   .space 4
 tx_size:   .space 4
-tx_last:   .space 4
+tx_next:   .space 4
+tx_wrap:   .space 4
