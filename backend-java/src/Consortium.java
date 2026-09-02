@@ -113,6 +113,26 @@ final class Consortium {
     /** What they said together. */
     record Verdict(boolean commit, String why, List<Vote> votes, List<String> changes) {
 
+        /**
+         * Did anybody want this?
+         *
+         * A hold that every counted member agreed on is a rejection: several
+         * models read the same code and none of them wanted it. A hold that
+         * some members voted against is a disagreement, which is a different
+         * thing - it says the panel could not settle the question, not that it
+         * settled it against. Only the second is worth keeping, and telling
+         * them apart is the whole reason a verdict carries its votes.
+         */
+        boolean divided() {
+            boolean any = false;
+            for (var v : votes) {
+                if (!v.counted()) continue;
+                any = true;
+                if (v.commit()) return true;
+            }
+            return !any;        // nobody could be reached: unsettled, not refused
+        }
+
         int voters() {
             int n = 0;
             for (var v : votes) if (v.counted()) n++;
@@ -487,7 +507,7 @@ final class Consortium {
      */
     static String aboutBlob(String name, String pattern, List<String> arguments,
                             String source, byte[] code, String sha, String observed,
-                            int people) {
+                            int people, String afterwards) {
         return """
                 This is a code review for an open-source text editor. The editor's build
                 system writes small operations for itself, compiles them ahead of time to
@@ -530,8 +550,41 @@ final class Consortium {
                 it is so general that it will match things it should not; it hardcodes
                 something that belongs to one user; it would behave differently offline
                 than it does here.
+
+                %s
                 """.formatted(demand(people), name, pattern, String.join(", ", arguments),
-                        code.length, sha, source, words(code), observed);
+                        code.length, sha, source, words(code), observed, afterwards);
+    }
+
+    /**
+     * What a HOLD now means, said out loud.
+     *
+     * A hold used to be the end. It is not any more: a hold the panel is split
+     * on parks the operation until enough distinct people have asked for it, and
+     * a hold everybody agrees on ends it. That difference is decided by the
+     * votes, so a member who would rather see more evidence than refuse should
+     * know that voting HOLD while others vote COMMIT is how to say so - and a
+     * member who thinks the thing should never exist should know that agreeing
+     * with the other holds is how to end it.
+     *
+     * Where the waiting list cannot fire - too few accounts for its threshold -
+     * they are told that instead, because on such a deployment a split hold is
+     * an operation nobody will ever see again, and a reviewer choosing it should
+     * be choosing that knowingly.
+     */
+    static String afterwards(int registered, int threshold, boolean canWait) {
+        if (!canWait) {
+            return ("WHAT A HOLD DOES  It ends this. There are %d registered accounts and "
+                    + "the\n                  waiting list needs %d distinct people, so nothing "
+                    + "can come\n                  off it. Do not hold in order to see more "
+                    + "evidence; there\n                  will not be any.").formatted(registered, threshold);
+        }
+        return ("WHAT A HOLD DOES  A hold every counted member agrees on ends this. A hold\n"
+                + "                  some members vote against keeps it instead, and it ships\n"
+                + "                  once %d distinct people have asked for something it\n"
+                + "                  matches, or expires unasked. So hold if it is wrong, and\n"
+                + "                  hold apart from the others if you would rather wait and\n"
+                + "                  see whether anybody wants it.").formatted(threshold);
     }
 
     /**

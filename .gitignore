@@ -36,3 +36,6 @@ workspaces/
 *.img
 *.dmg
 __pycache__/
+
+# The waiting list is a server's own state, not the project's.
+waiting/

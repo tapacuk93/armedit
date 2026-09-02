@@ -122,7 +122,8 @@ public class ConsortiumTest {
         // thin case says it is thin and the strong case does not borrow its
         // language.
         String one = Consortium.aboutBlob("c", "colours {name:colour}",
-                List.of("name"), "return \"\";", code, "abc", "declined everything", 1);
+                List.of("name"), "return \"\";", code, "abc", "declined everything", 1,
+                Consortium.afterwards(9, 3, true));
         ok(one.contains("One person asked for this once"),
            "one request is described as one request");
         ok(one.contains("Nothing else stands"),
@@ -131,7 +132,8 @@ public class ConsortiumTest {
            "...without borrowing the language of agreement");
 
         String many = Consortium.aboutBlob("c", "colours {name:colour}",
-                List.of("name"), "return \"\";", code, "abc", "declined everything", 4);
+                List.of("name"), "return \"\";", code, "abc", "declined everything", 4,
+                Consortium.afterwards(9, 3, true));
         ok(many.contains("4 different people"),
            "several requests are counted out loud");
         ok(!many.contains("only a reason to look"),

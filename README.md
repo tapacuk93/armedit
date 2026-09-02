@@ -241,6 +241,63 @@ bad at the world having moved since it was trained. That is why the appeal asks
 whether an objection is *correct* rather than merely specific, and why claims
 about the world get checked by making the call.
 
+### Three answers, not two
+
+A review can say yes, no, or *we could not settle it*, and the code used to hear
+two of those. Everything not approved was dropped — including the operations
+where the disagreement was the interesting part, because whether anybody wants
+a feature is not a question models can answer by reading its code. It is a
+question about people, and the people are elsewhere.
+
+So there is a ladder now.
+
+**One model first.** A panel is several models answering separately and then
+arguing; a four-model panel over two rounds is thirteen calls. Most operations
+that reach it are not close calls, and something plainly not worth having can be
+ended for the price of one. That first pass may *end* things and may not
+*start* them: a NO drops the operation, a YES only convenes the panel, and the
+panel still decides what is committed. Machine code enters this repository when
+several models have separately agreed it should, and one model agreeing is not
+that. UNSURE is a real verdict and is passed on rather than resolved, because a
+single model told to pick a side will pick one, and on a genuinely open question
+that is noise the panel would then review as though it meant something.
+
+**The panel, told what its answer does.** A hold every counted member agrees on
+is a refusal and ends it. A hold some members voted against is the panel saying
+it could not settle the question — and that one is kept. The reviewers are told
+this in the prompt, because a member who would rather see evidence than refuse
+needs to know that holding while others commit is how to say so.
+
+**Then people.** A doubted operation goes on a waiting list under `waiting/` —
+one readable file per record, saying what it matches, why the doubt, who has
+asked, and when it expires. Every request that its pattern would have answered
+counts the account that made it, distinct accounts only, the same rule consensus
+uses. Reach the threshold (three by default) and it is compiled again from the
+source in the record and shipped. Reach the expiry first (thirty days) and it is
+forgotten, which is the ordinary outcome — most things nobody asks for twice
+were correctly doubted. Somebody asking pushes the expiry out, so a thing
+gaining support does not lapse on a date set before anyone had heard of it.
+
+What is stored is the source, never the binary. The machine code is re-derived
+by the compiler that would have produced it the first time, so the file is
+something a person can read and argue with, and there is no way for a record to
+hold bytes whose source has been lost.
+
+**And the case where waiting is a lie.** A deployment with one registered
+account cannot produce three distinct people asking for anything. Parking a
+decision there is not caution — it is a decision never to decide, wearing
+caution's clothes, and a shelf nothing ever comes off is worse than a refusal
+because it looks like an outcome. So the count of accounts is checked before
+anything is kept, and where the threshold is unreachable nothing is: the models
+are told so in their prompts (*"on this deployment an unsure answer is a decision
+never to decide. Decide."*) and the code declines to park what they defer.
+
+This is a real loosening and it should be read as one. An operation the panel
+held can now reach the repository without the panel ever agreeing, on the
+strength of enough distinct people having asked. That is the trade the waiting
+list makes, it is written into the votes file when it happens, and the three
+things that bound it are distinct accounts, a threshold, and an expiry.
+
 ### Backend configuration
 
 Server-side settings, all environment, none committed.
@@ -254,6 +311,9 @@ Server-side settings, all environment, none committed.
 | `ARMEDIT_MODEL` | model override (default `claude-opus-5`) |
 | `ARMEDIT_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
 | `ARMEDIT_AMI` | image the account's instance runs |
+| `ARMEDIT_WAITING_DIR` | where doubted operations wait (default `waiting`) |
+| `ARMEDIT_WAIT_PEOPLE` | distinct people needed to release one (default 3) |
+| `ARMEDIT_WAIT_DAYS` | how long one waits before being forgotten (default 30) |
 | `ARMEDIT_INSTANCE_TYPE` | default `t4g.small` |
 | `ARMEDIT_WORKSPACE` | where accounts' folders live (default `workspaces`) |
 | `ARMEDIT_S3_BUCKET` | third tier of persistence; unset means disk only |
@@ -427,6 +487,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `backend-java/src/Scripts.java` | operations: patterns with typed holes, and what they may know |
 | `backend-java/src/Js.java` | the JavaScript subset, compiled ahead of time to aarch64 |
 | `backend-java/src/Consortium.java` | several models, asked separately, before anything ships |
+| `backend-java/src/Triage.java` | one model first: it may end an operation, not start one |
+| `backend-java/src/Waiting.java` | what the panel could not settle, kept until people ask |
 | `ops/` | approved operations: the machine code, its source, and the votes |
 | `tests/` | `make test` — the backend's judgement, and the aarch64 it emits, run |
 | `tests/treefb.py` | `make treefb` — the bare-metal display path, drawn through and read back |

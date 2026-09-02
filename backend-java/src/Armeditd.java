@@ -71,6 +71,8 @@ public final class Armeditd {
     private final Catalogue catalogue;
     private final Fetch fetcher = new Fetch();
     private final Consortium consortium;
+    private final Triage triage;
+    private final Waiting waiting;
     private final Distro distro;
     private final Release release = new Release();
     private final String publicAddr;
@@ -99,6 +101,18 @@ public final class Armeditd {
                 java.util.List.of("anthropic", "openai", "google", "mistral", "cohere"));
         this.consortium = new Consortium(aicoin, catalogue);
         this.distro = new Distro(env("ARMEDIT_OPS_DIR", "../ops"));
+        this.triage = new Triage(aicoin);
+        /*
+         * The waiting list: what the panel could not settle, kept until enough
+         * distinct people have asked for it or until it expires unasked.
+         * Thirty days by default, because the unit that matters is "did anybody
+         * else turn up", and a week is short enough to expire things that were
+         * merely early.
+         */
+        this.waiting = new Waiting(
+                java.nio.file.Path.of(env("ARMEDIT_WAITING_DIR", "waiting")),
+                Integer.parseInt(env("ARMEDIT_WAIT_PEOPLE", "3")),
+                Long.parseLong(env("ARMEDIT_WAIT_DAYS", "30")) * 86400L);
         this.publicAddr = env("ARMEDIT_PUBLIC_ADDR", "");
         // Machines post their output back here, so they need an address that
         // works from outside this host.
@@ -306,7 +320,7 @@ public final class Armeditd {
                             op.blob() != null
                                 ? " (" + op.blob().code().length + " bytes of machine code)"
                                 : "");
-                    if (op.blob() != null) ship(wallet, op, settled.people());
+                    if (op.blob() != null) ship(wallet, op, settled.people(), settled.who());
                 }
             } catch (Exception x) {
                 System.out.printf("armedit: promotion skipped: %s%n", x);
@@ -331,16 +345,41 @@ public final class Armeditd {
      * ask for something that has never worked. One person is enough to be
      * considered now. Nobody is enough to ship.
      */
-    private void ship(String wallet, Scripts.Script op, int people) {
+    private void ship(String wallet, Scripts.Script op, int people,
+                      java.util.Set<String> who) {
         try {
             String observed = exercise(op);
-            var verdict = consortium.decide(wallet, op.name(),
-                    Consortium.aboutBlob(op.name(), op.pattern(), op.arguments(),
-                            op.js(), op.blob().code(), op.blob().sha(), observed, people));
+            int registered = accounts.size();
+            boolean canWait = waiting.reachable(registered);
+
+            /*
+             * One model first. It can end this for the price of one call; it
+             * cannot start it. See Triage for why that asymmetry is the point.
+             */
+            var first = triage.judge(wallet, Router.cheapest(),
+                    Triage.about(op.name(), op.pattern(),
+                            op.js() == null ? "(template only)" : op.js(), observed,
+                            people, registered, waiting.threshold(), canWait));
+            System.out.printf("armedit: first pass on \"%s\": %s - %s%n",
+                    op.name(), first.say(), first.why());
+            if (first.rejected()) return;
+
+            String asked = Consortium.aboutBlob(op.name(), op.pattern(), op.arguments(),
+                    op.js(), op.blob().code(), op.blob().sha(), observed, people,
+                    Consortium.afterwards(registered, waiting.threshold(), canWait));
+            if (first.unsure()) {
+                asked += "\nThe first pass was unsure: " + first.why() + "\n";
+            }
+            var verdict = consortium.decide(wallet, op.name(), asked);
             System.out.printf("armedit: consortium on \"%s\": %s - %s%n",
                     op.name(), verdict.commit() ? "COMMIT" : "HOLD", verdict.why());
             for (var c : verdict.changes()) System.out.printf("armedit:   %s%n", c);
-            if (!verdict.commit()) return;
+
+            if (!verdict.commit()) {
+                park(op, verdict, registered, canWait, who);
+                return;
+            }
+            waiting.drop(op.name());
             var written = distro.commit(op, verdict, observed, people);
             System.out.printf("armedit: %s is in the tree: %s%n", op.name(),
                     written.stream().map(java.nio.file.Path::toString)
@@ -366,6 +405,107 @@ public final class Armeditd {
             release.record(op.name(), written);
         } catch (Exception x) {
             System.out.printf("armedit: not shipping \"%s\": %s%n", op.name(), x);
+        }
+    }
+
+    /**
+     * A hold that was not a refusal goes on the waiting list.
+     *
+     * The panel gives three answers and the code used to hear two. Everybody
+     * holding is a refusal and ends it. A split hold is the panel saying it
+     * could not settle the question - and whether anybody wants an operation is
+     * not a question models can settle by reading code. That one is kept, and
+     * the thing that settles it is people asking for it.
+     *
+     * Nothing is kept where the counter cannot reach its mark. On a deployment
+     * with fewer accounts than the threshold, parking a decision is a decision
+     * never to decide, and a shelf that nothing ever comes off is worse than a
+     * refusal because it looks like an outcome.
+     */
+    private void park(Scripts.Script op, Consortium.Verdict verdict,
+                      int registered, boolean canWait, java.util.Set<String> who) {
+        if (!verdict.divided()) {
+            System.out.printf("armedit: \"%s\" was refused, not doubted - not kept%n",
+                    op.name());
+            waiting.drop(op.name());
+            return;
+        }
+        if (!canWait) {
+            System.out.printf("armedit: \"%s\" is doubted, but %d account%s cannot make "
+                            + "%d askers - not kept%n",
+                    op.name(), registered, registered == 1 ? "" : "s", waiting.threshold());
+            return;
+        }
+        var outcome = waiting.hold(who, op, verdict.why(),
+                System.currentTimeMillis() / 1000);
+        var rec = waiting.get(op.name());
+        int so_far = rec == null ? who.size() : rec.who().size();
+        if (outcome == Waiting.Outcome.READY) {
+            System.out.printf("armedit: \"%s\" was doubted but %d people had already "
+                            + "asked - releasing it%n", op.name(), so_far);
+            promoter.submit(() -> release(rec));
+            return;
+        }
+        System.out.printf("armedit: \"%s\" is doubted and kept - %d of %d people so far%n",
+                op.name(), so_far, waiting.threshold());
+    }
+
+    /**
+     * Somebody asked for something that is waiting. Count them, and ship it if
+     * that was the last one needed.
+     *
+     * This is the only path by which an operation the panel held can reach the
+     * repository, and it needs distinct accounts rather than requests - the
+     * same rule consensus uses, for the same reason. What it does not need is
+     * the panel's agreement, which it already failed to get: the threshold is
+     * the tie-break, and the votes file says so.
+     */
+    private void counted(String accountId, String instruction) {
+        if (accountId == null || instruction == null || instruction.isBlank()) return;
+        java.util.List<Waiting.Record> ready;
+        try {
+            ready = waiting.asked(accountId, instruction, System.currentTimeMillis() / 1000);
+        } catch (RuntimeException x) {
+            return;
+        }
+        for (var rec : ready) {
+            promoter.submit(() -> release(rec));
+        }
+    }
+
+    /**
+     * Enough people asked. Compile it again and put it in the tree.
+     *
+     * Again, rather than from a stored binary: the record keeps the source, and
+     * the machine code is re-derived by the compiler that would have produced
+     * it the first time. A record that held bytes whose source had been lost is
+     * the state this whole arrangement exists to prevent.
+     */
+    private void release(Waiting.Record rec) {
+        try {
+            var learned = scripts.learn(rec.source(), "waiting-list", true);
+            if (learned.isEmpty() || learned.get(0).blob() == null) {
+                System.out.printf("armedit: \"%s\" reached %d people but no longer compiles%n",
+                        rec.name(), rec.who().size());
+                waiting.drop(rec.name());
+                return;
+            }
+            var op = learned.get(0);
+            String observed = exercise(op);
+            var verdict = new Consortium.Verdict(true,
+                    ("%d people asked for this after the panel could not settle it: %s")
+                            .formatted(rec.who().size(), rec.why()),
+                    java.util.List.of(), java.util.List.of());
+            var written = distro.commit(op, verdict, observed, rec.who().size());
+            System.out.printf("armedit: %s comes off the waiting list: %s%n", op.name(),
+                    written.stream().map(java.nio.file.Path::toString)
+                            .collect(java.util.stream.Collectors.joining(", ")));
+            System.out.printf("armedit: %s - %s%n", op.name(),
+                    distro.publish(written, op, verdict));
+            release.record(op.name(), written);
+            waiting.drop(rec.name());
+        } catch (Exception x) {
+            System.out.printf("armedit: could not release \"%s\": %s%n", rec.name(), x);
         }
     }
 
@@ -474,6 +614,16 @@ public final class Armeditd {
     }
 
     private void sweep(long idleMinutes) {
+        /*
+         * Anything nobody asked for in time is forgotten. The list is a bet
+         * that somebody else will turn up, and a bet with no closing date is a
+         * cupboard: a doubted operation kept for ever would eventually ship on
+         * the strength of three people spread across a year, which is not the
+         * agreement the threshold was meant to represent.
+         */
+        for (var gone : waiting.sweep(System.currentTimeMillis() / 1000)) {
+            System.out.printf("armedit: \"%s\" expired off the waiting list unasked%n", gone);
+        }
         // Health is checked on the same schedule as the instance reaping, so
         // the model's picture of what is reachable is never older than a
         // sweep: an agent that stopped calling in is reported gone.
@@ -889,6 +1039,7 @@ public final class Armeditd {
                 // path would mean the cache quietly prevents anything from ever
                 // being agreed on: the second person to ask an identical
                 // question would never be seen.
+                counted(account.id(), instruction);
                 var settled = consensus.record(account.id(), subject, instruction, hit.text());
                 if (settled != null) promote(settled, Router.cheapest());
                 journal.edits(account, screen, java.util.List.of(new Journal.Edit(
@@ -1047,6 +1198,7 @@ public final class Armeditd {
             // people have now been told the same thing, it stops being theirs
             // and becomes an operation.
             if (shareable) {
+                counted(account.id(), instruction);
                 var settled = consensus.record(account.id(), subject, instruction, text);
                 if (settled != null) promote(settled, tier);
             }

@@ -91,7 +91,20 @@ final class Consensus {
     }
 
     /** A question that has converged, and the answer it converged on. */
-    record Agreed(String subject, String instruction, String answer, int people) {}
+    /**
+     * A question that has settled, and who settled it.
+     *
+     * The accounts are carried rather than only counted because what happens
+     * next may be to keep the operation and wait for more of them - and a
+     * waiting list that started at zero askers would ask the people who already
+     * asked to ask again. See Waiting.
+     */
+    record Agreed(String subject, String instruction, String answer, int people,
+                  java.util.Set<String> who) {
+        Agreed(String subject, String instruction, String answer, int people) {
+            this(subject, instruction, answer, people, java.util.Set.of());
+        }
+    }
 
     private final Map<String, Question> questions = new ConcurrentHashMap<>();
     private final AtomicLong seen = new AtomicLong();
@@ -144,7 +157,8 @@ final class Consensus {
             q.promoted = true;
         }
         agreed.incrementAndGet();
-        return new Agreed(q.subject, q.instruction, q.answers.get(d), people.size());
+        return new Agreed(q.subject, q.instruction, q.answers.get(d), people.size(),
+                java.util.Set.copyOf(people));
     }
 
     /**
