@@ -26,9 +26,30 @@ import java.util.concurrent.atomic.AtomicLong;
  * <h2>Counting people, not requests</h2>
  *
  * Consensus is counted in distinct accounts. One person asking the same
- * question five times is one data point, not five, and any other rule lets a
- * single user manufacture agreement on everyone else's behalf. That is the
- * whole defence here, and it is worth being explicit that it is the only one.
+ * question five times is one data point, not five, and any other rule would
+ * let a single user manufacture agreement on everyone else's behalf.
+ *
+ * <h2>Why one person is now enough to try</h2>
+ *
+ * It was three, and three was doing two jobs: deciding that a request is
+ * general, and deciding that it is worth shipping. It is good at the first and
+ * it was never doing the second - the consortium was. What it also did was
+ * make the very first operation on a subject impossible to reach, because
+ * nobody can be the third person to ask for something that has never worked.
+ * The machine this is aimed at has no network at first boot; the operations it
+ * needs most are exactly the ones nobody has asked for three times.
+ *
+ * So the threshold is one, and the gate moved rather than went away. What
+ * carries it now is the consortium, which sees the compiled code, what it did
+ * when run, and - this is the part that matters - how many people the evidence
+ * came from. One is thin evidence and the reviewers are told it is thin, so
+ * they can hold something that several people's agreement would have carried.
+ *
+ * The defence that remains is worth stating exactly, because it is weaker than
+ * what it replaced. Counting distinct accounts stopped one user manufacturing
+ * demand. Nothing stops that now; what stops a bad operation is that several
+ * models must separately agree it should exist, having read it. A user can
+ * cause an operation to be *considered*. They cannot cause one to ship.
  *
  * <h2>What is compared</h2>
  *
@@ -41,8 +62,14 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 final class Consensus {
 
-    /** How many distinct people must have received an answer before it counts. */
-    static final int AGREE = 3;
+    /**
+     * How many distinct people must have received an answer before it counts.
+     *
+     * One: enough to try, never enough to ship. See the note above on where
+     * the gate went. Raising this again is a one-line change and makes the
+     * system slower and safer in exactly the way it used to be.
+     */
+    static final int AGREE = 1;
 
     /** After this many, stop tracking a question nobody is converging on. */
     private static final int MAX_VARIANTS = 12;
@@ -129,28 +156,45 @@ final class Consensus {
      * sentence.
      */
     static String promotionPrompt(Agreed a) {
+        /*
+         * One person and several people are different evidence and the prompt
+         * says which this is. Telling a model that several people agreed when
+         * one person asked is not a rounding error - it is the whole reason it
+         * would relax, and it would relax about the wrong thing.
+         */
+        String evidence = a.people() >= 2
+                ? """
+                  %d different people have asked this about a %s, and every one
+                  of them was given the same answer. That makes it nobody's in
+                  particular.
+                  """.formatted(a.people(), a.subject().isBlank() ? "screen" : a.subject())
+                : """
+                  One person has asked this about a %s and been given this
+                  answer. One is not evidence that it is general - it is only
+                  reason to look. Decide whether there is a real operation here
+                  on the merits of the request itself, not on how many asked.
+                  """.formatted(a.subject().isBlank() ? "screen" : a.subject());
+
         return """
-                %d different people have asked this about a %s, and every one of
-                them was given the same answer.
-
-                WHAT THEY ASKED:
+                %s
+                WHAT WAS ASKED:
                 %s
 
-                WHAT THEY WERE ALL GIVEN:
+                WHAT WAS GIVEN:
                 %s
 
-                That makes it nobody's in particular, so the server should be
-                able to answer it without waking you. Write the operation.
+                If there is a general operation here, the server should be able
+                to answer it without waking you. Write it.
 
                 Write the general case rather than this one sentence: if the
                 answer depends on something in the request, make that a typed
                 variable, so the next person asking a version of this is covered
-                too. If there is genuinely nothing general here - if the
-                agreement is a coincidence of several people wanting the
-                identical thing - say NOTHING AT ALL, and it will keep being
-                asked normally.
-                """.formatted(a.people(), a.subject().isBlank() ? "screen" : a.subject(),
-                              a.instruction(), a.answer());
+                too. If there is genuinely nothing general here - a request that
+                is about one person's document, or one that only makes sense
+                once - say NOTHING AT ALL, and it will keep being asked
+                normally. Saying nothing is the ordinary outcome and costs
+                nobody anything.
+                """.formatted(evidence, a.instruction(), a.answer());
     }
 
     String asJson() {

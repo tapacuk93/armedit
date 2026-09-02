@@ -470,8 +470,24 @@ final class Consortium {
      * question the compiler already answered, and the one left is whether this
      * should be on everybody's machine.
      */
+    /**
+     * What the reviewers are shown.
+     *
+     * The demand line is not decoration. Promotion used to require three
+     * distinct people before an operation could be written at all, and that
+     * threshold was doing two different jobs - judging that a request is
+     * general, and judging that it is worth shipping. It only ever did the
+     * first, and it made the first operation on any subject unreachable:
+     * nobody can be the third person to ask for something that has never
+     * worked. It is one person now, and this review is where the other job
+     * went. So the reviewers are told exactly how many people the evidence
+     * came from, and told what thin evidence should do to their bar - because
+     * a reviewer who assumes there was agreement behind a request will approve
+     * things that had none.
+     */
     static String aboutBlob(String name, String pattern, List<String> arguments,
-                            String source, byte[] code, String sha, String observed) {
+                            String source, byte[] code, String sha, String observed,
+                            int people) {
         return """
                 This is a code review for an open-source text editor. The editor's build
                 system writes small operations for itself, compiles them ahead of time to
@@ -482,6 +498,8 @@ final class Consortium {
 
                 You are one of several models reviewing it separately. Judge the code in
                 front of you; you are not being asked to agree with anyone.
+
+                %s
 
                 OPERATION   %s
                 MATCHES     %s
@@ -512,8 +530,30 @@ final class Consortium {
                 it is so general that it will match things it should not; it hardcodes
                 something that belongs to one user; it would behave differently offline
                 than it does here.
-                """.formatted(name, pattern, String.join(", ", arguments),
+                """.formatted(demand(people), name, pattern, String.join(", ", arguments),
                         code.length, sha, source, words(code), observed);
+    }
+
+    /**
+     * How much wanting is behind this, said plainly.
+     *
+     * A reviewer told nothing assumes the normal case, and the normal case
+     * used to be three people. Saying "one person asked once" costs a line and
+     * changes what a careful reviewer does with a borderline operation, which
+     * is the entire point of moving the gate here.
+     */
+    private static String demand(int people) {
+        if (people >= 2) {
+            return ("EVIDENCE    %d different people asked for this separately and were "
+                    + "given\n            the same answer. That is real demand and it is "
+                    + "not about any\n            one of them.").formatted(people);
+        }
+        return "EVIDENCE    One person asked for this once. That is not evidence that it\n"
+             + "            is general - it is only a reason to look. Nothing else stands\n"
+             + "            between this operation and the repository, so hold it unless\n"
+             + "            it is worth having on its own merits: it should be something\n"
+             + "            the next person to ask something of this shape would want,\n"
+             + "            not something that reads as one user's request written out.";
     }
 
     /**

@@ -306,7 +306,7 @@ public final class Armeditd {
                             op.blob() != null
                                 ? " (" + op.blob().code().length + " bytes of machine code)"
                                 : "");
-                    if (op.blob() != null) ship(wallet, op);
+                    if (op.blob() != null) ship(wallet, op, settled.people());
                 }
             } catch (Exception x) {
                 System.out.printf("armedit: promotion skipped: %s%n", x);
@@ -318,24 +318,30 @@ public final class Armeditd {
      * Put one compiled operation to the consortium, and ship it if they agree.
      *
      * This is the only place machine code enters the source tree, and it is
-     * deliberately the narrowest one: an operation gets here only after enough
-     * distinct people were independently given the same answer, only after the
-     * backend turned that answer into something that compiles, and only after
-     * every model this wallet can reach has separately said it should exist.
+     * deliberately the narrowest one: an operation gets here only after the
+     * backend turned an answer into something that compiles, only after that
+     * thing was run on every value its pattern accepts, and only after every
+     * model this wallet can reach has separately said it should exist, knowing
+     * how many people asked for it.
      *
-     * Any of those three can decline, and declining is the ordinary outcome.
+     * Any of those can decline, and declining is the ordinary outcome. It used
+     * to take three people asking before an operation could even be written,
+     * which was a good filter with one fatal property: the first operation on
+     * any subject was unreachable, because nobody can be the third person to
+     * ask for something that has never worked. One person is enough to be
+     * considered now. Nobody is enough to ship.
      */
-    private void ship(String wallet, Scripts.Script op) {
+    private void ship(String wallet, Scripts.Script op, int people) {
         try {
             String observed = exercise(op);
             var verdict = consortium.decide(wallet, op.name(),
                     Consortium.aboutBlob(op.name(), op.pattern(), op.arguments(),
-                            op.js(), op.blob().code(), op.blob().sha(), observed));
+                            op.js(), op.blob().code(), op.blob().sha(), observed, people));
             System.out.printf("armedit: consortium on \"%s\": %s - %s%n",
                     op.name(), verdict.commit() ? "COMMIT" : "HOLD", verdict.why());
             for (var c : verdict.changes()) System.out.printf("armedit:   %s%n", c);
             if (!verdict.commit()) return;
-            var written = distro.commit(op, verdict, observed);
+            var written = distro.commit(op, verdict, observed, people);
             System.out.printf("armedit: %s is in the tree: %s%n", op.name(),
                     written.stream().map(java.nio.file.Path::toString)
                             .collect(java.util.stream.Collectors.joining(", ")));

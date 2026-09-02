@@ -113,6 +113,47 @@ public class ConsortiumTest {
                  + "\"stop_reason\":\"max_tokens\"}")).contains("output room"),
            "and a model that ran out of room says that instead");
 
+        // --- how much demand there was, and what the reviewers are told about it
+        //
+        // The threshold that used to stand between a request and a written
+        // operation was three distinct people. It is one now, and this review
+        // is where that job went - so what the reviewers are told about the
+        // evidence is no longer a nicety, it is the gate. These check that the
+        // thin case says it is thin and the strong case does not borrow its
+        // language.
+        String one = Consortium.aboutBlob("c", "colours {name:colour}",
+                List.of("name"), "return \"\";", code, "abc", "declined everything", 1);
+        ok(one.contains("One person asked for this once"),
+           "one request is described as one request");
+        ok(one.contains("Nothing else stands"),
+           "...and the review is told it is the only thing left");
+        ok(!one.contains("different people"),
+           "...without borrowing the language of agreement");
+
+        String many = Consortium.aboutBlob("c", "colours {name:colour}",
+                List.of("name"), "return \"\";", code, "abc", "declined everything", 4);
+        ok(many.contains("4 different people"),
+           "several requests are counted out loud");
+        ok(!many.contains("only a reason to look"),
+           "...and are not hedged as though there were one");
+
+        // --- and the prompt that asks for the operation in the first place
+        var alone = new Consensus.Agreed("screen", "reboot", "#REBOOT", 1);
+        String ask = Consensus.promotionPrompt(alone);
+        ok(ask.contains("One person has asked"),
+           "asking for an operation on one request says so");
+        ok(!ask.contains("every one of them"),
+           "...and does not tell the model that several agreed");
+        ok(ask.contains("not on how many asked"),
+           "...but does say what to decide it on instead");
+
+        var crowd = new Consensus.Agreed("screen", "reboot", "#REBOOT", 3);
+        ok(Consensus.promotionPrompt(crowd).contains("3 different people"),
+           "and a real agreement is still described as one");
+
+        ok(Consensus.AGREE == 1,
+           "one person is enough to be considered");
+
         System.exit(fails == 0 ? 0 : 1);
     }
 

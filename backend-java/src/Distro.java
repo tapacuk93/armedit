@@ -68,8 +68,8 @@ final class Distro {
      *
      * @return the files written, for the log
      */
-    List<Path> commit(Scripts.Script op, Consortium.Verdict verdict, String observed)
-            throws java.io.IOException {
+    List<Path> commit(Scripts.Script op, Consortium.Verdict verdict, String observed,
+                      int people) throws java.io.IOException {
         Files.createDirectories(dir);
         String safe = safeName(op.name());
         Path bin = dir.resolve(safe + ".bin");
@@ -99,6 +99,14 @@ final class Distro {
 
         var b = new StringBuilder();
         b.append("verdict  ").append(verdict.commit() ? "COMMIT" : "HOLD").append('\n');
+        /*
+         * How much demand was behind it, kept with the votes rather than only
+         * in the prompt that is thrown away. An operation approved on one
+         * person's request and one approved on several people's agreement are
+         * different things a year later, and the file should say which it was.
+         */
+        b.append("asked by ").append(people)
+         .append(people == 1 ? " person" : " people").append('\n');
         b.append("because  ").append(verdict.why()).append("\n\n");
         for (var v : verdict.votes()) {
             b.append(v.member()).append("  ");
