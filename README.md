@@ -431,6 +431,30 @@ decides only *where* the windows fall, never what the pad contains.
 | `tests/` | `make test` — the backend's judgement, and the aarch64 it emits, run |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
 
+## Getting to bare metal
+
+Apple Silicon is the target and the route in is m1n1, Asahi's bootloader: iBoot
+starts it, it starts something else. It does not hand over a device tree the
+way QEMU and the Virtualization framework do — it passes a structure of its
+own, and the most important thing in it is **a framebuffer that is already
+running**. m1n1 has talked to the display controller so its payload does not
+have to, and that is the whole of first light on that machine.
+
+`kernel/arch/aarch64/bootargs.S` reads that structure and `platform_present`
+draws into it, row by row with the real stride, converting to thirty-bit pixels
+when that is what the panel is. Nine assertions cover the parsing against a
+synthetic handover, because the layout is an ABI and can be checked without
+owning the machine — which matters, since the alternative is repartitioning one
+to find out.
+
+What is *not* done is everything after first light: the interrupt controller,
+the timers, the Apple serial port, and input. Input is the hard one — an Apple
+keyboard is USB or SPI behind an IOMMU, which is a great deal more than
+virtio-input. Expect display and serial before anything types.
+
+EFI does not help here. Apple's iBoot is not EFI firmware, so the EFI path is
+for the Virtualization framework and for other arm64 boards, not for this Mac.
+
 ## Status
 
 Verified by running it, against published test vectors where they exist:

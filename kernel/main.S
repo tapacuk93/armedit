@@ -421,6 +421,21 @@ kmain:
         bl      SYM(dtb_init)
 
 /*
+ * Or m1n1's boot arguments, which is what a real Apple machine hands over.
+ *
+ * The two are told apart by the device tree's magic: whatever is in x0 is one
+ * or the other or neither, and asking costs a load. A machine that gave us
+ * boot arguments has a framebuffer already running, which is the whole of
+ * first light there.
+ */
+        bl      SYM(dtb_have)
+        cbnz    w0, 2f
+        LEA     x9, dtb_arg
+        ldr     x0, [x9]
+        bl      SYM(bootargs_init)
+2:
+
+/*
  * A virtio console, but only if there is no serial port.
  *
  * A machine with a PL011 already has the simplest possible channel, and

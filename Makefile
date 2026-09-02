@@ -354,11 +354,17 @@ BROWSE_OBJ := $(B)/macho/tests/browsetest.o $(B)/macho/net/browse.o \
               $(B)/macho/gfx/demo_clip.o $(B)/macho/font/font.o \
               $(B)/macho/font/render.o $(B)/macho/app/clock.o
 
+BOOTARGS_OBJ := $(B)/macho/tests/bootargstest.o \
+                $(B)/macho/kernel/arch/aarch64/bootargs.o $(B)/macho/net/str.o
+
+$(B)/bootargstest: $(BOOTARGS_OBJ)
+	$(LD_MACHO) -o $@ $(BOOTARGS_OBJ)
+
 $(B)/browsetest: $(BROWSE_OBJ)
 	$(LD_MACHO) -o $@ $(BROWSE_OBJ)
 
 .PHONY: test
-test: $(B)/optest $(B)/localtest
+test: $(B)/optest $(B)/localtest $(B)/bootargstest
 	@cd backend-java && ./gradlew -q installDist
 	@javac -cp backend-java/build/classes/java/main -d $(B)/tests \
 	   tests/ColourTest.java tests/ConsortiumTest.java
@@ -373,6 +379,8 @@ test: $(B)/optest $(B)/localtest
 	 done
 	@printf "    shout %-17s -> [%s]\n" "(screen only)" \
 	   "$$(ARMEDIT_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"
+	@echo "  --- and what m1n1 would hand over on a real machine:"
+	@$(B)/bootargstest
 	@echo "  --- and the operations this build ships with, answering offline:"
 	@$(B)/localtest "colours blue" "colours red" "COLOURS Blue" \
 	   "$$(printf 'colours blue\n')" "  colours   blue  " \

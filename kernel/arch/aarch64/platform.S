@@ -89,18 +89,107 @@ platform_fb:
  */
         .globl  platform_present
 platform_present:
+        stp     x29, x30, [sp, #-96]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        str     x27, [sp, #80]
+
+/*
+ * A real machine's screen, if one was handed over.
+ *
+ * m1n1 gives an address, a width, a height, a stride and a depth, and none of
+ * those are this board's. So the frame is copied row by row rather than as one
+ * run: the rows of a real display are not adjacent, and copying as though they
+ * were paints a diagonal.
+ */
+        LEA     x0, ba_fb
+        LEA     x1, ba_w
+        LEA     x2, ba_h
+        LEA     x3, ba_stride
+        LEA     x4, ba_depth
+        bl      SYM(bootargs_fb)
+        cmn     w0, #1
+        b.eq    .Lpp_ramfb
+
+        LEA     x9, ba_fb
+        ldr     x19, [x9]               /* where the display is */
+        LEA     x9, ba_w
+        ldr     x20, [x9]
+        LEA     x9, ba_h
+        ldr     x21, [x9]
+        LEA     x9, ba_stride
+        ldr     x22, [x9]
+        LEA     x9, ba_depth
+        ldr     x23, [x9]
+
+        mov     x9, #FB_W               /* never draw past either surface */
+        cmp     x20, x9
+        csel    x20, x20, x9, lo
+        mov     x9, #FB_H
+        cmp     x21, x9
+        csel    x21, x21, x9, lo
+
+        LEA     x24, fb_back
+        mov     x25, #0                 /* row */
+.Lpp_row:
+        cmp     x25, x21
+        b.hs    .Lpp_done
+        mov     x9, #(FB_W * 4)
+        madd    x26, x25, x9, x24       /* this row of ours */
+        madd    x27, x25, x22, x19      /* and of theirs */
+        mov     x9, #0
+.Lpp_px:
+        cmp     x9, x20
+        b.hs    .Lpp_next
+        ldr     w10, [x26, x9, lsl #2]
+        cmp     x23, #30
+        b.ne    1f
+/*
+ * Thirty bits, which is what an Apple display usually is.
+ *
+ * Ten bits per channel packed into a word. Our pixels are eight, so each
+ * channel is shifted up by two - which loses nothing and is why the picture
+ * is not simply blue.
+ */
+        ubfx    w11, w10, #16, #8       /* r */
+        ubfx    w12, w10, #8, #8        /* g */
+        ubfx    w13, w10, #0, #8        /* b */
+        lsl     w11, w11, #2
+        lsl     w12, w12, #2
+        lsl     w13, w13, #2
+        orr     w10, w13, w12, lsl #10
+        orr     w10, w10, w11, lsl #20
+1:      str     w10, [x27, x9, lsl #2]
+        add     x9, x9, #1
+        b       .Lpp_px
+.Lpp_next:
+        add     x25, x25, #1
+        b       .Lpp_row
+
+.Lpp_ramfb:
         LEA     x0, fb_back
         LEA     x1, fb_store
         mov     x2, #0
         movz    x3, #((FB_W * FB_H * 4) & 0xFFFF)
         movk    x3, #((FB_W * FB_H * 4) >> 16), lsl #16
 1:      cmp     x2, x3
-        b.hs    2f
+        b.hs    .Lpp_done
         ldr     x4, [x0, x2]
         str     x4, [x1, x2]
         add     x2, x2, #8
         b       1b
-2:      ret
+
+.Lpp_done:
+        ldr     x27, [sp, #80]
+        ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #96
+        ret
 
         .globl  platform_puts
 platform_puts:
@@ -296,6 +385,12 @@ m_kbd:    .asciz "armedit: keyboard found\n"
 m_nokbd:  .asciz "armedit: no keyboard device\n"
 
         .section .bss
+        .p2align 3
+ba_fb:     .space 8
+ba_w:      .space 8
+ba_h:      .space 8
+ba_stride: .space 8
+ba_depth:  .space 8
         .p2align 2
 kbd_present:    .space 4
         .p2align 4
