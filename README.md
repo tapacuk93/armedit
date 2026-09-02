@@ -429,6 +429,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `backend-java/src/Consortium.java` | several models, asked separately, before anything ships |
 | `ops/` | approved operations: the machine code, its source, and the votes |
 | `tests/` | `make test` — the backend's judgement, and the aarch64 it emits, run |
+| `tests/treefb.py` | `make treefb` — the bare-metal display path, drawn through and read back |
+| `tools/addfb.py` | puts a loader's `simple-framebuffer` node into a tree that lacks one |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
 
 ## Getting to bare metal
@@ -460,6 +462,37 @@ format, and a reader tested only against what its author imagined is a
 description of the author's imagination. All of it checks out without owning
 the machine, which matters, since the alternative is repartitioning one to find
 out whether an offset was right.
+
+That much tested the *parser*. Nothing had ever drawn through what it read,
+because QEMU hands over no such framebuffer — it offers ramfb, which the guest
+configures, and that is a different route through different code. `make treefb`
+closes the gap without the machine: `tools/addfb.py` puts the node a real
+loader would have left into QEMU's own device tree, the kernel takes the path
+it will take on hardware, and the pixels are read back out of guest memory
+afterwards.
+
+Seventeen checks, and they are built so that agreeing with the tree by
+coincidence is not enough. Two runs at two addresses and two geometries, so no
+constant compiled into the kernel can satisfy both. A stride deliberately wider
+than the width, with the padding past it asserted untouched — a kernel that
+multiplies the width instead of reading the stride fills that gap and shears
+its picture one row at a time, which looks like a font bug and is not. Memory
+below each buffer checked clean, so "found the picture" is not "wrote over
+everything".
+
+Wiring it up found the thing worth finding: `platform_init` decided whether
+there was a display by asking ramfb, so on any machine where a loader had
+already brought the panel up it announced *no framebuffer, serial only* while
+standing in front of a working screen. Every target this is aimed at is that
+kind of machine. The tree is asked first now and ramfb is the fallback.
+
+The other find was the harness's own: the first address chosen for the
+framebuffer was `0x48000000`, which is exactly where QEMU keeps the device
+tree, so the editor painted over the tree it was still holding and the parser
+walked into the wreckage a minute later. It reported as a kernel fault and was
+not one. On a real machine the loader reserves that memory; here nobody does,
+so the test now reads the boot stub to learn where the tree is, keeps away from
+it, and checks afterwards that it survived.
 
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different

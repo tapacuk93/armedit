@@ -30,11 +30,35 @@
 platform_init:
         stp     x29, x30, [sp, #-16]!
         mov     x29, sp
+
+/*
+ * A display somebody else already started counts as a display.
+ *
+ * ramfb is QEMU's arrangement: the guest describes a framebuffer through
+ * fw_cfg and QEMU scans it out. Every other machine this targets works the
+ * other way round - the loader brings the panel up and hands over an address,
+ * through boot arguments or a simple-framebuffer node - and asking ramfb about
+ * it on such a machine gets a refusal, which used to mean "no display" and a
+ * kernel that ran headless in front of a working screen.
+ *
+ * So the tree is asked first. ramfb is the fallback, not the definition.
+ */
+        mov     x0, #0
+        mov     x1, #0
+        mov     x2, #0
+        mov     x3, #0
+        mov     x4, #0
+        bl      SYM(screen_find)
+        cmn     w0, #1
+        b.ne    1f
+
         LEA     x0, fb_store
         mov     w1, #FB_W
         mov     w2, #FB_H
         bl      ramfb_init
-        stp     x0, x1, [sp, #-16]!     /* a keyboard is optional; a display
+        b       2f
+1:      mov     w0, #0                  /* the loader's, and it is already on */
+2:      stp     x0, x1, [sp, #-16]!     /* a keyboard is optional; a display
                                            is what decides whether we run */
         bl      kbd_init
         LEA     x9, kbd_present

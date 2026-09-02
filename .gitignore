@@ -35,3 +35,4 @@ workspaces/
 # tools/mkesp.sh whenever the application changes.
 *.img
 *.dmg
+__pycache__/
