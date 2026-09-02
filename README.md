@@ -764,9 +764,37 @@ somewhere that was not a port. The numbers still looked plausible and one of the
 eight "ports" still reported something attached. Word-wide reads now, masked
 here rather than fetched narrow from the bus.
 
-No rings, no transfers, no device addressed yet. Bring-up is what is wrong first
-on unfamiliar hardware and the part a report can show without a driver behind
-it, so it is worth having on its own.
+Then rings, and then a device. A No-Op command proves the controller reads
+commands out of memory this kernel wrote and writes answers where this kernel is
+looking — every way a ring implementation goes wrong lives there, before any
+device is involved, and all of them produce the same silence. After that the
+first port with something in it gets reset, a slot allocated, a device
+addressed, and a control transfer asks it what it is:
+
+    usb           0000000010000000 xhci 1.0, 8 ports, 1 attached, answers commands
+    usb device    0627:0001 class 0
+
+Enumeration is six steps and each fails differently — a port that will not reset
+is a cable or a hub, a slot that is refused is a controller out of them, a
+descriptor that never arrives is a transfer ring that is wrong. So the report
+says which step it stopped at rather than that it failed, because on a machine
+with no debugger that difference is an afternoon against a week.
+
+The ids have to come from the device, not from here, and `make machine` requires
+that: a keyboard reports `0627:0001 class 0`, and a USB Ethernet adapter reports
+`0525:a4a2 class 2` — a different maker, a different product, and class 2 is
+Communications, which is the road to a network on bare metal.
+
+Three bugs, all of the same family — something that looked like the hardware
+refusing. A four-byte flag declared between two pointers put the second on a
+four-byte boundary, and with the MMU off a 64-bit store there is an alignment
+fault. Resetting a port produces a Port Status Change event, which arrives
+*before* the completion of whatever command is issued next — so a wait loop that
+took the first event and required it to be its own answer failed on the first
+command after any reset, which is every enumeration, and looked exactly like a
+controller refusing to allocate a slot. And moving the event ring's dequeue
+pointer, added so a keyboard would not stop working after sixteen keys, clobbered
+the register holding the event type on its way out.
 
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different

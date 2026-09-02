@@ -63,7 +63,8 @@ def base_tree():
 
 
 class Machine:
-    def __init__(self, name, port, dtb=None, keyboard=True, ramfb=False, usb=None):
+    def __init__(self, name, port, dtb=None, keyboard=True, ramfb=False,
+                 usb=None, extra=None):
         self.name = name
         self.port = port
         self.serial = os.path.join(SCRATCH, name + ".log")
@@ -84,6 +85,8 @@ class Machine:
             argv += ["-device", "qemu-xhci"]
             for d in usb:
                 argv += ["-device", d]
+        if extra:
+            argv += extra
         self.argv = argv
 
     def __enter__(self):
@@ -230,11 +233,13 @@ def main():
              ("a keyboard", ("usb-kbd",), 4634),
              ("a keyboard and a mouse", ("usb-kbd", "usb-mouse"), 4635)]
     said = {}
+    device = {}
     for label, devices, port in cases:
         with Machine("usb%d" % port, port, ramfb=True,
                      usb=devices if devices is not None else None) as m:
             log = m.log()
             said[label] = field(log, "usb") or ""
+            device[label] = field(log, "usb device") or ""
             ok("KERNEL FAULT" not in log, "nothing faults with %s" % label)
 
     ok(said["no controller"] == "absent",
@@ -265,6 +270,31 @@ def main():
     ok(attached("a keyboard") == 1, "...one device, one port occupied")
     ok(attached("a keyboard and a mouse") == 2,
        "...and two, so these are the real port registers")
+
+    # --- and what is on the other end of the wire
+    #
+    # Everything above is this machine talking to its own controller. Reading a
+    # vendor and a product means the controller talked to something somebody
+    # else made: a port was reset, a slot allocated, a device addressed, and a
+    # control transfer came back with what the device says it is. Any one of
+    # those failing gives no ids at all, which is why the ids are the assertion.
+    ok(device["a keyboard"].startswith("0627:0001"),
+       "a keyboard says who made it and what it is",
+       device["a keyboard"])
+    ok("stopped at step" in device["nothing plugged in"],
+       "an empty controller says which step it got to, not merely that it failed",
+       device["nothing plugged in"])
+
+    # The ids have to come from the device rather than from this kernel. A
+    # network adapter is a different maker, a different product and a different
+    # class - and class 2 is CDC, which is the road to a network on bare metal.
+    with Machine("usbnet", 4636, ramfb=True, usb=(),
+                 extra=["-netdev", "user,id=u0", "-device", "usb-net,netdev=u0"]) as m:
+        net = field(m.log(), "usb device") or ""
+    ok(net.startswith("0525:a4a2"),
+       "an Ethernet adapter says something else entirely", net)
+    ok(net.endswith("class 2"),
+       "...and calls itself a communications device, which is what it is", net)
 
     print()
     if failures:

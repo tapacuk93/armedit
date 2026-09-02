@@ -310,6 +310,44 @@ SYM(report_show):
 22:     LEA     x0, m_silent
 23:     bl      report_puts
         bl      report_nl
+
+/*
+ * And what is on the other end of it.
+ *
+ * The line above is this machine talking to its own controller. This one is
+ * the controller talking to something somebody else made, over a wire, which
+ * is a different claim and the one that matters: a vendor and a product mean a
+ * port was reset, a slot was allocated, a device was addressed and a control
+ * transfer came back with what the device says it is.
+ */
+        bl      SYM(xhci_enumerate)
+        cmn     w0, #1
+        b.ne    24f
+        LEA     x0, m_device
+        bl      report_puts
+        LEA     x0, m_stopped
+        bl      report_puts
+        LEA     x9, SYM(xhci_stage)
+        ldr     w0, [x9]
+        bl      report_dec
+        bl      report_nl
+        b       20f
+24:     LEA     x0, m_device
+        bl      report_puts
+        LEA     x9, SYM(xhci_vendor)
+        ldr     w0, [x9]
+        bl      report_hex16
+        LEA     x0, m_colon
+        bl      report_puts
+        LEA     x9, SYM(xhci_product)
+        ldr     w0, [x9]
+        bl      report_hex16
+        LEA     x0, m_class
+        bl      report_puts
+        LEA     x9, SYM(xhci_class)
+        ldr     w0, [x9]
+        bl      report_dec
+        bl      report_nl
 20:
 
 /* And whether anybody can type at it, which decides what happens next. */
@@ -420,6 +458,33 @@ report_hex:
         ldp     x29, x30, [sp], #32
         ret
 
+/* report_hex16 - x0 as four hex digits, which is how USB ids are written. */
+report_hex16:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+        LEA     x1, r_text
+        mov     w2, #4
+1:      sub     w2, w2, #1
+        lsr     x9, x19, #12
+        and     x9, x9, #0xF
+        lsl     x19, x19, #4
+        cmp     w9, #10
+        b.lo    2f
+        add     w9, w9, #('a' - 10)
+        b       3f
+2:      add     w9, w9, #'0'
+3:      strb    w9, [x1]
+        add     x1, x1, #1
+        cbnz    w2, 1b
+        strb    wzr, [x1]
+        LEA     x0, r_text
+        bl      report_puts
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
 /* report_dec - x0 in decimal, because a resolution in hex helps nobody. */
 report_dec:
         stp     x29, x30, [sp, #-32]!
@@ -464,6 +529,10 @@ m_ports:    .asciz " ports, "
 m_attached: .asciz " attached, "
 m_answers:  .asciz "answers commands"
 m_silent:   .asciz "takes no commands"
+m_device:   .asciz "  usb device    "
+m_colon:    .asciz ":"
+m_stopped:  .asciz "stopped at step "
+m_class:    .asciz " class "
 m_keyboard: .asciz "  keyboard      "
 m_wdt:      .asciz "watchdog at "
 m_hvc:      .asciz "psci, hvc"

@@ -393,6 +393,8 @@ SYM(xhci_start):
         and     w0, w0, #0xFFFFFFE0
         add     x21, x19, w0, uxtw              /* runtime */
         add     x22, x21, #0x20                 /* interrupter zero */
+        LEA     x9, xhci_intr
+        str     x22, [x9]
 
         mov     w9, #1
         str     w9, [x22, #(XHCI_ERSTSZ - 0x20)]
@@ -486,16 +488,10 @@ SYM(xhci_noop):
         dsb     sy
 
 /* And wait for the answer to appear where we said we would look for it. */
-        mov     w22, #0
-1:      bl      xhci_event
+        mov     w0, #TRB_CMD_DONE
+        bl      xhci_wait
         cmn     w0, #1
-        b.ne    2f
-        add     w22, w22, #1
-        cmp     w22, #0x400000
-        b.hs    9f
-        b       1b
-2:      cmp     w0, #TRB_CMD_DONE
-        b.ne    9f
+        b.eq    9f
         mov     w0, #0
         b       8f
 9:      mov     w0, #-1
@@ -503,6 +499,38 @@ SYM(xhci_noop):
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * xhci_wait - w0 = the event type wanted. out w0 = 0 if it came, -1 if not.
+ *
+ * Events that are not the one being waited for are stepped over rather than
+ * treated as failure. That is not tolerance, it is how the ring works: a port
+ * reset produces a Port Status Change event, and it arrives before the
+ * completion of whatever command is issued next. A loop that took the first
+ * event to appear and required it to be its own answer therefore failed on the
+ * first command after any reset - which is every enumeration, and which looked
+ * exactly like a controller refusing to allocate a slot.
+ */
+xhci_wait:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+        mov     w20, #0
+1:      cmp     w20, #0x800000
+        b.hs    9f
+        add     w20, w20, #1
+        bl      xhci_event
+        cmn     w0, #1
+        b.eq    1b
+        cmp     w0, w19
+        b.ne    1b                              /* somebody else's news */
+        mov     w0, #0
+        b       8f
+9:      mov     w0, #-1
+8:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /*
@@ -529,6 +557,18 @@ xhci_event:
         cmp     w10, w21
         b.ne    9f                              /* not written yet */
 
+/*
+ * Kept whole. The type alone answers "did something happen"; the rest answers
+ * what, and a caller that has to ask a second time cannot - the entry is gone
+ * as soon as the ring moves on and the controller may overwrite it.
+ */
+        LEA     x11, xhci_last
+        ldr     x12, [x20]
+        str     x12, [x11]
+        ldr     w12, [x20, #8]
+        str     w12, [x11, #8]
+        str     w9, [x11, #12]
+
         lsr     w0, w9, #10
         and     w0, w0, #0x3F                   /* the type */
 
@@ -543,6 +583,31 @@ xhci_event:
         LEA     x9, xhci_cycle
         str     w21, [x9]
 1:      str     x20, [x19]
+
+/*
+ * Tell the controller how far we have read.
+ *
+ * Nothing so far has needed this: a handful of events fit in the ring and it
+ * has never come round. It will. A keyboard produces an event per keypress,
+ * and a controller whose dequeue pointer never moves eventually decides the
+ * ring is full and stops writing to it - which presents as a device that
+ * worked for the first sixteen keys.
+ *
+ * The busy bit is cleared by writing it back, which is why it is set here
+ * rather than masked out.
+ */
+        LEA     x9, xhci_intr
+        ldr     x9, [x9]
+        cbz     x9, 8f
+        mov     w21, w0                         /* the type, which is the answer:
+                                                   x0 is about to be the pointer,
+                                                   and returning that instead
+                                                   made every event look like a
+                                                   different one */
+        orr     x0, x20, #(1 << 3)              /* Event Handler Busy */
+        mov     x1, x9
+        bl      xhci_put64
+        mov     w0, w21
         b       8f
 9:      mov     w0, #-1
 8:      ldr     x21, [sp, #32]
@@ -572,6 +637,431 @@ xhci_zero:
         add     x0, x0, #8
         b       1b
 2:      ret
+
+/*
+ * xhci_enumerate - wake the first device that is plugged in and ask what it is.
+ *   out w0 = 0 if it answered, -1 if it did not.
+ *
+ * On success xhci_vendor, xhci_product and xhci_class hold what it said.
+ *
+ * This is the first thing here that is USB rather than xHCI. Everything before
+ * it was one machine talking to one controller; this is the controller talking
+ * to something on the other end of a wire that was manufactured by somebody
+ * else and has its own opinions about timing.
+ *
+ * <h2>The order, and why each step is separate</h2>
+ *
+ *   reset the port      until this happens the device is attached and not
+ *                       listening; a port with something in it is not a port
+ *                       you can talk to
+ *   enable a slot       the controller allocates one and tells us which
+ *   describe the device an input context saying "this is on port N, at this
+ *                       speed, and its control endpoint's ring is here"
+ *   address it          the controller does the USB address assignment itself
+ *   ask it              a control transfer, which is three TRBs and the first
+ *                       time anything is sent to the device rather than to
+ *                       the controller
+ *
+ * Every one of those can fail on its own and each failure means something
+ * different, which is why they are not folded together.
+ */
+        .globl  SYM(xhci_enumerate)
+SYM(xhci_enumerate):
+        stp     x29, x30, [sp, #-96]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        str     x27, [sp, #80]
+
+        mov     w0, #1                          /* finding the controller */
+        bl      xhci_step
+        bl      SYM(xhci_find)
+        cbz     x0, .Lxe_fail
+        mov     x19, x0
+        bl      SYM(xhci_caplength)
+        add     x20, x19, w0, uxtw              /* operational */
+
+/* Which port has something in it. The first is enough; there is one device. */
+        mov     w0, #2                          /* finding an occupied port */
+        bl      xhci_step
+        bl      SYM(xhci_ports)
+        mov     w21, w0
+        cbz     w21, .Lxe_fail
+        mov     w22, #0
+1:      cmp     w22, w21
+        b.hs    .Lxe_fail
+        add     x23, x20, #XHCI_PORTSC
+        add     x23, x23, x22, lsl #4
+        ldr     w9, [x23]
+        tbnz    w9, #0, 2f                      /* CCS */
+        add     w22, w22, #1
+        b       1b
+
+/*
+ * Reset it, and take care what is written back.
+ *
+ * PORTSC is mostly write-one-to-clear: the change bits above it, and Port
+ * Enabled at bit one, which a driver clears by *setting*. Reading the register
+ * and writing it back with the reset bit added would therefore disable the
+ * port it was trying to reset and acknowledge every event it had not looked
+ * at yet. So those bits are masked out of what is written, and only the reset
+ * bit is put in.
+ */
+2:      mov     w0, #3                          /* resetting the port */
+        bl      xhci_step
+        ldr     w9, [x23]
+        movz    w10, #0x00FE, lsl #16           /* the change bits, 17..23 */
+        orr     w10, w10, #(1 << 1)             /* and Port Enabled */
+        bic     w9, w9, w10
+        orr     w9, w9, #(1 << 4)               /* Port Reset */
+        str     w9, [x23]
+        dsb     sy
+
+        mov     w24, #0
+3:      ldr     w9, [x23]
+        tbnz    w9, #21, 4f                     /* PRC: the reset finished */
+        add     w24, w24, #1
+        cmp     w24, #0x400000
+        b.hs    .Lxe_fail
+        b       3b
+4:      mov     w0, #4                          /* waiting for it to enable */
+        bl      xhci_step
+        ldr     w9, [x23]
+        tbz     w9, #1, .Lxe_fail               /* PED: it did not come up */
+        lsr     w25, w9, #10
+        and     w25, w25, #0xF                  /* the speed it came up at */
+
+/* A slot for it. The controller picks the number and reports it back. */
+        mov     w0, #5                          /* asking for a slot */
+        bl      xhci_step
+        mov     w0, #(9 << 10)                  /* Enable Slot */
+        mov     x1, #0
+        mov     w2, #0
+        bl      xhci_command
+        cmn     w0, #1
+        b.eq    .Lxe_fail
+        LEA     x9, xhci_last
+        ldr     w9, [x9, #12]
+        lsr     w26, w9, #24                    /* the slot id */
+        cbz     w26, .Lxe_fail
+
+/*
+ * Describe it to the controller.
+ *
+ * The input context is this kernel telling the controller what it believes
+ * about the device; the device context is what the controller writes back
+ * having addressed it. Both are read by physical address, and the second is
+ * found through the slot array rather than passed - which is what the slot
+ * array is for.
+ */
+        LEA     x0, xhci_input
+        mov     x1, #(33 * 64)
+        bl      xhci_zero
+        LEA     x0, xhci_devctx
+        mov     x1, #(32 * 64)
+        bl      xhci_zero
+        LEA     x0, xhci_ep0
+        mov     x1, #(RING_TRBS * TRB_SZ)
+        bl      xhci_zero
+
+        bl      xhci_ctxsize
+        mov     w27, w0
+
+/* Add the slot and the control endpoint, and nothing else. */
+        LEA     x9, xhci_input
+        mov     w10, #3
+        str     w10, [x9, #4]
+
+/* The slot: one context below this one, and which root port it is on. */
+        LEA     x9, xhci_input
+        add     x9, x9, w27, uxtw               /* the slot context */
+        mov     w10, #(1 << 27)                 /* context entries = 1 */
+        orr     w10, w10, w25, lsl #20          /* the speed */
+        str     w10, [x9]
+        add     w11, w22, #1                    /* ports are numbered from one */
+        lsl     w11, w11, #16
+        str     w11, [x9, #4]
+
+/*
+ * The control endpoint. Its maximum packet size is decided by the speed and
+ * not by asking, because asking requires a control transfer and a control
+ * transfer requires this field - the specification breaks the circle by fixing
+ * what each speed starts at.
+ */
+        LEA     x9, xhci_input
+        add     x9, x9, w27, uxtw
+        add     x9, x9, w27, uxtw               /* endpoint zero's context */
+        mov     w10, #(4 << 3)                  /* type: control */
+        orr     w10, w10, #(3 << 1)             /* three errors before giving up */
+        mov     w12, #8                         /* low and full speed */
+        cmp     w25, #3
+        b.ne    5f
+        mov     w12, #64                        /* high */
+5:      cmp     w25, #4
+        b.lo    6f
+        mov     w12, #512                       /* super and above */
+6:      orr     w10, w10, w12, lsl #16
+        str     w10, [x9, #4]
+        LEA     x10, xhci_ep0
+        orr     x10, x10, #1                    /* the ring's cycle state */
+        str     x10, [x9, #8]
+        mov     w11, #8                         /* average transfer length */
+        str     w11, [x9, #16]
+
+        LEA     x9, xhci_dcbaa
+        LEA     x10, xhci_devctx
+        str     x10, [x9, w26, uxtw #3]
+
+        LEA     x9, xhci_ep0                    /* where the next one goes */
+        LEA     x10, xhci_ep0put
+        str     x9, [x10]
+
+        mov     w0, #6                          /* addressing the device */
+        bl      xhci_step
+        LEA     x0, xhci_input
+        mov     w1, #(11 << 10)                 /* Address Device */
+        mov     x2, x0
+        mov     w0, w1
+        mov     x1, x2
+        mov     w2, w26
+        bl      xhci_command
+        cmn     w0, #1
+        b.eq    .Lxe_fail
+
+/* And now ask the device itself. */
+        mov     w0, #7                          /* asking what it is */
+        bl      xhci_step
+        mov     w0, w26
+        bl      xhci_descriptor
+        cmn     w0, #1
+        b.eq    .Lxe_fail
+
+        LEA     x9, xhci_desc
+        ldrb    w10, [x9, #4]
+        LEA     x11, SYM(xhci_class)
+        str     w10, [x11]
+        ldrb    w10, [x9, #8]
+        ldrb    w11, [x9, #9]
+        orr     w10, w10, w11, lsl #8
+        LEA     x11, SYM(xhci_vendor)
+        str     w10, [x11]
+        ldrb    w10, [x9, #10]
+        ldrb    w11, [x9, #11]
+        orr     w10, w10, w11, lsl #8
+        LEA     x11, SYM(xhci_product)
+        str     w10, [x11]
+
+        mov     w0, #0
+        bl      xhci_step
+        mov     w0, #0
+        b       .Lxe_out
+.Lxe_fail:
+        mov     w0, #-1
+.Lxe_out:
+        ldr     x27, [sp, #80]
+        ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #96
+        ret
+
+/*
+ * xhci_step - w0 = which stage is being attempted, remembered for the report.
+ *
+ * Enumeration is six things in a row and each fails differently: a port that
+ * will not reset is a cable or a hub, a slot that is refused is a controller
+ * out of them, an address that fails is a device that did not answer, and a
+ * descriptor that never arrives is a transfer ring that is wrong. On a machine
+ * with no debugger the difference between those is the difference between an
+ * afternoon and a week, and "it did not work" says none of it.
+ */
+xhci_step:
+        LEA     x9, SYM(xhci_stage)
+        str     w0, [x9]
+        ret
+
+/*
+ * xhci_descriptor - w0 = a slot. Fetch eighteen bytes describing the device.
+ *   out w0 = 0 if it answered, -1 if it did not.
+ *
+ * A control transfer is three entries on the endpoint's own ring and they are
+ * not three transfers: the setup stage says what is being asked, the data
+ * stage says where the answer goes, and the status stage is the device's
+ * acknowledgement that it is finished. Only the last carries Interrupt On
+ * Completion, because one event for the whole exchange is what a caller wants
+ * and three would have to be counted.
+ */
+xhci_descriptor:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        str     x23, [sp, #48]
+        mov     w19, w0
+
+        bl      SYM(xhci_find)
+        cbz     x0, 9f
+        mov     x20, x0
+
+        LEA     x0, xhci_desc
+        mov     x1, #32
+        bl      xhci_zero
+
+        LEA     x9, xhci_ep0put
+        ldr     x21, [x9]
+
+/*
+ * The setup stage. Its eight bytes are the request itself and they travel in
+ * the TRB rather than in memory the controller must fetch - which is what
+ * Immediate Data means and why the length is eight regardless of what is being
+ * asked for.
+ */
+        mov     w10, #0x0680                    /* IN, standard, GET_DESCRIPTOR */
+        movk    w10, #0x0100, lsl #16           /* the device descriptor */
+        str     w10, [x21]
+        movz    w10, #0x0012, lsl #16           /* eighteen bytes wanted */
+        str     w10, [x21, #4]
+        mov     w10, #8
+        str     w10, [x21, #8]
+        mov     w10, #((2 << 10) | (1 << 6) | 1)  /* setup, immediate, cycle */
+        orr     w10, w10, #(3 << 16)            /* the data stage will be IN */
+        str     w10, [x21, #12]
+        add     x21, x21, #TRB_SZ
+
+        LEA     x10, xhci_desc
+        str     x10, [x21]
+        mov     w10, #18
+        str     w10, [x21, #8]
+        movz    w10, #((3 << 10) | 1)              /* data, cycle */
+        movk    w10, #1, lsl #16                   /* and the direction is IN */
+        str     w10, [x21, #12]
+        add     x21, x21, #TRB_SZ
+
+        str     xzr, [x21]
+        str     wzr, [x21, #8]
+        mov     w10, #((4 << 10) | (1 << 5) | 1)   /* status, interrupt, cycle */
+        str     w10, [x21, #12]
+        add     x21, x21, #TRB_SZ
+        LEA     x9, xhci_ep0put
+        str     x21, [x9]
+
+/*
+ * Ring the device's own doorbell. There is one per slot, and the value is
+ * which endpoint has something waiting: one is the control endpoint, and the
+ * numbering is the controller's rather than USB's.
+ */
+        dsb     sy
+        ldr     w9, [x20, #XHCI_DBOFF]
+        and     w9, w9, #0xFFFFFFFC
+        add     x22, x20, w9, uxtw
+        mov     w10, #1
+        str     w10, [x22, w19, uxtw #2]
+        dsb     sy
+
+        mov     w0, #32                         /* a transfer event */
+        bl      xhci_wait
+        cmn     w0, #1
+        b.eq    9f
+/*
+ * Success, or a short packet. Short is not a failure here: a device that sent
+ * fewer bytes than were asked for has still answered, and refusing that would
+ * refuse every device whose descriptor is shorter than the maximum.
+ */
+        LEA     x9, xhci_last
+        ldr     w9, [x9, #8]
+        lsr     w9, w9, #24
+        cmp     w9, #1
+        b.eq    8f
+        cmp     w9, #13
+        b.ne    9f
+8:      mov     w0, #0
+        b       10f
+9:      mov     w0, #-1
+10:     ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * xhci_command - w0 = the TRB type and flags, x1 = a parameter, w2 = a slot.
+ *   out w0 = the completion code, or -1 if nothing came back.
+ *
+ * One place for every command, because the shape is always the same and the
+ * part that is easy to get wrong - ring the right doorbell, wait for the right
+ * event, read the code out of the right byte - is the part that does not vary.
+ */
+xhci_command:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        str     x23, [sp, #48]
+        mov     w19, w0
+        mov     x20, x1
+        mov     w21, w2
+
+        bl      SYM(xhci_find)
+        cbz     x0, 9f
+        mov     x22, x0
+
+        LEA     x9, xhci_put
+        ldr     x23, [x9]
+        str     x20, [x23]
+        str     wzr, [x23, #8]
+        orr     w10, w19, #TRB_CYCLE
+        orr     w10, w10, w21, lsl #24          /* which slot, where it matters */
+        str     w10, [x23, #12]
+        add     x23, x23, #TRB_SZ
+        str     x23, [x9]
+
+        dsb     sy
+        ldr     w9, [x22, #XHCI_DBOFF]
+        and     w9, w9, #0xFFFFFFFC
+        add     x9, x22, w9, uxtw
+        str     wzr, [x9]
+        dsb     sy
+
+        mov     w0, #TRB_CMD_DONE
+        bl      xhci_wait
+        cmn     w0, #1
+        b.eq    9f
+        LEA     x9, xhci_last
+        ldr     w9, [x9, #8]
+        lsr     w0, w9, #24                     /* the completion code */
+        cmp     w0, #1
+        b.ne    9f
+        b       10f
+9:      mov     w0, #-1
+10:     ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * xhci_ctxsize - out w0 = 32 or 64, whichever this controller uses.
+ *
+ * A context is one size or the other and the controller says which, in a
+ * single bit. Guessing puts every field after the first one at the wrong
+ * offset, which the controller reads as a device on a port that does not
+ * exist, at a speed that is not a speed.
+ */
+xhci_ctxsize:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      SYM(xhci_find)
+        cbz     x0, 9f
+        ldr     w0, [x0, #0x10]                 /* HCCPARAMS1 */
+        tbz     w0, #2, 9f                      /* CSZ */
+        mov     w0, #64
+        b       8f
+9:      mov     w0, #32
+8:      ldp     x29, x30, [sp], #16
+        ret
 
 /*
  * xhci_attached - out w0 = how many root ports have something plugged in.
@@ -636,6 +1126,8 @@ s_xhci_dt:  .asciz "generic-xhci"
         .p2align 3
 xhci_base:   .space 8
 xhci_next:   .space 8                   /* where the next event will appear */
+xhci_last:   .space 16                  /* and the one that just did, whole */
+xhci_intr:   .space 8                   /* interrupter zero's registers */
 xhci_put:    .space 8                   /* where the next command goes */
 xhci_looked: .space 4
 xhci_cycle:  .space 4                   /* which cycle bit says an event is new */
@@ -654,3 +1146,21 @@ xhci_cmd:    .space (RING_TRBS * TRB_SZ)
 xhci_evt:    .space (RING_TRBS * TRB_SZ)
         .p2align 6
 xhci_erst:   .space 64
+        .p2align 6
+xhci_input:  .space (33 * 64)           /* what we tell the controller */
+        .p2align 6
+xhci_devctx: .space (32 * 64)           /* what it tells us back */
+        .p2align 6
+xhci_ep0:    .space (RING_TRBS * TRB_SZ)
+        .p2align 6
+xhci_desc:   .space 32                  /* what the device says it is */
+        .p2align 3
+xhci_ep0put: .space 8
+        .globl  SYM(xhci_vendor)
+        .globl  SYM(xhci_product)
+        .globl  SYM(xhci_class)
+SYM(xhci_vendor):  .space 4
+SYM(xhci_product): .space 4
+SYM(xhci_class):   .space 4
+        .globl  SYM(xhci_stage)
+SYM(xhci_stage):   .space 4
