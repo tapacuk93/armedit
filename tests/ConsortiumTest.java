@@ -156,6 +156,44 @@ public class ConsortiumTest {
         ok(Consensus.AGREE == 1,
            "one person is enough to be considered");
 
+        // --- reading a poll: several models, kept apart
+        //
+        // The panel comes from aicoin's own consortium endpoint now, in the
+        // mode that does not merge. Merging would be fatal here rather than
+        // merely lossy: a verdict is a count of who said what, and a paragraph
+        // written by an editor has nobody in it to count.
+        String poll = """
+                {"answer":"","settled":false,"stopped_reason":"polled","rounds":0,
+                 "answers":[
+                   {"provider":"anthropic","model":"claude-sonnet-5",
+                    "text":"VERDICT: COMMIT\\nWHY: it declines what it should"},
+                   {"provider":"openai","model":"gpt-5",
+                    "text":"VERDICT: HOLD\\nWHY: the pattern is too broad"}]}""";
+        var said = Aicoin.answers(poll);
+        ok(said.size() == 2, "both answers are read out");
+        ok(said.get(0).member().equals("anthropic/claude-sonnet-5"),
+           "...each attributed to the model that gave it");
+        ok(Consortium.read(said.get(0).member(), said.get(0).text()).commit()
+           && !Consortium.read(said.get(1).member(), said.get(1).text()).commit(),
+           "...and they can disagree, which is the point of not merging");
+
+        // The case that breaks anything matching balanced braces: these answers
+        // are code reviews, and code reviews contain braces and quoted strings.
+        String awkward = """
+                {"answers":[{"provider":"a","model":"m","text":"VERDICT: HOLD\\nWHY: \
+                the line `if (x) { return \\"\\"; }` never runs"}]}""";
+        var messy = Aicoin.answers(awkward);
+        ok(messy.size() == 1, "an answer full of braces and quotes is still one answer");
+        ok(messy.get(0).text().contains("{ return"),
+           "...and survives with its braces intact");
+        ok(messy.get(0).text().contains("\"\""),
+           "...and its quotes");
+
+        ok(Aicoin.answers("{\"answer\":\"merged prose\",\"rounds\":2}").isEmpty(),
+           "a reply with no answers array yields no votes, rather than one bad one");
+        ok(Aicoin.answers("{\"answers\":[{\"provider\":\"a\",\"model\":\"m\",\"text\":\"\"}]}").isEmpty(),
+           "and a panelist that said nothing is not a member who voted");
+
         System.exit(fails == 0 ? 0 : 1);
     }
 

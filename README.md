@@ -241,6 +241,18 @@ bad at the world having moved since it was trained. That is why the appeal asks
 whether an objection is *correct* rather than merely specific, and why claims
 about the world get checked by making the call.
 
+**Where the panel comes from.** The models are aicoin's, and so is the panel:
+`POST /consortium` in `mode: "poll"` — one request, one turn per panelist, every
+answer returned attributed and unmerged. That mode was added to aicoin for this;
+the endpoint's other two shapes both end in a single merged answer, which is
+right for prose and fatal for a vote, because a paragraph an editor wrote has
+nobody in it to count. armedit used to fan out to each model itself and keep its
+own list of which ones were reachable — a copy of something the proxy already
+knows, going quietly out of date. What stayed on this side is what the answers
+*mean*: the quorum, the appeal, whether a hold was agreed or split. If the proxy
+has no poll to offer — an older one, or the endpoint switched off — the old
+fan-out still runs.
+
 ### Three answers, not two
 
 A review can say yes, no, or *we could not settle it*, and the code used to hear

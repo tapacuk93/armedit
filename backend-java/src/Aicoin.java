@@ -143,6 +143,100 @@ final class Aicoin {
         return extract(res.body());
     }
 
+    /** One panelist's answer to a poll, exactly as it gave it. */
+    record Said(String provider, String model, String text) {
+        String member() { return provider + "/" + model; }
+    }
+
+    /**
+     * Ask every model the proxy fronts the same question, separately.
+     *
+     * This is aicoin's own consortium endpoint in `poll` mode: one request, one
+     * turn per panelist, and every answer returned attributed and unmerged. It
+     * replaces the fan-out this file used to do by hand - a thread pool over
+     * askDirect, one HTTP call per model, and a bench this side had to keep in
+     * step with what the proxy could actually reach.
+     *
+     * The panel is the proxy's business now, which is the point: it knows which
+     * providers have keys and which models are current, and a list kept here
+     * was a copy of that going quietly out of date. What this side still owns
+     * is what the answers mean - see Consortium.
+     *
+     * Poll rather than the default shape on purpose. The default merges every
+     * answer into one and reviews it, which is right for prose and destroys a
+     * vote: a gate that has to tell "everyone refused" from "the panel was
+     * split" cannot read that out of a merged paragraph.
+     */
+    java.util.List<Said> poll(String wallet, String prompt, int maxTokens) throws Exception {
+        String body = """
+                {"prompt":"%s","mode":"poll"}""".formatted(Json.escape(prompt));
+        var req = HttpRequest.newBuilder(base.resolve("/consortium"))
+                .timeout(Duration.ofMinutes(8))
+                .header("Content-Type", "application/json")
+                .header("X-Api-Key", wallet)
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        var res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() == 404) {
+            // The endpoint is off, or this proxy predates it. Not an error the
+            // caller should turn into a verdict: it means "ask the old way".
+            throw new NoPoll("this proxy has no consortium endpoint");
+        }
+        if (res.statusCode() / 100 != 2) {
+            throw new IllegalStateException(
+                    "aicoin %d: %s".formatted(res.statusCode(), trim(res.body())));
+        }
+        return answers(res.body());
+    }
+
+    /** Thrown when the proxy has no poll to offer, so the caller can fall back. */
+    static final class NoPoll extends Exception {
+        NoPoll(String why) { super(why); }
+    }
+
+    /**
+     * The answers out of a poll's reply.
+     *
+     * Written out rather than regexed because the text is arbitrary: an answer
+     * containing a brace or a quoted string breaks any pattern that treats
+     * objects as balanced braces, and the answers here are code reviews, which
+     * contain both. So the scan tracks whether it is inside a string, the same
+     * way the escape-aware reader in Json does.
+     */
+    static java.util.List<Said> answers(String json) {
+        var out = new java.util.ArrayList<Said>();
+        int at = json.indexOf("\"answers\":[");
+        if (at < 0) return out;
+        at += "\"answers\":[".length();
+        int depth = 0, start = -1;
+        boolean inString = false, escaped = false;
+        for (int i = at; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; continue; }
+            if (c == '{') { if (depth++ == 0) start = i; continue; }
+            if (c == '}') {
+                if (--depth == 0 && start >= 0) {
+                    var one = Json.parse(json.substring(start, i + 1));
+                    String text = one.get("text");
+                    if (text != null && !text.isBlank()) {
+                        out.add(new Said(one.getOrDefault("provider", "?"),
+                                one.getOrDefault("model", "?"), text));
+                    }
+                    start = -1;
+                }
+                continue;
+            }
+            if (c == ']' && depth == 0) break;
+        }
+        return out;
+    }
+
     /**
      * Pull the reply text out. Providers disagree about where it lives, so try
      * each shape rather than assume one.

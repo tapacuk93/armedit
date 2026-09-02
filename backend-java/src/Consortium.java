@@ -234,6 +234,39 @@ final class Consortium {
      * @param question the whole prompt, identical for every member
      */
     Verdict decide(String wallet, String subject, String question) {
+        String prompt = question + "\n" + FORMAT;
+
+        /*
+         * The proxy's own panel, polled.
+         *
+         * It knows which providers have keys and which model ids are current;
+         * the bench below is this side's copy of that, and a copy goes out of
+         * date silently. So the poll is tried first and the fan-out is what
+         * happens when the proxy has no poll to offer.
+         *
+         * Poll and not the endpoint's default shape: the default merges every
+         * answer into one and reviews it, which is right for prose and useless
+         * here. A verdict needs the members kept apart - see divided().
+         */
+        try {
+            var said = aicoin.poll(wallet, prompt, CAP);
+            if (said.size() >= QUORUM) {
+                var polled = new ArrayList<Vote>();
+                for (var one : said) polled.add(read(one.member(), one.text()));
+                return weigh(wallet, question, polled, said.size());
+            }
+            /*
+             * Too few came back to be a consortium. Falling through rather than
+             * failing: the fan-out reaches models by name and may find a quorum
+             * where the panel the proxy assembled did not.
+             */
+        } catch (Aicoin.NoPoll absent) {
+            /* an older proxy, or the endpoint turned off; ask the old way */
+        } catch (Exception x) {
+            System.out.printf("armedit: the consortium endpoint did not answer (%s); "
+                    + "asking each model instead%n", x);
+        }
+
         var seats = bench();
         if (seats.size() < QUORUM) {
             return new Verdict(false,
@@ -242,7 +275,6 @@ final class Consortium {
                     List.of(), List.of());
         }
 
-        String prompt = question + "\n" + FORMAT;
         var jobs = new ArrayList<Callable<Vote>>();
         for (var seat : seats) {
             jobs.add(() -> {
@@ -271,6 +303,18 @@ final class Consortium {
             return new Verdict(false, "the sitting was interrupted", votes, List.of());
         }
 
+        return weigh(wallet, question, votes, seats.size());
+    }
+
+    /**
+     * What a set of separate answers adds up to.
+     *
+     * Shared by both ways of getting them, because the counting is the part
+     * that is this project's business: how many answered, whether anybody
+     * objected, whether an objection survives being questioned. Where the
+     * answers came from is transport.
+     */
+    private Verdict weigh(String wallet, String question, List<Vote> votes, int asked) {
         int counted = 0, against = 0;
         var changes = new ArrayList<String>();
         var objections = new ArrayList<String>();
@@ -287,7 +331,7 @@ final class Consortium {
         if (counted < QUORUM) {
             return new Verdict(false,
                     "%d of %d members answered; below the quorum of %d"
-                            .formatted(counted, seats.size(), QUORUM),
+                            .formatted(counted, asked, QUORUM),
                     votes, changes);
         }
         if (against > 0) {
@@ -306,10 +350,10 @@ final class Consortium {
             }
             return new Verdict(true,
                     "%d of %d members; %d objection(s) put back to the others and overruled"
-                            .formatted(counted, seats.size(), against),
+                            .formatted(counted, asked, against),
                     votes, changes);
         }
-        return new Verdict(true, "%d of %d members, unanimous".formatted(counted, seats.size()),
+        return new Verdict(true, "%d of %d members, unanimous".formatted(counted, asked),
                 votes, changes);
     }
 
