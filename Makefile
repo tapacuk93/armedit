@@ -264,6 +264,41 @@ vz: $(B)/vzrun $(B)/kernel.img
 # A reference: boot somebody else's kernel under the same host and see whether
 # the framework's console carries anything. It does - which is how we know the
 # silence is ours. Needs a distribution vmlinuz; see tools/refkernel.py.
+# armedit as an EFI application, and a disk for the firmware to find it on.
+#
+# This is the way into the Virtualization framework: EFI firmware brings up a
+# console and a framebuffer itself and hands them to an application, so a guest
+# can say something before it knows what it is running on - which the virtio
+# console on that machine will not let it do.
+EFI_OBJ := $(B)/efi/efi.obj
+
+$(B)/efi/%.obj: boot/%.S
+	@mkdir -p $(dir $@)
+	$(CC) -target aarch64-unknown-windows -ffreestanding -c $< -o $@
+
+$(B)/BOOTAA64.EFI: $(EFI_OBJ)
+	lld-link -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ $(EFI_OBJ)
+
+.PHONY: efi
+efi: $(B)/esp.img
+
+# A FAT volume with /EFI/BOOT/BOOTAA64.EFI on it, which is where EFI looks.
+$(B)/esp.img: $(B)/BOOTAA64.EFI tools/mkesp.sh
+	@sh tools/mkesp.sh $(B)/BOOTAA64.EFI $@
+
+$(B)/vzefi: tools/vzefi.swift tools/vz.plist
+	swiftc -O -o $@ tools/vzefi.swift
+	@codesign --entitlements tools/vz.plist -s - $@
+
+$(B)/vzgui: tools/vzgui.swift tools/vz.plist
+	swiftc -O -o $@ tools/vzgui.swift
+	@codesign --entitlements tools/vz.plist -s - $@
+
+# EFI's console is a framebuffer one, so seeing it means having a window.
+.PHONY: vz-efi
+vz-efi: $(B)/vzgui $(B)/esp.img
+	$(B)/vzgui $(B)/esp.img
+
 .PHONY: vz-reference
 vz-reference: $(B)/vzrun
 	@test -n "$(VMLINUZ)" || (echo "give it a kernel: make vz-reference VMLINUZ=path"; exit 1)

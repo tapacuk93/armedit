@@ -30,3 +30,8 @@ workspaces/
 # the editor can answer without a network. Committed with their source and the
 # votes that approved them.
 !ops/*.bin
+
+# The EFI system disk is fifty megabytes of mostly nothing, rebuilt by
+# tools/mkesp.sh whenever the application changes.
+*.img
+*.dmg

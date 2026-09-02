@@ -112,6 +112,20 @@ over several seconds. Nothing. So a notification is not being *lost* - the
 device is not acting on this queue at all, which is a stronger statement and
 removes the last hypothesis this investigation had.
 
+## Routed around
+
+EFI. The framework will boot a guest through its own firmware, which brings up
+a console and a framebuffer itself and hands them to an application - so a
+guest can print before it knows what it is running on, and before it needs a
+virtio driver at all.
+
+`make vz-efi` does it, and it works: "armedit: EFI console is alive" on the
+screen of a machine that had never carried a byte.
+
+That does not solve the virtio console, and the notes above stand for whoever
+picks it up. It does mean the framework is usable as a test bed regardless,
+which is all it was ever needed for.
+
 ## What to try next
 
 Read Linux's `virtio_ring.c` packed path and `virtio_console.c` initialisation
