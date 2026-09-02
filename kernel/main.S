@@ -62,7 +62,22 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_BLIND
+#ifdef ARMEDIT_PROBE_DATA
+        movz    w0, #0x1044             /* entropy: did it write real bytes? */
+        bl      SYM(vpci_selftest)
+        cbz     w0, 1f
+        bl      SYM(vpci_stbyte)
+        cbz     w0, 1f                  /* still zero: nothing was transferred */
+#elif defined(ARMEDIT_PROBE_RXDATA)
+        mov     w0, #0                  /* console zero */
+        mov     w1, #0                  /* its receive queue */
+        mov     w2, #1                  /* device-writable */
+        bl      vcon_qtest
+        cbz     w0, 1f
+        bl      vcon_rxbyte
+        cmp     w0, #'h'                /* the host feeds "hello from the host" */
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_BLIND)
 /*
  * Transmit and do not wait.
  *

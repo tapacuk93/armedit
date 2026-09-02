@@ -474,6 +474,13 @@ SYM(vpci_qsize_of):
 9:      mov     w0, #0
         ret
 
+/* vpci_stbyte - out w0 = the first byte of the selftest buffer. */
+        .globl  SYM(vpci_stbyte)
+SYM(vpci_stbyte):
+        LEA     x9, st_buf
+        ldrb    w0, [x9]
+        ret
+
 /* vpci_mult - out w0 = the notification multiplier the device declared. */
         .globl  SYM(vpci_mult)
 SYM(vpci_mult):
