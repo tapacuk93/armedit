@@ -284,7 +284,20 @@ platform_getc:
         cbz     w9, 1f
         bl      kbd_getc
         b       2f
-1:      bl      uart_key
+/*
+ * No virtio keyboard. A USB one, if this machine turned out to have one, and
+ * the serial line otherwise.
+ *
+ * In that order because of which machine each belongs to. The target has no
+ * virtio anything and no serial port anybody can reach; a keyboard on it is a
+ * USB keyboard, and this is the branch that will be taken there. The serial
+ * line stays last because it is what QEMU offers and what a board with a
+ * header offers, and it costs nothing to keep.
+ */
+1:      bl      SYM(xhci_key)
+        cmn     w0, #1
+        b.ne    2f
+        bl      uart_key
 2:      ldp     x29, x30, [sp], #16
         ret
 

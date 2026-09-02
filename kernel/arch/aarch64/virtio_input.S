@@ -357,13 +357,13 @@ kbd_next:
         b       .Lkg_out
 
 .Lkg_shift:
-        LEA     x9, kbd_shift
+        LEA     x9, SYM(kbd_shift)
         cmp     w22, #0
         cset    w10, ne
         str     w10, [x9]
         b       .Lkg_next
 .Lkg_cmd:
-        LEA     x9, kbd_cmd
+        LEA     x9, SYM(kbd_cmd)
         cmp     w22, #0
         cset    w10, ne
         str     w10, [x9]
@@ -459,7 +459,8 @@ kbd_getc:
  * The table is the unshifted character for each code; shift picks the second
  * table. Codes past the end of both are keys this editor has no use for.
  */
-kbd_translate:
+        .globl  SYM(kbd_translate)
+SYM(kbd_translate):
         mov     w9, w0
         mov     w10, #103                       /* the arrows and the edges */
         cmp     w9, w10
@@ -508,7 +509,7 @@ kbd_translate:
         b.hs    .Lkt_no
         LEA     x10, keymap_plain
         LEA     x11, keymap_shift
-        LEA     x12, kbd_shift
+        LEA     x12, SYM(kbd_shift)
         ldr     w12, [x12]
         cbz     w12, 10f
         mov     x10, x11
@@ -516,11 +517,11 @@ kbd_translate:
         cbz     w0, .Lkt_no
 
 .Lkt_mods:
-        LEA     x9, kbd_cmd
+        LEA     x9, SYM(kbd_cmd)
         ldr     w9, [x9]
         cbz     w9, 1f
         orr     w0, w0, #MOD_CMD
-1:      LEA     x9, kbd_shift
+1:      LEA     x9, SYM(kbd_shift)
         ldr     w9, [x9]
         cbz     w9, 2f
         mov     w10, #0x100                     /* only the named keys carry */
@@ -584,5 +585,7 @@ kring_tail:     .space 4
 kbd_dev:        .space 8
 kbd_qsize:      .space 4
 kbd_last:       .space 4
-kbd_shift:      .space 4
-kbd_cmd:        .space 4
+        .globl  SYM(kbd_shift)
+SYM(kbd_shift):      .space 4
+        .globl  SYM(kbd_cmd)
+SYM(kbd_cmd):        .space 4

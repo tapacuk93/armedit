@@ -347,7 +347,21 @@ SYM(report_show):
         LEA     x9, SYM(xhci_class)
         ldr     w0, [x9]
         bl      report_dec
-        bl      report_nl
+
+/*
+ * And whether it is something this machine can be typed at with.
+ *
+ * A device descriptor says what a device is made by, not what it does - a
+ * keyboard reports class zero, meaning "look at the interfaces". So this is
+ * the line that answers the question the machine actually has: can anybody
+ * use it.
+ */
+        LEA     x9, SYM(xhci_kbdslot)
+        ldr     w9, [x9]
+        cbz     w9, 25f
+        LEA     x0, m_iskbd
+        bl      report_puts
+25:     bl      report_nl
 20:
 
 /* And whether anybody can type at it, which decides what happens next. */
@@ -533,6 +547,7 @@ m_device:   .asciz "  usb device    "
 m_colon:    .asciz ":"
 m_stopped:  .asciz "stopped at step "
 m_class:    .asciz " class "
+m_iskbd:    .asciz ", a keyboard"
 m_keyboard: .asciz "  keyboard      "
 m_wdt:      .asciz "watchdog at "
 m_hvc:      .asciz "psci, hvc"

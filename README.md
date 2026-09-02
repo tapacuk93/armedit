@@ -785,7 +785,46 @@ that: a keyboard reports `0627:0001 class 0`, and a USB Ethernet adapter reports
 `0525:a4a2 class 2` — a different maker, a different product, and class 2 is
 Communications, which is the road to a network on bare metal.
 
-Three bugs, all of the same family — something that looked like the hardware
+Then the configuration descriptor, which is not one descriptor: it is a header
+saying how many bytes follow, and then a run of descriptors of different kinds
+packed end to end, each beginning with its own length. Walking by that length is
+the only way through, because the kinds are not fixed, the order is not fixed,
+and a device may put things in the middle nobody else has heard of. Inside it
+is an interface of class 3, subclass 1, protocol 1 — a boot keyboard — and the
+interrupt endpoint after it. Set the configuration, tell the controller about
+the endpoint, ask for boot protocol, and the device starts reporting.
+
+Boot protocol rather than parsing the report descriptor, which is a small stack
+language and a real piece of work. This is the code that has to work on a machine
+where nothing else does, and a report-descriptor parser is a lot of surface to be
+wrong on the day the screen is the only output. A boot keyboard sends eight fixed
+bytes and every keyboard that claims boot support sends exactly those.
+
+The translation is the virtio keyboard's — same tables, same shift handling, same
+editor key codes. Only the numbering differs, so only the numbering is converted.
+Two layouts would be two things to keep in step, and they would disagree the
+first time somebody added a key to one of them.
+
+`make machine` asserts **parity**, not a number: the same text typed on a virtio
+keyboard and on a USB one must put the same ink on the screen. The interesting
+failure is not "nothing arrives", which is obvious — it is "most of it arrives",
+which reads as a keyboard that works and is merely unreliable.
+
+Which is exactly what happened. Twelve characters produced two. The event ring's
+dequeue pointer was being written to the interrupter's first register instead of
+to `ERDP` at `+0x18`, so the controller never saw the ring being emptied and
+stopped with *Event Ring Full* after sixteen events — which is two keys, after
+enumeration has used the rest. The symptom was a keyboard that typed a little and
+then went quiet, and nothing about it pointed at an offset. It took reading the
+completion code out of the Host Controller Event to see the controller saying so
+in as many words.
+
+Before that, the endpoint's context was being written one context early, over the
+top of the endpoint below it. The controller accepted the Configure Endpoint
+command and then polled a ring nobody was filling — a keyboard that enumerates
+perfectly and produces nothing.
+
+Three earlier bugs, all of the same family — something that looked like the hardware
 refusing. A four-byte flag declared between two pointers put the second on a
 four-byte boundary, and with the MMU off a 64-bit store there is an alignment
 fault. Resetting a port produces a Port Status Change event, which arrives

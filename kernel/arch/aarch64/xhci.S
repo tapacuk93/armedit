@@ -72,6 +72,24 @@
 #define STS_CNR         (1 << 11)       /* controller not ready */
 #define PORTSC_CCS      (1 << 0)        /* something is plugged in */
 
+/*
+ * How far the key table runs: eighty-three entries, ending at the up arrow.
+ * Written out rather than computed from the labels, because a label difference
+ * is not something the assembler will fold into a compare immediate - and
+ * because getting it wrong reads one byte past a table into whatever follows,
+ * which is a key nobody pressed.
+ */
+/*
+ * How many places the controller is given to write into, and how many are kept
+ * outstanding. Eight and six: enough that a burst of typing between two polls
+ * of the idle loop has somewhere to land, and small enough to sit in a ring of
+ * sixteen with room for the link entry that closes it.
+ */
+#define REPORTS_N       8
+#define REPORTS_OUT     6
+
+#define HID_LAST_N      83
+
 #define XHCI_CLASS      0x0C0330        /* serial bus, USB, xHCI interface */
 
         CODE
@@ -605,7 +623,16 @@ xhci_event:
                                                    made every event look like a
                                                    different one */
         orr     x0, x20, #(1 << 3)              /* Event Handler Busy */
-        mov     x1, x9
+        add     x1, x9, #0x18                   /* ERDP, which is where in the
+                                                   interrupter this goes - it
+                                                   was being written to the
+                                                   interrupter's first register
+                                                   instead, so the controller
+                                                   never saw the ring being
+                                                   emptied and stopped with
+                                                   Event Ring Full after
+                                                   sixteen events, which is two
+                                                   keys */
         bl      xhci_put64
         mov     w0, w21
         b       8f
@@ -834,7 +861,10 @@ SYM(xhci_enumerate):
         mov     w0, #7                          /* asking what it is */
         bl      xhci_step
         mov     w0, w26
-        bl      xhci_descriptor
+        movz    w1, #0x0100                     /* the device descriptor */
+        LEA     x2, xhci_desc
+        mov     w3, #18
+        bl      xhci_ask
         cmn     w0, #1
         b.eq    .Lxe_fail
 
@@ -853,6 +883,21 @@ SYM(xhci_enumerate):
         LEA     x11, SYM(xhci_product)
         str     w10, [x11]
 
+/*
+ * And if it might be something to type on, set it up to be.
+ *
+ * A device descriptor's class is zero on every keyboard ever made: it means
+ * "the interfaces say what this is", and the interfaces are in the
+ * configuration descriptor. So this is tried on anything that has not already
+ * declared itself something else, and failing is ordinary - a mouse gets this
+ * far and then has no boot keyboard interface in it.
+ */
+        LEA     x9, SYM(xhci_class)
+        ldr     w9, [x9]
+        cbnz    w9, 1f
+        mov     w0, w26
+        bl      SYM(xhci_keyboard)
+1:
         mov     w0, #0
         bl      xhci_step
         mov     w0, #0
@@ -866,6 +911,513 @@ SYM(xhci_enumerate):
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #96
+        ret
+
+/*
+ * xhci_keyboard - w0 = the slot. Set the device up to report key presses.
+ *   out w0 = 0 if it will, -1 if it will not.
+ *
+ * <h2>What a configuration descriptor is</h2>
+ *
+ * Not one descriptor. It is a header saying how many bytes follow, and then
+ * those bytes are a run of descriptors of different kinds packed end to end -
+ * interfaces, endpoints, and class-specific ones this kernel does not
+ * understand. Each begins with its own length, and walking by that length is
+ * the only way through: the kinds are not fixed, their order is not fixed, and
+ * a device is allowed to put things in the middle that nobody else has heard
+ * of.
+ *
+ * <h2>Why the boot protocol</h2>
+ *
+ * A HID device describes its own report format in a report descriptor, which
+ * is a small stack language, and parsing it is a real piece of work. The boot
+ * protocol exists so that a machine which has not got that far can still be
+ * typed at: a keyboard in boot protocol sends eight fixed bytes - modifiers,
+ * a reserved byte, and up to six keys held down - and every keyboard that
+ * claims boot support sends exactly that.
+ *
+ * It is the right thing here for a second reason. This is the code that has to
+ * work on a machine with nothing else working, and a report-descriptor parser
+ * is a lot of surface to be wrong on the day the screen is the only output.
+ */
+        .globl  SYM(xhci_keyboard)
+SYM(xhci_keyboard):
+        stp     x29, x30, [sp, #-96]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        str     x27, [sp, #80]
+        mov     w19, w0
+
+        mov     w0, #8                          /* reading the configuration */
+        bl      xhci_step
+
+/* The header first, because it says how much there is. */
+        mov     w0, w19
+        movz    w1, #0x0200
+        LEA     x2, xhci_cfg
+        mov     w3, #9
+        bl      xhci_ask
+        cmn     w0, #1
+        b.eq    .Lxk_fail
+
+        LEA     x9, xhci_cfg
+        ldrb    w10, [x9, #2]
+        ldrb    w11, [x9, #3]
+        orr     w20, w10, w11, lsl #8           /* how many bytes in total */
+        cmp     w20, #256
+        b.ls    1f
+        mov     w20, #256                       /* more than we keep; take what
+                                                   fits - the interface we want
+                                                   is at the front of every
+                                                   keyboard ever made */
+1:      mov     w0, w19
+        movz    w1, #0x0200
+        LEA     x2, xhci_cfg
+        mov     w3, w20
+        bl      xhci_ask
+        cmn     w0, #1
+        b.eq    .Lxk_fail
+
+        LEA     x9, xhci_cfg
+        ldrb    w21, [x9, #5]                   /* which configuration this is */
+
+/*
+ * Walk it. Interfaces first: a boot keyboard is class 3, subclass 1, protocol
+ * 1, and the endpoint that follows it is the one that will carry key presses.
+ */
+        mov     w22, #0                         /* the interface, once found */
+        mov     w23, #0                         /* its endpoint address */
+        mov     w24, #0                         /* and how big its packets are */
+        mov     w25, #0                         /* have we found the interface? */
+        mov     w26, #9                         /* where we are in the bytes */
+2:      cmp     w26, w20
+        b.hs    3f
+        LEA     x9, xhci_cfg
+        add     x9, x9, w26, uxtw
+        ldrb    w10, [x9]                       /* this descriptor's length */
+        cbz     w10, 3f
+        ldrb    w11, [x9, #1]                   /* and its kind */
+
+        cmp     w11, #4                         /* an interface */
+        b.ne    4f
+        ldrb    w12, [x9, #5]
+        cmp     w12, #3                         /* human interface device */
+        b.ne    5f
+        ldrb    w12, [x9, #6]
+        cmp     w12, #1                         /* which supports boot */
+        b.ne    5f
+        ldrb    w12, [x9, #7]
+        cmp     w12, #1                         /* as a keyboard */
+        b.ne    5f
+        ldrb    w22, [x9, #2]                   /* this one */
+        mov     w25, #1
+        b       6f
+5:      mov     w25, #0                         /* some other interface; its
+                                                   endpoints are not ours */
+        b       6f
+
+4:      cmp     w11, #5                         /* an endpoint */
+        b.ne    6f
+        cbz     w25, 6f                         /* not under our interface */
+        ldrb    w12, [x9, #2]
+        tbz     w12, #7, 6f                     /* must carry data to us */
+        ldrb    w13, [x9, #3]
+        and     w13, w13, #3
+        cmp     w13, #3                         /* and must be an interrupt */
+        b.ne    6f
+        mov     w23, w12
+        ldrb    w12, [x9, #4]
+        ldrb    w13, [x9, #5]
+        orr     w24, w12, w13, lsl #8
+        b       3f                              /* found both; stop looking */
+
+6:      add     w26, w26, w10
+        b       2b
+3:      cbz     w23, .Lxk_fail
+
+/*
+ * Choose the configuration. Until this is done the device is addressed and
+ * has no endpoints beyond the control one - it is listening and has nothing
+ * to say.
+ */
+        mov     w0, #9                          /* choosing a configuration */
+        bl      xhci_step
+        LEA     x9, xhci_req
+        strb    wzr, [x9]                       /* OUT, standard, to the device */
+        mov     w10, #9                         /* SET_CONFIGURATION */
+        strb    w10, [x9, #1]
+        strb    w21, [x9, #2]
+        strb    wzr, [x9, #3]
+        strb    wzr, [x9, #4]
+        strb    wzr, [x9, #5]
+        strb    wzr, [x9, #6]
+        strb    wzr, [x9, #7]
+        mov     w0, w19
+        mov     x1, #0
+        mov     w2, #0
+        bl      SYM(xhci_control)
+        cmn     w0, #1
+        b.eq    .Lxk_fail
+
+/*
+ * And tell the controller about the endpoint, which is a separate thing from
+ * the device knowing about it: the device is configured, and the controller
+ * still has no ring to put its reports on.
+ *
+ * The index is the controller's, not USB's: endpoint N carrying data to the
+ * host is 2N+1, because the two directions of one number are two endpoints
+ * here and the control endpoint is one.
+ */
+        mov     w0, #10                         /* configuring the endpoint */
+        bl      xhci_step
+        and     w27, w23, #0xF
+        lsl     w27, w27, #1
+        add     w27, w27, #1                    /* its index */
+
+        LEA     x0, xhci_input
+        mov     x1, #(33 * 64)
+        bl      xhci_zero
+        LEA     x0, xhci_intring
+        mov     x1, #(RING_TRBS * TRB_SZ)
+        bl      xhci_zero
+        bl      xhci_ctxsize
+        mov     w9, w0
+
+        LEA     x10, xhci_input
+        mov     w11, #1
+        lsl     w11, w11, w27
+        orr     w11, w11, #1                    /* the slot, which we are changing */
+        str     w11, [x10, #4]
+
+/*
+ * The slot context has to be sent again, and its "context entries" field has
+ * to name the highest endpoint now in use. A controller told about an endpoint
+ * the slot does not admit to having ignores it, and the ring stays silent.
+ */
+        LEA     x12, xhci_devctx
+        add     x10, x10, w9, uxtw
+        ldr     w13, [x12]                      /* as the controller left it */
+        bic     w13, w13, #(0x1F << 27)
+        orr     w13, w13, w27, lsl #27
+        str     w13, [x10]
+        ldr     w13, [x12, #4]
+        str     w13, [x10, #4]
+
+/*
+ * Where this endpoint's context goes.
+ *
+ * The input context is a run of equal-sized contexts: the control one first,
+ * then the slot, then one per endpoint index. So the endpoint with index d
+ * sits at (d + 1) contexts in, and computing it as d put every field one
+ * context early - over the top of the endpoint below it. The controller
+ * accepted the command, and the ring it then polled was the wrong one, which
+ * is a keyboard that enumerates perfectly and produces nothing.
+ */
+        LEA     x10, xhci_input
+        add     w13, w27, #1
+        madd    x10, x9, x13, x10
+        mov     w13, #(7 << 3)                  /* interrupt, carrying to us */
+        orr     w13, w13, #(3 << 1)             /* three errors before giving up */
+        orr     w13, w13, w24, lsl #16          /* its packet size */
+        str     w13, [x10, #4]
+        LEA     x11, xhci_intring
+        orr     x11, x11, #1
+        str     x11, [x10, #8]
+        str     w24, [x10, #16]
+
+/*
+ * Close the interrupt ring with a link back to its start, so that topping it
+ * up for ever does not walk off the end into whatever follows in memory.
+ */
+        LEA     x9, xhci_intring
+        add     x10, x9, #((RING_TRBS - 1) * TRB_SZ)
+        str     x9, [x10]
+        str     wzr, [x10, #8]
+        mov     w11, #(TRB_LINK | TRB_TC)
+        str     w11, [x10, #12]
+
+        LEA     x10, xhci_intput
+        str     x9, [x10]
+        LEA     x10, xhci_intcycle
+        mov     w11, #1
+        str     w11, [x10]
+        LEA     x10, xhci_prod
+        str     wzr, [x10]
+        LEA     x10, xhci_cons
+        str     wzr, [x10]
+        LEA     x10, SYM(xhci_intdci)
+        str     w27, [x10]
+
+        mov     w0, #(12 << 10)                 /* Configure Endpoint */
+        LEA     x1, xhci_input
+        mov     w2, w19
+        bl      xhci_command
+        cmn     w0, #1
+        b.eq    .Lxk_fail
+
+/*
+ * Ask for the boot protocol by name. A keyboard that supports it may still be
+ * in report protocol, and the difference is not cosmetic: the two send
+ * different bytes for the same key.
+ */
+        mov     w0, #11                         /* asking for boot protocol */
+        bl      xhci_step
+        LEA     x9, xhci_req
+        mov     w10, #0x21                      /* OUT, class, to the interface */
+        strb    w10, [x9]
+        mov     w10, #0x0B                      /* SET_PROTOCOL */
+        strb    w10, [x9, #1]
+        strb    wzr, [x9, #2]                   /* boot */
+        strb    wzr, [x9, #3]
+        strb    w22, [x9, #4]                   /* of that interface */
+        strb    wzr, [x9, #5]
+        strb    wzr, [x9, #6]
+        strb    wzr, [x9, #7]
+        mov     w0, w19
+        mov     x1, #0
+        mov     w2, #0
+        bl      SYM(xhci_control)
+        /* A device that refuses this is still usable if it was already in boot
+           protocol, which most are, so the answer is not checked. */
+
+        LEA     x9, SYM(xhci_kbdslot)
+        str     w19, [x9]
+        mov     w0, #0
+        bl      xhci_step
+        mov     w0, #0
+        b       .Lxk_out
+.Lxk_fail:
+        mov     w0, #-1
+.Lxk_out:
+        ldr     x27, [sp, #80]
+        ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #96
+        ret
+
+/*
+ * xhci_key - out w0 = an editor key, or -1 if nobody has pressed one.
+ *
+ * Never waits. It is called from the editor's idle loop, which also blinks a
+ * caret and pumps everything else, so a keyboard that blocked would be a
+ * keyboard that stopped the clock.
+ *
+ * <h2>A report is what is held down, not what was pressed</h2>
+ *
+ * The boot protocol sends eight bytes: modifiers, a byte nobody uses, and up
+ * to six keys currently held. Holding a key sends the same report over and
+ * over, so a reader that returned everything in every report would type one
+ * character a thousand times. What is new is what is in this report and was
+ * not in the last one, which is why the last one is kept.
+ *
+ * <h2>One layout, two sources</h2>
+ *
+ * The translation is the virtio keyboard's - the same tables, the same shift
+ * handling, the same editor key codes. What differs is only the numbering the
+ * hardware uses, so that is all this converts. Two layouts would be two things
+ * to keep in step, and they would disagree the first time somebody added a
+ * key to one of them.
+ */
+        .globl  SYM(xhci_key)
+SYM(xhci_key):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        str     x23, [sp, #48]
+
+        LEA     x9, SYM(xhci_kbdslot)
+        ldr     w19, [x9]
+        cbz     w19, 9f
+
+/* Keep the device supplied with somewhere to write. */
+        bl      xhci_topup
+
+        bl      xhci_event
+        cmn     w0, #1
+        b.eq    9f
+        cmp     w0, #32                         /* a transfer event */
+        b.ne    9f
+
+/*
+ * Which buffer this completion is for. They complete in the order they were
+ * queued, so the oldest outstanding one is the answer and no search is needed.
+ */
+        LEA     x9, xhci_cons
+        ldr     w9, [x9]
+        and     w10, w9, #(REPORTS_N - 1)
+        LEA     x20, xhci_reports
+        add     x20, x20, w10, uxtw #3
+        add     w9, w9, #1
+        LEA     x10, xhci_cons
+        str     w9, [x10]
+
+/*
+ * Modifiers first, because the translation reads them out of the same place
+ * the other keyboard leaves them. Only shift and the command key matter to
+ * this editor; control is the emulator's stand-in for command elsewhere and
+ * is not one here, where there is a real one.
+ */
+        ldrb    w9, [x20]
+        mov     w11, #0x22                      /* either shift; two separate
+                                                   bits are not a logical
+                                                   immediate, so it is a
+                                                   register */
+        tst     w9, w11
+        cset    w10, ne
+        LEA     x11, SYM(kbd_shift)
+        str     w10, [x11]
+        mov     w11, #0x88                      /* either command */
+        tst     w9, w11
+        cset    w10, ne
+        LEA     x11, SYM(kbd_cmd)
+        str     w10, [x11]
+
+/* The first key here that was not in the report before it. */
+        mov     w21, #2
+2:      cmp     w21, #8
+        b.hs    7f
+        ldrb    w22, [x20, w21, uxtw]
+        cbz     w22, 6f
+        mov     w23, #2
+3:      cmp     w23, #8
+        b.hs    4f
+        LEA     x9, xhci_before
+        ldrb    w9, [x9, w23, uxtw]
+        cmp     w9, w22
+        b.eq    6f                              /* still held; not news */
+        add     w23, w23, #1
+        b       3b
+4:      b       5f
+6:      add     w21, w21, #1
+        b       2b
+7:      mov     w22, #0                         /* nothing new in it */
+5:
+        mov     w9, #0                          /* remember it for next time */
+8:      cmp     w9, #8
+        b.hs    10f
+        ldrb    w10, [x20, w9, uxtw]
+        LEA     x11, xhci_before
+        strb    w10, [x11, w9, uxtw]
+        add     w9, w9, #1
+        b       8b
+10:
+        bl      xhci_topup                      /* ready for the next ones */
+        cbz     w22, 9f
+
+        cmp     w22, #HID_LAST_N
+        b.hs    9f
+        LEA     x9, hid_to_linux
+        ldrb    w0, [x9, w22, uxtw]
+        cbz     w0, 9f
+        bl      SYM(kbd_translate)
+        b       11f
+9:      mov     w0, #-1
+11:     ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * xhci_topup - keep several places queued for the device to write into.
+ *
+ * An interrupt endpoint does not push. The controller polls the device at the
+ * interval the endpoint asked for, but only while it has somewhere to put an
+ * answer - so a ring with nothing on it is a keyboard that has stopped.
+ *
+ * One buffer at a time is not enough, and the failure is silent. This is
+ * polled from the editor's idle loop, which also blinks a caret and repaints;
+ * anything typed between a report arriving and the next buffer being queued
+ * has nowhere to go and is dropped. Typing twelve characters at it produced
+ * two, which reads as a keyboard that works and is unreliable rather than one
+ * that is wrong.
+ *
+ * So several are outstanding at once, each with its own buffer, and they
+ * complete in the order they were queued - which is what makes a plain pair of
+ * indices enough to say which buffer a completion belongs to.
+ */
+xhci_topup:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        str     x23, [sp, #48]
+
+        bl      SYM(xhci_find)
+        cbz     x0, 8f
+        mov     x19, x0
+
+        LEA     x9, xhci_prod
+        ldr     w20, [x9]
+        LEA     x9, xhci_cons
+        ldr     w21, [x9]
+
+1:      sub     w9, w20, w21
+        cmp     w9, #REPORTS_OUT
+        b.hs    2f
+
+        LEA     x9, xhci_intput
+        ldr     x22, [x9]
+        LEA     x9, xhci_intcycle
+        ldr     w23, [x9]
+
+        and     w9, w20, #(REPORTS_N - 1)
+        LEA     x10, xhci_reports
+        add     x10, x10, w9, uxtw #3
+        str     x10, [x22]
+        mov     w10, #8
+        str     w10, [x22, #8]
+        movz    w10, #((1 << 10) | (1 << 5))    /* normal, interrupt */
+        orr     w10, w10, w23
+        str     w10, [x22, #12]
+        add     x22, x22, #TRB_SZ
+        add     w20, w20, #1
+
+/*
+ * If that filled the ring up to the link, follow it. The link's own cycle bit
+ * has to be turned over as it is passed, or the controller stops at it
+ * believing the rest has not been written yet.
+ */
+        LEA     x9, xhci_intring
+        add     x10, x9, #((RING_TRBS - 1) * TRB_SZ)
+        cmp     x22, x10
+        b.lo    3f
+        ldr     w11, [x10, #12]
+        bic     w11, w11, #1
+        orr     w11, w11, w23
+        str     w11, [x10, #12]
+        mov     x22, x9
+        eor     w23, w23, #1
+        LEA     x9, xhci_intcycle
+        str     w23, [x9]
+3:      LEA     x9, xhci_intput
+        str     x22, [x9]
+        b       1b
+
+2:      LEA     x9, xhci_prod
+        str     w20, [x9]
+
+        dsb     sy
+        ldr     w9, [x19, #XHCI_DBOFF]
+        and     w9, w9, #0xFFFFFFFC
+        add     x9, x19, w9, uxtw
+        LEA     x10, SYM(xhci_intdci)
+        ldr     w10, [x10]
+        LEA     x11, SYM(xhci_kbdslot)
+        ldr     w11, [x11]
+        str     w10, [x9, w11, uxtw #2]
+        dsb     sy
+
+8:      ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
         ret
 
 /*
@@ -884,69 +1436,87 @@ xhci_step:
         ret
 
 /*
- * xhci_descriptor - w0 = a slot. Fetch eighteen bytes describing the device.
- *   out w0 = 0 if it answered, -1 if it did not.
+ * xhci_control - w0 = a slot, x1 = a buffer or zero, w2 = how many bytes.
+ *   The eight-byte request is in xhci_req, put there by the caller.
+ *   out w0 = 0 if the device answered, -1 if it did not.
  *
  * A control transfer is three entries on the endpoint's own ring and they are
  * not three transfers: the setup stage says what is being asked, the data
- * stage says where the answer goes, and the status stage is the device's
- * acknowledgement that it is finished. Only the last carries Interrupt On
- * Completion, because one event for the whole exchange is what a caller wants
- * and three would have to be counted.
+ * stage says where the answer goes, and the status stage is the acknowledgement
+ * that it is finished. Only the last carries Interrupt On Completion, because
+ * one event for the whole exchange is what a caller wants and three would have
+ * to be counted.
+ *
+ * <h2>Directions, which are the part that is easy to get backwards</h2>
+ *
+ * The setup stage names the transfer type: none, OUT or IN, from whether there
+ * is data and which way the request's own direction bit points. The data stage
+ * repeats it. The status stage is the *opposite* - an exchange that read from
+ * the device is acknowledged by writing to it - and a transfer with no data at
+ * all is acknowledged IN. Getting any of those wrong produces a device that
+ * accepts the request and never completes it, which is the same silence as a
+ * ring at the wrong address.
  */
-xhci_descriptor:
-        stp     x29, x30, [sp, #-64]!
+        .globl  SYM(xhci_control)
+SYM(xhci_control):
+        stp     x29, x30, [sp, #-80]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
-        str     x23, [sp, #48]
+        stp     x23, x24, [sp, #48]
+        str     x25, [sp, #64]
         mov     w19, w0
+        mov     x20, x1
+        mov     w21, w2
 
         bl      SYM(xhci_find)
         cbz     x0, 9f
-        mov     x20, x0
-
-        LEA     x0, xhci_desc
-        mov     x1, #32
-        bl      xhci_zero
+        mov     x22, x0
 
         LEA     x9, xhci_ep0put
-        ldr     x21, [x9]
+        ldr     x23, [x9]
+        LEA     x24, xhci_req
 
-/*
- * The setup stage. Its eight bytes are the request itself and they travel in
- * the TRB rather than in memory the controller must fetch - which is what
- * Immediate Data means and why the length is eight regardless of what is being
- * asked for.
- */
-        mov     w10, #0x0680                    /* IN, standard, GET_DESCRIPTOR */
-        movk    w10, #0x0100, lsl #16           /* the device descriptor */
-        str     w10, [x21]
-        movz    w10, #0x0012, lsl #16           /* eighteen bytes wanted */
-        str     w10, [x21, #4]
-        mov     w10, #8
-        str     w10, [x21, #8]
-        mov     w10, #((2 << 10) | (1 << 6) | 1)  /* setup, immediate, cycle */
-        orr     w10, w10, #(3 << 16)            /* the data stage will be IN */
-        str     w10, [x21, #12]
-        add     x21, x21, #TRB_SZ
+/* Which way this transfer goes, decided once and used three times. */
+        ldrb    w25, [x24]                      /* bmRequestType */
+        mov     w10, #0                         /* no data */
+        cbz     w21, 1f
+        tbnz    w25, #7, 2f
+        mov     w10, #2                         /* to the device */
+        b       1f
+2:      mov     w10, #3                         /* from it */
+1:
+        ldr     w9, [x24]                       /* the request, as it stands */
+        str     w9, [x23]
+        ldr     w9, [x24, #4]
+        str     w9, [x23, #4]
+        mov     w9, #8
+        str     w9, [x23, #8]
+        movz    w9, #((2 << 10) | (1 << 6) | 1) /* setup, immediate, cycle */
+        orr     w9, w9, w10, lsl #16
+        str     w9, [x23, #12]
+        add     x23, x23, #TRB_SZ
 
-        LEA     x10, xhci_desc
-        str     x10, [x21]
-        mov     w10, #18
-        str     w10, [x21, #8]
-        movz    w10, #((3 << 10) | 1)              /* data, cycle */
-        movk    w10, #1, lsl #16                   /* and the direction is IN */
-        str     w10, [x21, #12]
-        add     x21, x21, #TRB_SZ
+        cbz     w21, 3f
+        str     x20, [x23]
+        str     w21, [x23, #8]
+        movz    w9, #((3 << 10) | 1)            /* data, cycle */
+        cmp     w10, #3
+        b.ne    4f
+        movk    w9, #1, lsl #16                 /* and it comes from the device */
+4:      str     w9, [x23, #12]
+        add     x23, x23, #TRB_SZ
 
-        str     xzr, [x21]
-        str     wzr, [x21, #8]
-        mov     w10, #((4 << 10) | (1 << 5) | 1)   /* status, interrupt, cycle */
-        str     w10, [x21, #12]
-        add     x21, x21, #TRB_SZ
+3:      str     xzr, [x23]
+        str     wzr, [x23, #8]
+        movz    w9, #((4 << 10) | (1 << 5) | 1) /* status, interrupt, cycle */
+        cmp     w10, #3
+        b.eq    5f
+        movk    w9, #1, lsl #16                 /* acknowledged the other way */
+5:      str     w9, [x23, #12]
+        add     x23, x23, #TRB_SZ
         LEA     x9, xhci_ep0put
-        str     x21, [x9]
+        str     x23, [x9]
 
 /*
  * Ring the device's own doorbell. There is one per slot, and the value is
@@ -954,11 +1524,11 @@ xhci_descriptor:
  * numbering is the controller's rather than USB's.
  */
         dsb     sy
-        ldr     w9, [x20, #XHCI_DBOFF]
+        ldr     w9, [x22, #XHCI_DBOFF]
         and     w9, w9, #0xFFFFFFFC
-        add     x22, x20, w9, uxtw
+        add     x9, x22, w9, uxtw
         mov     w10, #1
-        str     w10, [x22, w19, uxtw #2]
+        str     w10, [x9, w19, uxtw #2]
         dsb     sy
 
         mov     w0, #32                         /* a transfer event */
@@ -966,9 +1536,9 @@ xhci_descriptor:
         cmn     w0, #1
         b.eq    9f
 /*
- * Success, or a short packet. Short is not a failure here: a device that sent
- * fewer bytes than were asked for has still answered, and refusing that would
- * refuse every device whose descriptor is shorter than the maximum.
+ * Success, or a short packet. Short is not a failure: a device that sent fewer
+ * bytes than were asked for has still answered, and refusing it would refuse
+ * every descriptor shorter than the buffer offered for it.
  */
         LEA     x9, xhci_last
         ldr     w9, [x9, #8]
@@ -980,10 +1550,47 @@ xhci_descriptor:
 8:      mov     w0, #0
         b       10f
 9:      mov     w0, #-1
-10:     ldr     x23, [sp, #48]
+10:     ldr     x25, [sp, #64]
+        ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #64
+        ldp     x29, x30, [sp], #80
+        ret
+
+/*
+ * xhci_ask - w0 = slot, w1 = descriptor type and index, x2 = where, w3 = how
+ * many. A standard GET_DESCRIPTOR, which is most of what is ever asked.
+ */
+xhci_ask:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+        mov     w19, w0
+        mov     x20, x2
+        mov     w21, w3
+
+        LEA     x9, xhci_req
+        mov     w10, #0x80                      /* IN, standard, to the device */
+        strb    w10, [x9]
+        mov     w10, #6                         /* GET_DESCRIPTOR */
+        strb    w10, [x9, #1]
+        strb    w1, [x9, #2]                    /* the index */
+        lsr     w10, w1, #8
+        strb    w10, [x9, #3]                   /* and the type above it */
+        strb    wzr, [x9, #4]
+        strb    wzr, [x9, #5]
+        strb    w21, [x9, #6]
+        lsr     w10, w21, #8
+        strb    w10, [x9, #7]
+
+        mov     w0, w19
+        mov     x1, x20
+        mov     w2, w21
+        bl      SYM(xhci_control)
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /*
@@ -1109,6 +1716,32 @@ SYM(xhci_attached):
         ret
 
         RODATA
+/*
+ * USB says which key by a number of its own, and Linux by another. The tables
+ * that turn a key into a character are the other keyboard's and are indexed
+ * the Linux way, so this is the only thing that has to be converted - one
+ * layout, kept in one place, reached from two kinds of hardware.
+ *
+ * It stops at the arrow keys. Everything past them on a boot keyboard is a
+ * keypad or a function key, and this editor has no use for either.
+ */
+        .p2align 2
+hid_to_linux:
+        .byte 0, 0, 0, 0                                        /* 00-03 */
+        .byte 30, 48, 46, 32, 18, 33, 34, 35, 23, 36            /* a-j    */
+        .byte 37, 38, 50, 49, 24, 25, 16, 19, 31, 20            /* k-t    */
+        .byte 22, 47, 17, 45, 21, 44                            /* u-z    */
+        .byte 2, 3, 4, 5, 6, 7, 8, 9, 10, 11                    /* 1-0    */
+        .byte 28, 1, 14, 15, 57                                 /* enter, esc,
+                                                                   backspace,
+                                                                   tab, space */
+        .byte 12, 13, 26, 27, 43, 0, 39, 40, 41                 /* -=[]\ ;'` */
+        .byte 51, 52, 53, 0                                     /* ,./ caps  */
+        .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0                /* f1-f12    */
+        .byte 0, 0, 0                                           /* print etc */
+        .byte 0, 102, 0, 0, 107, 0                              /* home, end */
+        .byte 106, 105, 108, 103                                /* the arrows */
+
 s_dwc3:     .asciz "snps,dwc3"
 s_xhci_dt:  .asciz "generic-xhci"
 
@@ -1154,6 +1787,24 @@ xhci_devctx: .space (32 * 64)           /* what it tells us back */
 xhci_ep0:    .space (RING_TRBS * TRB_SZ)
         .p2align 6
 xhci_desc:   .space 32                  /* what the device says it is */
+        .p2align 6
+xhci_req:    .space 8                   /* the eight bytes of a request */
+        .p2align 6
+xhci_cfg:    .space 256                 /* the configuration, as it arrived */
+        .p2align 6
+xhci_intring: .space (RING_TRBS * TRB_SZ)
+        .p2align 3
+xhci_intput: .space 8
+        .globl  SYM(xhci_intdci)
+        .globl  SYM(xhci_kbdslot)
+SYM(xhci_intdci):  .space 4
+SYM(xhci_kbdslot): .space 4
+xhci_prod:   .space 4                   /* buffers handed to the controller */
+xhci_cons:   .space 4                   /* and buffers read back out */
+xhci_intcycle: .space 4
+        .p2align 6
+xhci_reports: .space (REPORTS_N * 8)    /* what is held down, several deep */
+xhci_before:  .space 8                  /* and what was, last time */
         .p2align 3
 xhci_ep0put: .space 8
         .globl  SYM(xhci_vendor)

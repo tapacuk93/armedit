@@ -573,8 +573,19 @@ kmain:
  * stack that does not exist yet - starting it would replace the only useful
  * thing on the screen with an empty document that cannot be filled in.
  */
+/*
+ * A USB keyboard, if this machine has one and nothing else to type on.
+ *
+ * Done here rather than in platform_init because it needs the display up: the
+ * whole exchange is six steps and any of them can fail, and where it stopped
+ * is the most useful thing this machine can put on its screen. The report has
+ * been drawn by now, so a failure is legible.
+ */
         bl      platform_haskbd
         cbnz    w0, 1f
+        LEA     x9, SYM(xhci_kbdslot)
+        ldr     w9, [x9]
+        cbnz    w9, 1f
         bl      SYM(report_hold)
 1:
 

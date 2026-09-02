@@ -36,7 +36,7 @@ BUILD = os.path.join(ROOT, "build")
 SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-machine")
 
 FB_AT = 0x50000000
-FG = 0xFF8AE2B8         # console.S draws text in this; nothing else does
+FG = 0x8AE2B8           # console.S and the editor draw text in this
 BG = 0xFF141618
 
 failures = []
@@ -129,6 +129,34 @@ class Machine:
             b = f.read()
         return struct.unpack("<%dI" % (len(b) // 4), b[:len(b) // 4 * 4])
 
+    def lit(self, colour):
+        """How many pixels of one colour are on the screen, from a screendump."""
+        path = os.path.join(SCRATCH, self.name + ".ppm")
+        if os.path.exists(path):
+            os.remove(path)
+        self.cmd("screendump " + path, 2.0)
+        with open(path, "rb") as f:
+            d = f.read()
+        at = 0
+        for _ in range(4):                      # P6, width, height, maxval
+            while d[at:at + 1].isspace():
+                at += 1
+            while not d[at:at + 1].isspace():
+                at += 1
+        at += 1
+        r, g, b = (colour >> 16) & 0xFF, (colour >> 8) & 0xFF, colour & 0xFF
+        px = d[at:]
+        return sum(1 for i in range(0, len(px) - 2, 3)
+                   if px[i] == r and px[i + 1] == g and px[i + 2] == b)
+
+    def cmd(self, text, wait=0.3):
+        self.mon.sendall((text + "\n").encode())
+        time.sleep(wait)
+        try:
+            return self.mon.recv(200000).decode(errors="replace")
+        except Exception:
+            return ""
+
     def log(self):
         try:
             return open(self.serial, "rb").read().decode(errors="replace")
@@ -201,9 +229,9 @@ def main():
 
         # The part serial cannot show: that it is on the glass.
         rows = m.pixels(FB_AT, 1280 * 4 * 400)
-        ok(rows.count(FG) > 500,
+        ok(rows.count(0xFF8AE2B8) > 500,
            "the report is drawn in the pixels, not only sent down the wire",
-           "%d lit" % rows.count(FG))
+           "%d lit" % rows.count(0xFF8AE2B8))
         ok(rows.count(BG) > 100000, "...on the console's own background")
 
         # And that it stays. A machine nobody can type at has nothing to offer
@@ -295,6 +323,33 @@ def main():
        "an Ethernet adapter says something else entirely", net)
     ok(net.endswith("class 2"),
        "...and calls itself a communications device, which is what it is", net)
+
+    # --- and finally: can it be typed at?
+    #
+    # Everything above is discovery. This is the thing the machine is for. The
+    # assertion is parity rather than a number: the same text typed on a virtio
+    # keyboard and on a USB one must put the same amount of ink on the screen,
+    # because the interesting failure is not "nothing arrives" - that is
+    # obvious - but "most of it arrives", which reads as a keyboard that works
+    # and is merely unreliable. It did exactly that: two characters out of
+    # twelve, because the event ring's dequeue pointer was being written to the
+    # wrong register and the controller stopped after sixteen events.
+    typed = {}
+    for label, kb, extra, port in (
+            ("virtio", True, None, 4637),
+            ("usb", False, ["-device", "qemu-xhci", "-device", "usb-kbd"], 4638)):
+        with Machine("type-" + label, port, keyboard=kb, ramfb=True, extra=extra) as m:
+            for ch in "colours blue":
+                m.cmd("sendkey " + ("spc" if ch == " " else ch), 0.18)
+            time.sleep(1.5)
+            typed[label] = m.lit(FG)
+            ok("KERNEL FAULT" not in m.log(), "typing on the %s keyboard faults nothing" % label)
+
+    ok(typed["virtio"] > 300,
+       "a virtio keyboard puts the text on the screen", "%d lit" % typed["virtio"])
+    ok(typed["usb"] == typed["virtio"],
+       "...and a USB keyboard puts exactly the same text there",
+       "%d against %d" % (typed["usb"], typed["virtio"]))
 
     print()
     if failures:
