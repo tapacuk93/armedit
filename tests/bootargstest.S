@@ -171,6 +171,84 @@ _main:
         LEA     x2, t_no_uart
         bl      expect_eq
 
+/*
+ * ---- restarting a machine that has no PSCI ----
+ *
+ * Apple Silicon has no secure monitor to make a PSCI call to, so the reboot
+ * everything else performs with one instruction is three stores to a watchdog
+ * here. The address comes from the tree, and the compatible it is found under
+ * is the general half of a list whose specific half names the chip - so this
+ * is also the only test that the reader looks inside the list.
+ */
+        LEA     x0, SYM(fdt_apple)
+        bl      SYM(dtb_init)
+        bl      SYM(wdt_find)
+        movz    x1, #0x0000
+        movk    x1, #0x3d2b, lsl #16
+        movk    x1, #0x0002, lsl #32    /* 0x23d2b0000 */
+        LEA     x2, t_wdt_addr
+        bl      expect_eq
+
+/* A tree with no watchdog says so, rather than returning a base of zero that
+   the next three stores would happily write to. */
+        LEA     x0, SYM(fdt_sample)
+        bl      SYM(dtb_init)
+        bl      SYM(wdt_find)
+        mov     x1, #0
+        LEA     x2, t_wdt_none
+        bl      expect_eq
+
+/*
+ * And the writes themselves, aimed at ordinary memory so they can be read
+ * back. This is the whole of the mechanism: what a real watchdog does with
+ * these three words is the one thing no test without the machine can show.
+ *
+ * Values, not order. The order the three go out in matters - see wdt.S - and
+ * memory that has been written three times cannot say which came first. That
+ * one is held by the source and by review, and pretending a read-back proved
+ * it would be worse than admitting it did not.
+ */
+        LEA     x0, wdt
+        mov     x1, #0
+1:      cmp     x1, #64
+        b.hs    2f
+        mov     w2, #0xAA
+        strb    w2, [x0, x1]            /* poison, so "zero" means written */
+        add     x1, x1, #1
+        b       1b
+2:      LEA     x0, wdt
+        bl      SYM(wdt_arm)
+
+        LEA     x9, wdt
+        ldr     w0, [x9, #0x1c]
+        mov     x1, #4                  /* reset enable, bit two */
+        LEA     x2, t_wdt_ctrl
+        bl      expect_eq
+
+        LEA     x9, wdt
+        ldr     w0, [x9, #0x14]
+        mov     x1, #0
+        LEA     x2, t_wdt_bite
+        bl      expect_eq
+
+        LEA     x9, wdt
+        ldr     w0, [x9, #0x10]
+        mov     x1, #0
+        LEA     x2, t_wdt_cur
+        bl      expect_eq
+
+/*
+ * Offset zero is the first watchdog, which the system uses. Writing there
+ * instead of the second is the mistake this catches, and it is one that would
+ * look like it worked right up until something else wanted that timer.
+ */
+        LEA     x9, wdt
+        ldr     w0, [x9]
+        movz    w1, #0xAAAA
+        movk    w1, #0xAAAA, lsl #16
+        LEA     x2, t_wdt_first
+        bl      expect_eq
+
         cbz     w19, 1f
         mov     x0, #1
         b       2f
@@ -315,6 +393,12 @@ t_sfb_depth:  .asciz "  ...and ten bits a channel when it says so               
 t_s5l_addr:   .asciz "  an Apple tree gives the s5l serial port's address        "
 t_s5l_kind:   .asciz "  ...and it is driven as an s5l, not as a PL011            "
 t_no_uart:    .asciz "  a machine with no serial port says so                    "
+t_wdt_addr:   .asciz "  the watchdog is found under the general half of its list "
+t_wdt_none:   .asciz "  a machine with no watchdog says so                       "
+t_wdt_ctrl:   .asciz "  arming it enables reset                                  "
+t_wdt_bite:   .asciz "  ...sets the bite time to zero                            "
+t_wdt_cur:    .asciz "  ...and the current time to zero                          "
+t_wdt_first:  .asciz "  ...and does not touch the system's own watchdog          "
 s_ok:     .asciz "ok\n"
 s_fail:   .asciz "FAIL\n"
 
@@ -326,3 +410,4 @@ w:      .space 8
 h:      .space 8
 stride: .space 8
 depth:  .space 8
+wdt:    .space 64

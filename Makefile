@@ -382,7 +382,8 @@ BOOTARGS_OBJ := $(B)/macho/tests/bootargstest.o \
                 $(B)/macho/kernel/arch/aarch64/bootargs.o \
                 $(B)/macho/kernel/screen.o $(B)/macho/kernel/dtb.o \
                 $(B)/macho/fdt_sample.o $(B)/macho/fdt_apple.o \
-                $(B)/macho/kernel/arch/aarch64/uart.o $(B)/macho/net/str.o
+                $(B)/macho/kernel/arch/aarch64/uart.o $(B)/macho/net/str.o \
+                $(B)/macho/kernel/arch/aarch64/wdt.o
 
 $(B)/bootargstest: $(BOOTARGS_OBJ)
 	$(LD_MACHO) -o $@ $(BOOTARGS_OBJ)

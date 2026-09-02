@@ -494,6 +494,29 @@ not one. On a real machine the loader reserves that memory; here nobody does,
 so the test now reads the boot stub to learn where the tree is, keeps away from
 it, and checks afterwards that it survived.
 
+Restarting is where the machine stops resembling anything else. Everywhere the
+kernel currently runs, a reboot is one instruction: PSCI's `SYSTEM_RESET`,
+made with `hvc` or `smc` depending on what the tree says is underneath. Apple
+Silicon has no secure monitor offering PSCI to anything m1n1 booted, so the
+`hvc` that works on every other board goes nowhere — or somewhere unintended,
+which is worse. `kernel/arch/aarch64/wdt.S` does it the way the hardware does:
+find the watchdog in the tree, tell it that expiry means reset, set the bite
+time to zero, and then set the clock so it has already passed.
+
+The order of those three writes is the only reason it is not one write, and
+offset matters as much — the registers used are the *second* watchdog's, at
+`0x10`, `0x14` and `0x1c`, because the first is the one the system itself
+holds. Six assertions cover it: the node is found under `apple,wdt`, which is
+the general half of a compatible list whose specific half names the chip, so
+this is also the only test that the reader looks *inside* the list; a tree
+without a watchdog returns nothing rather than a base of zero that three
+stores would cheerfully write to; and the writes are aimed at ordinary memory
+and read back, including a check that the system's watchdog was left alone.
+What no test without the machine can show is that a real Apple watchdog answers
+those three words by restarting, and the README should not pretend otherwise —
+the sequence is the one Linux's `apple_wdt` driver performs, which is as close
+to a specification as a part with no public documentation has.
+
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different
 registers, and the bit that says "you may write" has the opposite sense to the

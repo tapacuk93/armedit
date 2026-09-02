@@ -347,6 +347,16 @@ platform_reboot:
         bl      reboot_method
 1:      mov     w19, w0
 
+/*
+ * No psci node at all is not a machine that forgot to describe itself. It is
+ * Apple Silicon, where there is no secure monitor offering PSCI to anything
+ * m1n1 has booted, and where the hvc below would go nowhere or somewhere
+ * unintended. Such a machine restarts through its watchdog - see wdt.S - and
+ * that is tried before falling back to a call nobody has said is there.
+ */
+        cbnz    w19, 4f
+        bl      SYM(wdt_reboot)
+4:
         movz    w0, #0x0009
         movk    w0, #0x8400, lsl #16    /* PSCI SYSTEM_RESET */
         cmp     w19, #2

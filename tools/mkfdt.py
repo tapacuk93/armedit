@@ -59,6 +59,15 @@ def main(out, apple=False):
         prop("compatible", b"apple,s5l-uart\0")
         prop("reg", struct.pack(">QQ", 0x235200000, 0x4000))
         u32(2)
+        # The watchdog, which is how a machine with no PSCI restarts. Its
+        # compatible is a list, specific first, exactly as a real Apple tree
+        # writes it - the reader has to find the general half inside the list
+        # rather than matching the whole property, and a single-string node
+        # would not have asked it to.
+        begin("watchdog@23d2b0000")
+        prop("compatible", b"apple,t8103-wdt\0apple,wdt\0")
+        prop("reg", struct.pack(">QQ", 0x23D2B0000, 0x4000))
+        u32(2)
     begin("framebuffer@9c000000")
     prop("compatible", b"simple-framebuffer\0")
     prop("reg", struct.pack(">QQ", 0x9C000000, 0x1000000))
