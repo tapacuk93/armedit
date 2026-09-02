@@ -172,6 +172,94 @@ _main:
         bl      expect_eq
 
 /*
+ * ---- the tree m1n1 actually hands over ----
+ *
+ * Everything above was asked of a tree this project generated to suit itself,
+ * or of QEMU's. The real one differs in three ways, and each is somewhere a
+ * reader gets a plausible wrong answer rather than an obvious failure.
+ *
+ * The framebuffer is inside /chosen rather than at the root, so a walk that
+ * only looks at top-level nodes finds nothing and reports a machine with no
+ * screen while sitting in front of one.
+ *
+ * Its compatible is a list whose specific half nobody else matches, so a
+ * reader comparing the whole property against "simple-framebuffer" misses it.
+ *
+ * And every address is above the thirty-second bit. That is the one that does
+ * not announce itself: a reader that keeps only the low cell of a two-cell reg
+ * gets 0xe0e40000, which is a perfectly plausible address, on a machine where
+ * it is somebody else's memory. Every test before this ran on a machine whose
+ * RAM starts at 0x40000000 and could not have asked the question.
+ */
+        LEA     x0, SYM(fdt_apple)
+        bl      SYM(dtb_init)
+        LEA     x0, fb
+        LEA     x1, w
+        LEA     x2, h
+        LEA     x3, stride
+        LEA     x4, depth
+        bl      SYM(screen_find)
+        mov     x1, #0
+        LEA     x2, t_apple_found
+        bl      expect_eq
+
+        LEA     x9, fb
+        ldr     x0, [x9]
+        movz    x1, #0x0000
+        movk    x1, #0xe0e4, lsl #16
+        movk    x1, #0x0009, lsl #32    /* 0x9e0e40000, all thirty-six bits */
+        LEA     x2, t_apple_addr
+        bl      expect_eq
+
+        LEA     x9, w
+        ldr     x0, [x9]
+        mov     x1, #1512
+        LEA     x2, t_apple_width
+        bl      expect_eq
+
+        LEA     x9, stride
+        ldr     x0, [x9]
+        mov     x1, #6144
+        LEA     x2, t_apple_stride
+        bl      expect_eq
+
+        LEA     x9, depth
+        ldr     x0, [x9]
+        mov     x1, #30
+        LEA     x2, t_apple_depth
+        bl      expect_eq
+
+/*
+ * And where its memory is, which no compatible string will find.
+ *
+ * The memory node says what it is with device_type rather than compatible -
+ * older than compatible strings, and kept because everything already reads it.
+ * A parser that can only match compatibles cannot find the one node that says
+ * where the machine's RAM is.
+ *
+ * The base is the point. Forty bits of it, on a machine whose memory begins
+ * where no thirty-two-bit read could describe it.
+ */
+        bl      SYM(dtb_memory)
+        mov     x21, x1                 /* the size, kept across the first check:
+                                           expect_eq saves x20 and x21, and w19
+                                           is this file's failure count - writing
+                                           to it here would make the exit status
+                                           depend on how much memory the sample
+                                           tree happens to declare */
+        movz    x1, #0x0000
+        movk    x1, #0x0000, lsl #16
+        movk    x1, #0x0010, lsl #32    /* 0x10000000000 */
+        LEA     x2, t_apple_ram
+        bl      expect_eq
+        mov     x0, x21
+        movz    x1, #0x0000
+        movk    x1, #0x0000, lsl #16
+        movk    x1, #0x0002, lsl #32    /* 8GB */
+        LEA     x2, t_apple_ramsize
+        bl      expect_eq
+
+/*
  * ---- restarting a machine that has no PSCI ----
  *
  * Apple Silicon has no secure monitor to make a PSCI call to, so the reboot
@@ -393,6 +481,13 @@ t_sfb_depth:  .asciz "  ...and ten bits a channel when it says so               
 t_s5l_addr:   .asciz "  an Apple tree gives the s5l serial port's address        "
 t_s5l_kind:   .asciz "  ...and it is driven as an s5l, not as a PL011            "
 t_no_uart:    .asciz "  a machine with no serial port says so                    "
+t_apple_found:  .asciz "  an Apple tree has a screen, nested inside /chosen         "
+t_apple_addr:   .asciz "  ...at its whole address, not the low half of it           "
+t_apple_width:  .asciz "  ...with the width it declares                             "
+t_apple_stride: .asciz "  ...and the stride, which is not the width                 "
+t_apple_depth:  .asciz "  ...and ten bits a channel, as an Apple panel reports      "
+t_apple_ram:     .asciz "  memory is found by device_type, where RAM really starts  "
+t_apple_ramsize: .asciz "  ...and how much of it there is                            "
 t_wdt_addr:   .asciz "  the watchdog is found under the general half of its list "
 t_wdt_none:   .asciz "  a machine with no watchdog says so                       "
 t_wdt_ctrl:   .asciz "  arming it enables reset                                  "

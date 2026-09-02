@@ -55,8 +55,21 @@ def main(out, apple=False):
     prop("#address-cells", struct.pack(">I", 2))
     prop("#size-cells", struct.pack(">I", 2))
     if apple:
+        # Shaped like the tree m1n1 actually hands over, which differs from
+        # QEMU's in every way that has ever caused a bug here.
+        prop("compatible", b"apple,j274\0apple,t8103\0apple,arm-platform\0")
+
+        # Memory above the thirty-second bit. This is the one that decides
+        # whether the addresses below are read as addresses or as the low half
+        # of one, and a machine whose RAM starts at 0x40000000 cannot ask the
+        # question at all.
+        begin("memory@10000000000")
+        prop("device_type", b"memory\0")
+        prop("reg", struct.pack(">QQ", 0x10_0000_0000, 0x2_0000_0000))
+        u32(2)
+
         begin("serial@235200000")
-        prop("compatible", b"apple,s5l-uart\0")
+        prop("compatible", b"apple,t8103-uart\0apple,s5l-uart\0")
         prop("reg", struct.pack(">QQ", 0x235200000, 0x4000))
         u32(2)
         # The watchdog, which is how a machine with no PSCI restarts. Its
@@ -68,16 +81,36 @@ def main(out, apple=False):
         prop("compatible", b"apple,t8103-wdt\0apple,wdt\0")
         prop("reg", struct.pack(">QQ", 0x23D2B0000, 0x4000))
         u32(2)
-    begin("framebuffer@9c000000")
-    prop("compatible", b"simple-framebuffer\0")
-    prop("reg", struct.pack(">QQ", 0x9C000000, 0x1000000))
-    prop("width", struct.pack(">I", 1512))
-    prop("height", struct.pack(">I", 982))
-    prop("stride", struct.pack(">I", 6144))
-    prop("format", b"x2r10g10b10\0")
-    u32(2)          # end framebuffer
-    u32(2)          # end root
-    u32(9)          # end of the tree
+
+        # And the framebuffer where m1n1 leaves it: inside /chosen, not at the
+        # root, with a compatible list whose general half is the one anybody
+        # else's reader matches. Both of those are how the real tree is written
+        # and neither is how QEMU writes one, so a parser that only ever met
+        # QEMU has not been asked either question.
+        begin("chosen")
+        prop("bootargs", b"\0")
+        begin("framebuffer@9e0e40000")
+        prop("compatible", b"apple,simple-framebuffer\0simple-framebuffer\0")
+        prop("reg", struct.pack(">QQ", 0x9_E0E4_0000, 0x1_0000_00))
+        prop("width", struct.pack(">I", 1512))
+        prop("height", struct.pack(">I", 982))
+        prop("stride", struct.pack(">I", 6144))
+        prop("format", b"x2r10g10b10\0")
+        u32(2)      # end framebuffer
+        u32(2)      # end chosen
+        u32(2)      # end root
+        u32(9)
+    else:
+        begin("framebuffer@9c000000")
+        prop("compatible", b"simple-framebuffer\0")
+        prop("reg", struct.pack(">QQ", 0x9C000000, 0x1000000))
+        prop("width", struct.pack(">I", 1512))
+        prop("height", struct.pack(">I", 982))
+        prop("stride", struct.pack(">I", 6144))
+        prop("format", b"x2r10g10b10\0")
+        u32(2)      # end framebuffer
+        u32(2)      # end root
+        u32(9)      # end of the tree
 
     hdr_size = 40
     off_struct = hdr_size

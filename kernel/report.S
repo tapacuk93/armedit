@@ -95,6 +95,34 @@ SYM(report_show):
 2:      bl      report_puts
         bl      report_nl
 
+/*
+ * Where this machine's memory is, and how much.
+ *
+ * On the target it starts above the thirty-second bit, and the first thing
+ * anybody wants to know about an unfamiliar machine is whether the kernel is
+ * inside it. Printed next to the handover pointer on purpose: those two
+ * numbers together are what say whether the loader put us where it said.
+ */
+        LEA     x0, m_memory
+        bl      report_puts
+        bl      SYM(dtb_memory)
+        mov     x22, x1
+        cbnz    x0, 17f
+        LEA     x0, m_absent
+        bl      report_puts
+        bl      report_nl
+        b       18f
+17:     bl      report_hex
+        LEA     x0, m_plus
+        bl      report_puts
+        lsr     x0, x22, #20            /* megabytes: the size in hex tells
+                                           nobody anything they wanted */
+        bl      report_dec
+        LEA     x0, m_mb
+        bl      report_puts
+        bl      report_nl
+18:
+
 /* The screen this is being printed on, described by whoever handed it over. */
         LEA     x0, m_screen
         bl      report_puts
@@ -350,6 +378,9 @@ m_cpu:      .asciz "  cpu           "
 m_hand:     .asciz "  handover      "
 m_bootargs: .asciz "boot arguments"
 m_devtree:  .asciz "device tree"
+m_memory:   .asciz "  memory        "
+m_plus:     .asciz " + "
+m_mb:       .asciz "MB"
 m_screen:   .asciz "  screen        "
 m_serial:   .asciz "  serial        "
 m_restart:  .asciz "  restart       "

@@ -164,6 +164,9 @@ SYM(dtb_have):
 SYM(dtb_prop):
         LEA     x9, dtb_want
         str     x2, [x9]
+        LEA     x9, dtb_key
+        LEA     x10, s_compatible
+        str     x10, [x9]
         b       dtb_walk
 
         .globl  SYM(dtb_reg)
@@ -171,6 +174,34 @@ SYM(dtb_reg):
         LEA     x9, dtb_want
         LEA     x10, s_reg
         str     x10, [x9]
+        LEA     x9, dtb_key
+        LEA     x10, s_compatible
+        str     x10, [x9]
+        b       dtb_walk
+
+/*
+ * dtb_memory - out x0 = where RAM starts, x1 = how much, or x0 = 0.
+ *
+ * The memory node is the one thing in the tree that does not say what it is
+ * with a `compatible`. It says it with `device_type = "memory"`, which is
+ * older than compatible strings and survives because everything already reads
+ * it - so a reader that only knows how to match compatibles cannot find the
+ * one node that says where the machine's memory is.
+ *
+ * Worth having for one reason: on the target, RAM starts above the
+ * thirty-second bit, and the first thing anybody wants to know about an
+ * unfamiliar machine is whether they are inside it. See report.S.
+ */
+        .globl  SYM(dtb_memory)
+SYM(dtb_memory):
+        LEA     x9, dtb_want
+        LEA     x10, s_reg
+        str     x10, [x9]
+        LEA     x9, dtb_key
+        LEA     x10, s_devtype
+        str     x10, [x9]
+        LEA     x0, s_memory
+        mov     w1, #0
         b       dtb_walk
 
 dtb_walk:
@@ -265,7 +296,10 @@ dtb_walk:
 
         LEA     x10, dtb_name
         ldr     x0, [x10]
-        LEA     x1, s_compatible
+        LEA     x1, dtb_key             /* "compatible" for most callers, and
+                                           "device_type" for the memory node,
+                                           which has no compatible at all */
+        ldr     x1, [x1]
         bl      dtb_streq
         cbz     w0, 3f
         /* Does any string in the list match what we want? */
@@ -428,6 +462,8 @@ dtb_listhas:
 
         RODATA
 s_compatible: .asciz "compatible"
+s_devtype:    .asciz "device_type"
+s_memory:     .asciz "memory"
 s_reg:        .asciz "reg"
 
         BSS
@@ -444,6 +480,7 @@ s_reg:        .asciz "reg"
 dtb_base:        .space 8
 dtb_name:        .space 8
 dtb_want:        .space 8
+dtb_key:         .space 8
 dtb_found:       .space 8
 dtb_len:         .space 4
 dtb_found_len:   .space 4

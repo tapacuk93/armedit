@@ -150,6 +150,12 @@ def main():
            "...and which CPU this is", field(log, "cpu"))
         ok((field(log, "handover") or "").endswith("device tree"),
            "...which of the two handovers arrived", field(log, "handover"))
+        # The number that says whether the kernel is inside the machine's own
+        # memory. QEMU was started with 512MB at 0x40000000 and the tree says
+        # so; on the target this line is the first thing worth reading.
+        ok(field(log, "memory") == "0000000040000000 + 512MB",
+           "...where memory begins and how much there is", field(log, "memory"))
+
         ok("ramfb, asked for by this kernel" in (field(log, "screen") or ""),
            "...that this screen was asked for rather than handed over",
            field(log, "screen"))

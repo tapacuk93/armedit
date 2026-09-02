@@ -656,6 +656,26 @@ starting an editor there would replace the only useful thing on the screen with
 an empty document nobody can fill in. The last line says it is stopping, because
 a machine that stopped on purpose and one that hung look the same otherwise.
 
+The sample Apple tree it is all tested against is now shaped like the one m1n1
+actually hands over, which differs from QEMU's in three ways and each is a place
+a reader gets a plausible wrong answer rather than an obvious failure. The
+framebuffer is inside `/chosen` rather than at the root, so a walk that only
+looks at top-level nodes reports a machine with no screen while sitting in front
+of one. Its `compatible` is a list whose specific half — `apple,simple-framebuffer`
+— nobody else matches, so a reader comparing the whole property misses it. And
+every address is above the thirty-second bit: a reader that keeps only the low
+cell of a two-cell `reg` gets `0xe0e40000`, a perfectly plausible address that
+belongs to somebody else. Every test before this ran on a machine whose RAM
+starts at `0x40000000` and could not have asked the question. All three now pass,
+against a real generated blob rather than a mocked parser.
+
+Memory took one more thing. The memory node is the only one that does not say
+what it is with a `compatible` — it says it with `device_type = "memory"`, older
+than compatible strings and kept because everything already reads it — so a
+reader that only matches compatibles cannot find the one node that says where the
+machine's RAM is. `dtb_memory` matches on that instead, and the report prints
+`memory 0000010000000000 + 8192MB` on a tree shaped like the target's.
+
 `make machine` checks both first boots — the one with a keyboard and a screen it
 asked for, and the one handed a screen by a loader with nothing to type at.
 Twenty checks: every field on the wire by name and value, the report drawn in the
