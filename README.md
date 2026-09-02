@@ -440,12 +440,26 @@ own, and the most important thing in it is **a framebuffer that is already
 running**. m1n1 has talked to the display controller so its payload does not
 have to, and that is the whole of first light on that machine.
 
-`kernel/arch/aarch64/bootargs.S` reads that structure and `platform_present`
-draws into it, row by row with the real stride, converting to thirty-bit pixels
-when that is what the panel is. Nine assertions cover the parsing against a
-synthetic handover, because the layout is an ABI and can be checked without
-owning the machine — which matters, since the alternative is repartitioning one
-to find out.
+There are two ways that arrives. m1n1 passes its own `boot_args` to a raw
+payload, and `kernel/arch/aarch64/bootargs.S` reads those. But m1n1 also boots
+**Linux-style images**, and armedit is one now — it has the arm64 image header
+— so the loader hands it a device tree with a `simple-framebuffer` node
+instead. `kernel/screen.S` reads either, and the second is both the more likely
+path on a real Mac and the one that works on every other arm64 board whose
+loader produces the same node.
+
+`platform_present` draws into whichever it found, row by row with the real
+stride, converting to thirty-bit pixels when that is what the panel is —
+`x2r10g10b10` is what an Apple display usually reports, and writing eight-bit
+channels into it gives a picture that is dim and wrong rather than absent,
+which is the kind of wrong that gets shipped.
+
+Fifteen assertions cover both handovers, the device-tree one against a real
+generated blob rather than a mocked parser: the flattened device tree is a wire
+format, and a reader tested only against what its author imagined is a
+description of the author's imagination. All of it checks out without owning
+the machine, which matters, since the alternative is repartitioning one to find
+out whether an offset was right.
 
 What is *not* done is everything after first light: the interrupt controller,
 the timers, the Apple serial port, and input. Input is the hard one — an Apple

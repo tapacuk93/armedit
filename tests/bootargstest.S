@@ -102,6 +102,50 @@ _main:
         LEA     x0, t_norev
         bl      expect_eq_flag
 
+/* ---- and the other handover: a device tree with a framebuffer in it ---- */
+        LEA     x0, SYM(fdt_sample)
+        bl      SYM(dtb_init)
+        cmn     w0, #1
+        LEA     x0, t_fdt
+        bl      expect_ne
+
+        LEA     x0, fb
+        LEA     x1, w
+        LEA     x2, h
+        LEA     x3, stride
+        LEA     x4, depth
+        bl      SYM(screen_find)
+        cmn     w0, #1
+        LEA     x0, t_screen
+        bl      expect_ne
+
+        LEA     x9, fb
+        ldr     x0, [x9]
+        movz    x1, #0x0000
+        movk    x1, #0x9C00, lsl #16
+        LEA     x2, t_sfb_base
+        bl      expect_eq
+
+        LEA     x9, w
+        ldr     x0, [x9]
+        mov     x1, #1512
+        LEA     x2, t_sfb_width
+        bl      expect_eq
+
+        LEA     x9, stride
+        ldr     x0, [x9]
+        mov     x1, #6144
+        LEA     x2, t_sfb_stride
+        bl      expect_eq
+
+/* "x2r10g10b10" is ten bits a channel, and saying so is the difference between
+   a picture and a dim wrong one. */
+        LEA     x9, depth
+        ldr     x0, [x9]
+        mov     x1, #30
+        LEA     x2, t_sfb_depth
+        bl      expect_eq
+
         cbz     w19, 1f
         mov     x0, #1
         b       2f
@@ -237,6 +281,12 @@ t_depth:  .asciz "  ...and its depth, without the flags above it             "
 t_null:   .asciz "  a null pointer is refused                                "
 t_nofb:   .asciz "  so is a handover with no framebuffer                     "
 t_norev:  .asciz "  and one with no revision                                 "
+t_fdt:    .asciz "  a device tree is accepted                                "
+t_screen: .asciz "  ...and a simple-framebuffer in it is a screen            "
+t_sfb_base:   .asciz "  ...at the address its reg gives                          "
+t_sfb_width:  .asciz "  ...with the width it declares                            "
+t_sfb_stride: .asciz "  ...the stride it declares, not the width                 "
+t_sfb_depth:  .asciz "  ...and ten bits a channel when it says so                "
 s_ok:     .asciz "ok\n"
 s_fail:   .asciz "FAIL\n"
 

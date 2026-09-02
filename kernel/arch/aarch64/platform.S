@@ -100,8 +100,10 @@ platform_present:
 /*
  * A real machine's screen, if one was handed over.
  *
- * m1n1 gives an address, a width, a height, a stride and a depth, and none of
- * those are this board's. So the frame is copied row by row rather than as one
+ * m1n1 gives an address, a width, a height, a stride and a depth - either in
+ * its own boot arguments or, when it boots this as a Linux-style image, in a
+ * simple-framebuffer node of the device tree. Neither set of numbers is this
+ * board's. So the frame is copied row by row rather than as one
  * run: the rows of a real display are not adjacent, and copying as though they
  * were paints a diagonal.
  */
@@ -110,7 +112,7 @@ platform_present:
         LEA     x2, ba_h
         LEA     x3, ba_stride
         LEA     x4, ba_depth
-        bl      SYM(bootargs_fb)
+        bl      SYM(screen_find)
         cmn     w0, #1
         b.eq    .Lpp_ramfb
 

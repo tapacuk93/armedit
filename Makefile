@@ -35,7 +35,7 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S app/localops.S net/html.S net/browse.S kernel/dns.S \
-              kernel/dtb.S kernel/pci.S \
+              kernel/dtb.S kernel/pci.S kernel/screen.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 # The approved operations, turned into a table the linker can place. Generated
@@ -354,8 +354,18 @@ BROWSE_OBJ := $(B)/macho/tests/browsetest.o $(B)/macho/net/browse.o \
               $(B)/macho/gfx/demo_clip.o $(B)/macho/font/font.o \
               $(B)/macho/font/render.o $(B)/macho/app/clock.o
 
+$(B)/fdt_sample.S: tools/mkfdt.py
+	@mkdir -p $(B)
+	@python3 tools/mkfdt.py $@
+
+$(B)/macho/fdt_sample.o: $(B)/fdt_sample.S
+	@mkdir -p $(dir $@)
+	$(AS_MACHO) $< -o $@
+
 BOOTARGS_OBJ := $(B)/macho/tests/bootargstest.o \
-                $(B)/macho/kernel/arch/aarch64/bootargs.o $(B)/macho/net/str.o
+                $(B)/macho/kernel/arch/aarch64/bootargs.o \
+                $(B)/macho/kernel/screen.o $(B)/macho/kernel/dtb.o \
+                $(B)/macho/fdt_sample.o $(B)/macho/net/str.o
 
 $(B)/bootargstest: $(BOOTARGS_OBJ)
 	$(LD_MACHO) -o $@ $(BOOTARGS_OBJ)
