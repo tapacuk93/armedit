@@ -146,6 +146,31 @@ _main:
         LEA     x2, t_sfb_depth
         bl      expect_eq
 
+/* ---- and an Apple-shaped tree picks the Apple serial port ---- */
+        LEA     x0, SYM(fdt_apple)
+        bl      SYM(dtb_init)
+        bl      SYM(uart_forget)        /* the answer is cached; ask afresh */
+        bl      SYM(uart_where)
+        movz    x1, #0x0000
+        movk    x1, #0x3520, lsl #16
+        movk    x1, #0x0002, lsl #32
+        LEA     x2, t_s5l_addr
+        bl      expect_eq
+
+        bl      SYM(uart_which)
+        mov     x1, #2                  /* UART_S5L */
+        LEA     x2, t_s5l_kind
+        bl      expect_eq
+
+/* ...and a machine with neither says so rather than writing into nothing. */
+        LEA     x0, SYM(fdt_sample)     /* a tree with a screen and no serial */
+        bl      SYM(dtb_init)
+        bl      SYM(uart_forget)
+        bl      SYM(uart_where)
+        mov     x1, #0
+        LEA     x2, t_no_uart
+        bl      expect_eq
+
         cbz     w19, 1f
         mov     x0, #1
         b       2f
@@ -287,6 +312,9 @@ t_sfb_base:   .asciz "  ...at the address its reg gives                         
 t_sfb_width:  .asciz "  ...with the width it declares                            "
 t_sfb_stride: .asciz "  ...the stride it declares, not the width                 "
 t_sfb_depth:  .asciz "  ...and ten bits a channel when it says so                "
+t_s5l_addr:   .asciz "  an Apple tree gives the s5l serial port's address        "
+t_s5l_kind:   .asciz "  ...and it is driven as an s5l, not as a PL011            "
+t_no_uart:    .asciz "  a machine with no serial port says so                    "
 s_ok:     .asciz "ok\n"
 s_fail:   .asciz "FAIL\n"
 

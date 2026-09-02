@@ -461,8 +461,16 @@ description of the author's imagination. All of it checks out without owning
 the machine, which matters, since the alternative is repartitioning one to find
 out whether an offset was right.
 
-What is *not* done is everything after first light: the interrupt controller,
-the timers, the Apple serial port, and input. Input is the hard one — an Apple
+The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
+inherited from the iPhone, and it disagrees about everything: different
+registers, and the bit that says "you may write" has the opposite sense to the
+one that says "the buffer is full". `uart.S` asks the tree which chip is there
+and drives it accordingly, so one binary talks on a board with either. The
+timer needed nothing: `CNTVCT_EL0` and `CNTFRQ_EL0` are architectural and were
+already right.
+
+What is *not* done is everything after that: the interrupt controller and
+input. Input is the hard one — an Apple
 keyboard is USB or SPI behind an IOMMU, which is a great deal more than
 virtio-input. Expect display and serial before anything types.
 

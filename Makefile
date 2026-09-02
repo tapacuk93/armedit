@@ -358,6 +358,14 @@ $(B)/fdt_sample.S: tools/mkfdt.py
 	@mkdir -p $(B)
 	@python3 tools/mkfdt.py $@
 
+$(B)/fdt_apple.S: tools/mkfdt.py
+	@mkdir -p $(B)
+	@python3 tools/mkfdt.py $@ --apple
+
+$(B)/macho/fdt_apple.o: $(B)/fdt_apple.S
+	@mkdir -p $(dir $@)
+	$(AS_MACHO) $< -o $@
+
 $(B)/macho/fdt_sample.o: $(B)/fdt_sample.S
 	@mkdir -p $(dir $@)
 	$(AS_MACHO) $< -o $@
@@ -365,7 +373,8 @@ $(B)/macho/fdt_sample.o: $(B)/fdt_sample.S
 BOOTARGS_OBJ := $(B)/macho/tests/bootargstest.o \
                 $(B)/macho/kernel/arch/aarch64/bootargs.o \
                 $(B)/macho/kernel/screen.o $(B)/macho/kernel/dtb.o \
-                $(B)/macho/fdt_sample.o $(B)/macho/net/str.o
+                $(B)/macho/fdt_sample.o $(B)/macho/fdt_apple.o \
+                $(B)/macho/kernel/arch/aarch64/uart.o $(B)/macho/net/str.o
 
 $(B)/bootargstest: $(BOOTARGS_OBJ)
 	$(LD_MACHO) -o $@ $(BOOTARGS_OBJ)
