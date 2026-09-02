@@ -86,9 +86,10 @@
  */
         .globl  vcon_init
 vcon_init:
-        stp     x29, x30, [sp, #-32]!
+        stp     x29, x30, [sp, #-48]!
         mov     x29, sp
-        str     x19, [sp, #16]
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
 
 /*
  * Packed rings, because this device does not answer split ones.
@@ -146,8 +147,11 @@ vcon_init:
         str     w0, [x9]
 
         bl      SYM(vpci_numq)
-        mov     w19, w0
-        cmp     w19, #2
+        mov     w20, w0                 /* not w19: that is which console we
+                                           are trying, and overwriting it with
+                                           a queue count ended the search after
+                                           one attempt */
+        cmp     w20, #2
         b.ls    3f
         mov     w0, #2
         LEA     x1, cr_desc
@@ -155,7 +159,7 @@ vcon_init:
         LEA     x3, cr_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
-        cmp     w19, #3
+        cmp     w20, #3
         b.ls    3f
         mov     w0, #3
         LEA     x1, ct_desc
@@ -164,7 +168,45 @@ vcon_init:
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
 3:
+/*
+ * The wrap counter starts at one.
+ *
+ * A packed descriptor is available when its AVAIL flag equals the driver's
+ * wrap counter and its USED flag does not. Starting from zero, which is what
+ * .bss gives for free, publishes the first descriptor with AVAIL clear and
+ * USED set - the exact encoding for "the device has finished with this one".
+ */
+        LEA     x9, tx_wrap
+        mov     w10, #1
+        str     w10, [x9]
+        LEA     x9, tx_next
+        str     wzr, [x9]
+
+/*
+ * Give the receive queue a buffer before sending anything.
+ *
+ * Not because this driver reads input - it does not - but because the working
+ * reference does it. Linux's console fills the input queue while adding the
+ * port and before DRIVER_OK, and a bidirectional device that services both
+ * directions in one pass may decline to do anything at all while one side has
+ * nowhere to put data. That is a guess about the device; matching a driver
+ * that demonstrably works on it is not.
+ */
+        LEA     x9, rx_desc
+        LEA     x10, rx_buf
+        str     x10, [x9, #0]
+        mov     w11, #64
+        str     w11, [x9, #8]
+        strh    wzr, [x9, #12]
+        dsb     sy
+        mov     w11, #0x0082            /* AVAIL, and device-writable */
+        strh    w11, [x9, #14]
+        dsb     sy
+
         bl      SYM(vpci_ready)
+
+        mov     w0, #RXQ                /* tell it the buffer is there */
+        bl      SYM(vpci_kick_queue)
 
         LEA     x9, vcon_up             /* provisionally, so vcon_write runs */
         mov     w10, #1
@@ -189,8 +231,9 @@ vcon_init:
 .Lvi_no:
         mov     w0, #-1
 .Lvi_out:
-        ldr     x19, [sp, #16]
-        ldp     x29, x30, [sp], #32
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /*

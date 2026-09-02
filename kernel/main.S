@@ -27,6 +27,24 @@ kmain:
         LEA     x9, dtb_arg
         str     x0, [x9]
 
+#ifdef ARMEDIT_PROBE_CONSOLE
+/*
+ * Did a console come up and answer a write?
+ *
+ * One probe rather than the dozen this investigation accumulated: vcon_init
+ * already tries every console and only reports success when one of them has
+ * turned a descriptor round, so this asks the single question left.
+ */
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        movz    w0, #0x0008
+        movk    w0, #0x8400, lsl #16
+        hvc     #0
+1:      wfe
+        b       1b
+#endif
+
 #ifdef ARMEDIT_PROBE_COMPAT
 /*
  * One bit of output from a machine that has no console.
