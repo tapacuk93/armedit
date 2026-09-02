@@ -45,9 +45,24 @@ config.memorySize = 512 * 1024 * 1024
 // output is this program's output. It is virtio, which the kernel does not yet
 // speak - the point for now is that the machine boots far enough to want one.
 let console = VZVirtioConsoleDeviceSerialPortConfiguration()
-console.attachment = VZFileHandleSerialPortAttachment(
-    fileHandleForReading: FileHandle.standardInput,
-    fileHandleForWriting: FileHandle.standardOutput)
+
+// A real file rather than this process's stdout, when asked.
+//
+// Worth being able to choose: the guest's console output goes to whatever
+// handle is attached, and a pipe that something upstream has stopped reading
+// behaves differently from a file. When a device is not consuming buffers at
+// all, ruling out the shape of the far end is cheaper than reasoning about it.
+if let path = ProcessInfo.processInfo.environment["VZRUN_OUT"] {
+    FileManager.default.createFile(atPath: path, contents: nil)
+    guard let out = FileHandle(forWritingAtPath: path) else { die("cannot write \(path)") }
+    let sink = FileHandle(forReadingAtPath: "/dev/null")!
+    console.attachment = VZFileHandleSerialPortAttachment(
+        fileHandleForReading: sink, fileHandleForWriting: out)
+} else {
+    console.attachment = VZFileHandleSerialPortAttachment(
+        fileHandleForReading: FileHandle.standardInput,
+        fileHandleForWriting: FileHandle.standardOutput)
+}
 config.serialPorts = [console]
 
 config.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]

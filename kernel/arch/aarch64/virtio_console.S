@@ -110,6 +110,35 @@ vcon_init:
         strh    w11, [x9, #AVAIL_IDX]
         dsb     sy
 
+/*
+ * Every queue the device declares, configured, whether or not this driver
+ * intends to use it.
+ *
+ * The framework's console reports four - the port's pair and a control pair -
+ * and the specification does not require a driver to configure queues it will
+ * not use. An implementation that walks all of them at DRIVER_OK and finds two
+ * disabled is a plausible reason for a correctly configured transmit queue to
+ * sit untouched, and giving them rings costs two pages.
+ */
+        bl      SYM(vpci_numq)
+        mov     w19, w0
+        cmp     w19, #2
+        b.ls    3f
+        mov     w0, #2
+        LEA     x1, c0_desc
+        LEA     x2, c0_avail
+        LEA     x3, c0_used
+        mov     w4, #QSIZE
+        bl      SYM(vpci_queue)
+        cmp     w19, #3
+        b.ls    3f
+        mov     w0, #3
+        LEA     x1, c1_desc
+        LEA     x2, c1_avail
+        LEA     x3, c1_used
+        mov     w4, #QSIZE
+        bl      SYM(vpci_queue)
+3:
         bl      SYM(vpci_ready)
 
         mov     w0, #RXQ                /* and tell it there is one */
@@ -280,6 +309,18 @@ rx_used:   .space (6 + 8 * QSIZE)
 tx_buf:    .space 512
         .p2align 12
 rx_buf:    .space 64
+        .p2align 12
+c0_desc:   .space (16 * QSIZE)
+        .p2align 12
+c0_avail:  .space (6 + 2 * QSIZE)
+        .p2align 12
+c0_used:   .space (6 + 8 * QSIZE)
+        .p2align 12
+c1_desc:   .space (16 * QSIZE)
+        .p2align 12
+c1_avail:  .space (6 + 2 * QSIZE)
+        .p2align 12
+c1_used:   .space (6 + 8 * QSIZE)
         .p2align 3
 vcon_up:   .space 4
 tx_size:   .space 4

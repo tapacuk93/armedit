@@ -455,9 +455,162 @@ SYM(vpci_kick_queue):
 #endif
 9:      ret
 
+
+/*
+ * vpci_txtest - w0 = a device id, w1 = a queue. out w0 = 1 if it was taken.
+ *
+ * The transmit direction, on whichever queue is named. Written because the
+ * console declares four queues, offers no multiport feature to explain them,
+ * and ignores a buffer offered on the one the specification says is its
+ * transmit queue. Asking each in turn is cheaper than reasoning about a layout
+ * the device has not described.
+ */
+        .globl  SYM(vpci_txtest)
+SYM(vpci_txtest):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+        mov     w19, w1
+
+        bl      SYM(vpci_open)
+        cmn     w0, #1
+        b.eq    .Ltx_no
+
+        mov     w0, w19
+        LEA     x1, st_desc
+        LEA     x2, st_avail
+        LEA     x3, st_used
+        mov     w4, #4
+        bl      SYM(vpci_queue)
+        cmn     w0, #1
+        b.eq    .Ltx_no
+
+        LEA     x9, st_desc             /* a readable buffer this time */
+        LEA     x10, st_buf
+        str     x10, [x9, #0]
+        mov     w11, #4
+        str     w11, [x9, #8]
+        strh    wzr, [x9, #12]
+        strh    wzr, [x9, #14]
+        LEA     x9, st_avail
+        strh    wzr, [x9, #4]
+        dsb     sy
+        mov     w11, #1
+        strh    w11, [x9, #2]
+        dsb     sy
+
+        bl      SYM(vpci_ready)
+        mov     w0, w19
+        bl      SYM(vpci_kick_queue)
+
+        mov     w20, #0
+1:      LEA     x9, st_used
+        ldrh    w21, [x9, #2]
+        cbnz    w21, .Ltx_yes
+        add     w20, w20, #1
+        mov     w9, #0x8000
+        movk    w9, #0x001E, lsl #16
+        cmp     w20, w9
+        b.lo    1b
+.Ltx_no:
+        mov     w0, #0
+        b       .Ltx_out
+.Ltx_yes:
+        mov     w0, #1
+.Ltx_out:
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
+ * vpci_selftest - w0 = a device id. out w0 = 1 if it serviced one buffer.
+ *
+ * The console is configured correctly by every check available from inside the
+ * guest and still never takes a buffer. That leaves two possibilities and they
+ * want different work: either nothing on this machine will service a ring - a
+ * transport or memory problem - or the console in particular will not, which
+ * is a console problem.
+ *
+ * Entropy answers it. It is the simplest device there is: one queue, hand it a
+ * writable buffer, and it fills it. If that works the transport is sound and
+ * the fault is in the console; if it does not, the fault is underneath both
+ * and looking harder at the console is looking in the wrong place.
+ */
+        .globl  SYM(vpci_selftest)
+SYM(vpci_selftest):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+
+        bl      SYM(vpci_open)
+        cmn     w0, #1
+        b.eq    .Lst_no
+
+        mov     w0, #0                  /* its only queue */
+        LEA     x1, st_desc
+        LEA     x2, st_avail
+        LEA     x3, st_used
+        mov     w4, #4
+        bl      SYM(vpci_queue)
+        cmn     w0, #1
+        b.eq    .Lst_no
+        mov     w19, w0                 /* the size in force */
+
+        LEA     x9, st_desc             /* one buffer, device-writable */
+        LEA     x10, st_buf
+        str     x10, [x9, #0]
+        mov     w11, #16
+        str     w11, [x9, #8]
+        mov     w11, #2                 /* VIRTQ_DESC_F_WRITE */
+        strh    w11, [x9, #12]
+        strh    wzr, [x9, #14]
+
+        LEA     x9, st_avail
+        strh    wzr, [x9, #4]           /* ring[0] = descriptor 0 */
+        dsb     sy
+        mov     w11, #1
+        strh    w11, [x9, #2]
+        dsb     sy
+
+        bl      SYM(vpci_ready)
+        mov     w0, #0
+        bl      SYM(vpci_kick_queue)
+
+        mov     w20, #0
+1:      LEA     x9, st_used
+        ldrh    w21, [x9, #2]
+        cbnz    w21, .Lst_yes
+        add     w20, w20, #1
+        mov     w9, #0x8000
+        movk    w9, #0x001E, lsl #16
+        cmp     w20, w9
+        b.lo    1b
+
+.Lst_no:
+        mov     w0, #0
+        b       .Lst_out
+.Lst_yes:
+        mov     w0, #1
+.Lst_out:
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
         .section .bss
         .p2align 3
 vpci_common:      .space 8
 vpci_notify:      .space 8
 vpci_kick:        .space (8 * VPCI_QUEUES)
 vpci_notify_mult: .space 4
+        .p2align 12
+st_desc:   .space 64
+        .p2align 12
+st_avail:  .space 16
+        .p2align 12
+st_used:   .space 48
+        .p2align 12
+st_buf:    .space 64

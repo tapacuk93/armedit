@@ -227,6 +227,13 @@ boot: $(B)/kernel.elf
 
 # Prove the fault handler by faulting: builds a kernel that takes an unaligned
 # load on the way up, and expects a report rather than a silence.
+# End to end, in a virtual machine, on the features as somebody would use them.
+# The offline case needs nothing; the rest need a backend, and say so when
+# there is not one.
+.PHONY: e2e
+e2e: $(B)/kernel.img
+	@python3 tests/e2e.py
+
 .PHONY: boot-fault
 boot-fault:
 	@$(MAKE) --no-print-directory clean-kernel

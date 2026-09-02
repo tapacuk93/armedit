@@ -262,6 +262,9 @@ SYM(op_run):
         mov     x1, x2                  /* out     */
         add     x2, x2, w3, uxtw        /* limit   */
         sub     x2, x2, #1              /* room for a terminator */
+        stp     x9, x1, [sp, #16]       /* the entry and the values, across the call */
+        bl      op_helpers_fill
+        ldp     x9, x1, [sp, #16]
         LEA     x3, SYM(op_helpers)
         blr     x9
         ldp     x29, x30, [sp], #32
@@ -282,12 +285,50 @@ op_probe_end:
  * deliberate: it is the entire surface a blob has on the rest of the program.
  */
         .globl  SYM(op_helpers)
+/*
+ * The helpers a compiled operation calls, filled in at run time.
+ *
+ * This used to be five .quad entries naming the functions, which the linker
+ * resolved to their addresses - correct exactly when the image runs where it
+ * was linked. It does not: the arm64 image header says this kernel may be
+ * placed anywhere 2MB-aligned, and QEMU duly loads it two megabytes higher
+ * than the link address. Everything else here is position-independent because
+ * LEA is adrp and the operation table holds offsets, so this was the one thing
+ * left holding an absolute address - and the first compiled operation to run
+ * jumped to where str_eq would have been, in memory belonging to nobody.
+ *
+ * Built with LEA instead, once, on the first call. The table has to exist at a
+ * fixed place for the blobs to be handed a pointer to it, and its contents
+ * have to be computed where they are used. Those are different requirements
+ * and this is what satisfying both looks like.
+ */
+        BSS
+        .p2align 3
 SYM(op_helpers):
-        .quad   SYM(str_eq)
-        .quad   SYM(op_append)
-        .quad   SYM(js_concat)
-        .quad   SYM(js_truthy)
-        .quad   SYM(js_render)
+        .space  (8 * 5)
+op_helpers_ready:
+        .space  8
+
+        CODE
+        .p2align 2
+op_helpers_fill:
+        LEA     x9, op_helpers_ready
+        ldr     x10, [x9]
+        cbnz    x10, 9f
+        LEA     x11, SYM(op_helpers)
+        LEA     x12, SYM(str_eq)
+        str     x12, [x11, #0]
+        LEA     x12, SYM(op_append)
+        str     x12, [x11, #8]
+        LEA     x12, SYM(js_concat)
+        str     x12, [x11, #16]
+        LEA     x12, SYM(js_truthy)
+        str     x12, [x11, #24]
+        LEA     x12, SYM(js_render)
+        str     x12, [x11, #32]
+        mov     x10, #1
+        str     x10, [x9]
+9:      ret
 
         CODE
         .p2align 2
