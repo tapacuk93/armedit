@@ -62,7 +62,46 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_UART
+#ifdef ARMEDIT_PROBE_QDESC
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        bl      vcon_desc
+        mov     x19, x0
+        mov     w0, #1
+        bl      SYM(vpci_qdesc)         /* does it hold what we wrote? */
+        cmp     x0, x19
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_MULT)
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        bl      SYM(vpci_mult)
+        cmp     w0, #ARMEDIT_PROBE_MULT
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_NOFF)
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #1
+        bl      SYM(vpci_notify_off)
+        cmp     w0, #ARMEDIT_PROBE_NOFF
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_QENABLE)
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #1                  /* the transmit queue */
+        bl      SYM(vpci_enabled)
+        cbz     w0, 1f
+#elif defined(ARMEDIT_PROBE_NUMQ)
+        bl      vcon_init
+        cmn     w0, #1
+        b.eq    1f
+        bl      SYM(vpci_numq)
+        cmp     w0, #2                  /* at least a receive and a transmit */
+        b.lo    1f
+#elif defined(ARMEDIT_PROBE_UART)
         bl      uart_where              /* did we find a serial port? */
         cbz     x0, 1f
 #elif defined(ARMEDIT_PROBE_DRIVEROK)

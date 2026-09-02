@@ -54,10 +54,12 @@
 #define COMMON_DF       0x04
 #define COMMON_GFSELECT 0x08
 #define COMMON_GF       0x0C
+#define COMMON_MSIX_CFG 0x10
 #define COMMON_NUMQ     0x12
 #define COMMON_STATUS   0x14
 #define COMMON_QSELECT  0x16
 #define COMMON_QSIZE    0x18
+#define COMMON_QMSIX    0x1A
 #define COMMON_QENABLE  0x1C
 #define COMMON_QNOTIFY  0x1E
 #define COMMON_QDESC    0x20
@@ -70,6 +72,9 @@
 #define ST_FEATURES_OK  8
 
 #define VIRTIO_VENDOR   0x1AF4
+
+/* How many queues a device here may have. Consoles use two. */
+#define VPCI_QUEUES     4
 
         CODE
         .p2align 2
@@ -163,6 +168,17 @@ SYM(vpci_open):
         strb    w9, [x21, #COMMON_STATUS]
         mov     w9, #(ST_ACK | ST_DRIVER)
         strb    w9, [x21, #COMMON_STATUS]
+
+/*
+ * No interrupt vector, said explicitly.
+ *
+ * These fields hold a vector number and the value meaning "none" is 0xFFFF,
+ * not zero - so a driver that leaves them alone has asked for vector zero of
+ * an MSI-X table it never configured. This kernel polls; it wants no vector at
+ * all, and saying so is one store.
+ */
+        mov     w9, #0xFFFF
+        strh    w9, [x21, #COMMON_MSIX_CFG]
 
         /*
          * VIRTIO_F_VERSION_1, and nothing else.
@@ -297,6 +313,9 @@ SYM(vpci_queue):
  * whatever is next in .bss. It looked exactly like a device that ignored
  * everything, because the entries it read were never the ones we wrote.
  */
+        mov     w11, #0xFFFF            /* this queue wants no vector either */
+        strh    w11, [x9, #COMMON_QMSIX]
+
         cmp     w10, w4
         b.ls    1f
         strh    w4, [x9, #COMMON_QSIZE]
@@ -328,8 +347,12 @@ SYM(vpci_queue):
         LEA     x12, vpci_notify
         ldr     x12, [x12]
         add     x12, x12, w11, uxtw
-        LEA     x13, vpci_kick
-        str     x12, [x13]
+        LEA     x13, vpci_kick          /* per queue: one address for all of
+                                           them meant kicking the receive queue
+                                           wrote to the transmit queue's
+                                           doorbell, which is a notification
+                                           the device is entitled to ignore */
+        str     x12, [x13, w0, uxtw #3]
 
         mov     w11, #1
         strh    w11, [x9, #COMMON_QENABLE]
@@ -348,6 +371,63 @@ SYM(vpci_ready):
         strb    w10, [x9, #COMMON_STATUS]
 9:      ret
 
+/* vpci_enabled - w0 = which queue, out w0 = its queue_enable, for asking. */
+        .globl  SYM(vpci_enabled)
+SYM(vpci_enabled):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        strh    w0, [x9, #COMMON_QSELECT]
+        ldrh    w0, [x9, #COMMON_QENABLE]
+        ret
+9:      mov     w0, #0
+        ret
+
+/* vpci_qdesc - w0 = which queue, out x0 = the descriptor address it holds. */
+        .globl  SYM(vpci_qdesc)
+SYM(vpci_qdesc):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        strh    w0, [x9, #COMMON_QSELECT]
+        ldr     w10, [x9, #COMMON_QDESC]
+        ldr     w11, [x9, #(COMMON_QDESC + 4)]
+        mov     x0, x10
+        orr     x0, x0, x11, lsl #32
+        ret
+9:      mov     x0, #0
+        ret
+
+/* vpci_mult - out w0 = the notification multiplier the device declared. */
+        .globl  SYM(vpci_mult)
+SYM(vpci_mult):
+        LEA     x9, vpci_notify_mult
+        ldr     w0, [x9]
+        ret
+
+/* vpci_notify_off - w0 = which queue, out w0 = its notification offset. */
+        .globl  SYM(vpci_notify_off)
+SYM(vpci_notify_off):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        strh    w0, [x9, #COMMON_QSELECT]
+        ldrh    w0, [x9, #COMMON_QNOTIFY]
+        ret
+9:      mov     w0, #0
+        ret
+
+/* vpci_numq - out w0 = how many queues the device says it has. */
+        .globl  SYM(vpci_numq)
+SYM(vpci_numq):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        ldrh    w0, [x9, #COMMON_NUMQ]
+        ret
+9:      mov     w0, #0
+        ret
+
 /* vpci_status - out w0 = the device's status byte, for asking what it thinks. */
         .globl  SYM(vpci_status)
 SYM(vpci_status):
@@ -362,16 +442,22 @@ SYM(vpci_status):
 /* vpci_kick_queue - w0 = which queue. Tells the device to look. */
         .globl  SYM(vpci_kick_queue)
 SYM(vpci_kick_queue):
+        cmp     w0, #VPCI_QUEUES
+        b.hs    9f
         LEA     x9, vpci_kick
-        ldr     x9, [x9]
+        ldr     x9, [x9, w0, uxtw #3]
         cbz     x9, 9f
         dsb     sy                      /* the ring must be visible first */
+#ifdef ARMEDIT_NOTIFY32
+        str     w0, [x9]
+#else
         strh    w0, [x9]
+#endif
 9:      ret
 
         .section .bss
         .p2align 3
 vpci_common:      .space 8
 vpci_notify:      .space 8
-vpci_kick:        .space 8
+vpci_kick:        .space (8 * VPCI_QUEUES)
 vpci_notify_mult: .space 4

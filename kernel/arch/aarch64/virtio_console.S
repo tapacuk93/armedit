@@ -87,7 +87,34 @@ vcon_init:
         LEA     x9, tx_size
         str     w0, [x9]
 
+/*
+ * Somewhere for input to go, before the device is told it may run.
+ *
+ * Nothing here reads it. It exists because a device with an empty receive
+ * queue has nowhere to put a keystroke, and an implementation that checks for
+ * that before doing anything at all would refuse to transmit either - which is
+ * a plausible reason for a correctly configured queue to sit untouched.
+ */
+        LEA     x9, rx_desc
+        LEA     x10, rx_buf
+        str     x10, [x9, #DESC_ADDR]
+        mov     w11, #64
+        str     w11, [x9, #DESC_LEN]
+        mov     w11, #2                 /* device-writable */
+        strh    w11, [x9, #DESC_FLAGS]
+        strh    wzr, [x9, #DESC_NEXT]
+        LEA     x9, rx_avail
+        strh    wzr, [x9, #AVAIL_RING]
+        dsb     sy
+        mov     w11, #1
+        strh    w11, [x9, #AVAIL_IDX]
+        dsb     sy
+
         bl      SYM(vpci_ready)
+
+        mov     w0, #RXQ                /* and tell it there is one */
+        bl      SYM(vpci_kick_queue)
+
         LEA     x9, vcon_up
         mov     w10, #1
         str     w10, [x9]
@@ -98,6 +125,12 @@ vcon_init:
 .Lvi_out:
         ldr     x19, [sp, #16]
         ldp     x29, x30, [sp], #32
+        ret
+
+/* vcon_desc - out x0 = where we told the device our descriptors are. */
+        .globl  vcon_desc
+vcon_desc:
+        LEA     x0, tx_desc
         ret
 
 /* vcon_qsize - w0 = the transmit ring size actually in force. */
@@ -245,6 +278,8 @@ rx_avail:  .space (6 + 2 * QSIZE)
 rx_used:   .space (6 + 8 * QSIZE)
         .p2align 12
 tx_buf:    .space 512
+        .p2align 12
+rx_buf:    .space 64
         .p2align 3
 vcon_up:   .space 4
 tx_size:   .space 4
