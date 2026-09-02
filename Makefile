@@ -35,7 +35,7 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               net/http.S app/backend_client.S app/env.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S app/localops.S net/html.S net/browse.S kernel/dns.S \
-              kernel/dtb.S kernel/pci.S kernel/screen.S kernel/report.S \
+              kernel/dtb.S kernel/pci.S kernel/screen.S kernel/report.S kernel/dhcp.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 # The approved operations, turned into a table the linker can place. Generated
@@ -73,7 +73,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine clean
+.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network clean
 all: tty window kernel backend
 tty: $(B)/armedit-tty
 window: $(B)/armedit-window
@@ -248,6 +248,12 @@ treefb: $(B)/kernel.img
 # What the machine says about itself, on its own screen. The first boot on real
 # hardware has no serial port anybody can reach, so this is the whole of what
 # that machine can tell you.
+# Joining a network: the half of "wifi" that is not the radio, and the half
+# that is identical on wired and wireless and can be proved in a VM.
+.PHONY: network
+network: $(B)/kernel.img
+	@python3 tests/network.py
+
 .PHONY: machine
 machine: $(B)/kernel.img
 	@python3 tests/machine.py

@@ -517,6 +517,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `tests/treefb.py` | `make treefb` — the bare-metal display path, drawn through and read back |
 | `tests/rebootpath.py` | `make reboot-path` — restarting a machine with no PSCI, end to end |
 | `kernel/report.S` | what the machine found, on the panel as well as the wire |
+| `kernel/dhcp.S` | asking the network for an address instead of assuming one |
+| `tests/network.py` | `make network` — the exchange, read back off the wire |
 | `tests/machine.py` | `make machine` — both first boots, wire and pixels |
 | `tools/loadertree.py` | makes QEMU's device tree describe the machine this is aimed at |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
@@ -682,6 +684,45 @@ Twenty checks: every field on the wire by name and value, the report drawn in th
 pixels at the address the tree named rather than only sent down the wire, that it
 comes before the network is tried, and that on the machine that cannot be typed
 at the page is still there four seconds later with no editor over it.
+
+### Wifi, and the half of it that is not the radio
+
+Joining a wireless network is two problems spoken of as one. The radio —
+association, WPA, firmware pulled out of the macOS install — is silicon
+specific, undocumented on this hardware, and cannot be emulated to test
+against. Everything after the link comes up is none of those things: it is
+DHCP, it is identical on wired and wireless, and QEMU's user networking runs a
+DHCP server. So that half is written and proved in a virtual machine rather than
+discovered on hardware.
+
+It needed doing regardless. The kernel knew its own address by having been told
+it at compile time — `10.0.2.15`, with `10.0.2.2` for the gateway, which are
+QEMU's fixed documented addresses and are correct on exactly one machine. A USB
+Ethernet adapter on bare metal, or a radio when there is one, hands out nothing
+until it is asked, and a machine that assumes those addresses cannot be reached
+and does not know it. `ip_configure` said so in a comment — *"a board on a real
+network would need the discovery, and this is where it would go"* — and now it
+is there.
+
+`kernel/dhcp.S` does the four-packet exchange. The second broadcast is the part
+worth explaining: the request is broadcast rather than sent to the server whose
+offer was taken, so that any *other* server that also offered hears it and
+releases what it had reserved. On a network with one server it changes nothing;
+on a network with two, unicasting it leaks an address every time a machine
+boots.
+
+Everything is built and read a byte at a time, because with the MMU off all
+memory is Device type and a four-byte address at offset 16 of a payload
+beginning 42 bytes into a frame is aligned to nothing.
+
+`make network` does not take the kernel's word for it. A kernel that skipped the
+exchange and printed the address it always used would produce the same log line,
+so the traffic is captured and read back: DISCOVER, OFFER, REQUEST, ACK in that
+order, the discover from `0.0.0.0` to the broadcast address because we have no
+address and do not know whom to ask, the request broadcast and still from
+`0.0.0.0` because the offer is not ours yet, and both carrying this machine's own
+hardware address. Then a second machine with a network device and nothing behind
+it, which must say so and carry on rather than hang.
 
 ### USB, and why not wifi first
 

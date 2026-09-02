@@ -597,16 +597,41 @@ kmain:
         bl      net_init
         cmn     w0, #1
         b.eq    1f
-        movz    w0, #0x000A                     /* 10.0.2.15, and 10.0.2.2 for */
-        movk    w0, #0x0F02, lsl #16            /* the gateway: QEMU's user
-                                                   network uses fixed,
-                                                   documented addresses, so
-                                                   they can be told rather than
-                                                   discovered */
+
+/*
+ * Ask the network what this machine's address is.
+ *
+ * It used to be told: 10.0.2.15, with 10.0.2.2 for the gateway, which are
+ * QEMU's user-mode network's fixed and documented addresses and are correct
+ * nowhere else. A board on a real network - a USB Ethernet adapter on bare
+ * metal, or a radio when there is one - has no address until it asks, and one
+ * that assumes those cannot be reached and does not know it.
+ *
+ * If nobody answers, the hard-coded pair is still tried. Not as a fallback
+ * anybody should rely on: it is right on exactly one kind of machine, and on
+ * that machine a DHCP server exists and will have answered. It is there so
+ * that a network device with no server behind it behaves as it did before
+ * rather than differently, which keeps this change to one thing.
+ */
+        bl      SYM(dhcp_configure)
+        cmn     w0, #1
+        b.ne    3f
+        LEA     x0, m_nodhcp
+        bl      platform_puts
+        movz    w0, #0x000A
+        movk    w0, #0x0F02, lsl #16
         movz    w1, #0x000A
         movk    w1, #0x0202, lsl #16
         bl      SYM(ip_configure)
-        LEA     x0, m_net
+        b       4f
+3:      LEA     x0, m_dhcp
+        bl      platform_puts
+        LEA     x9, SYM(my_ip)
+        ldr     w0, [x9]
+        bl      dotted_quad
+        LEA     x0, m_nl3
+        bl      platform_puts
+4:      LEA     x0, m_net
         bl      platform_puts
 
         LEA     x0, s_keyfile
@@ -641,6 +666,62 @@ kmain:
         bl      platform_puts
 .Lidle:
         ldp     x29, x30, [sp], #16
+        ret
+
+/*
+ * dotted_quad - w0 = an IPv4 address in wire order, printed as people write it.
+ *
+ * A lease is the one boot message whose value is the whole message: "the
+ * network answered" is worth little next to "the network answered 10.0.2.15",
+ * because the second says which network answered.
+ */
+dotted_quad:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+        mov     w20, #0
+/*
+ * Low byte first. An address is kept the way it goes on the wire, which in a
+ * register means the first byte people say is the one in the lowest bits -
+ * taking the top byte first printed 10.0.2.15 as 15.2.0.10, which is a
+ * plausible address and the wrong one.
+ */
+1:      cmp     w20, #4
+        b.hs    2f
+        and     w0, w19, #0xFF
+        bl      put_dec
+        lsr     w19, w19, #8
+        add     w20, w20, #1
+        cmp     w20, #4
+        b.hs    2f
+        LEA     x0, m_dot4
+        bl      platform_puts
+        b       1b
+2:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/* put_dec - w0 in decimal, through whichever channel this machine has. */
+put_dec:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        LEA     x1, quad_text
+        add     x1, x1, #11
+        strb    wzr, [x1]
+        mov     w9, #10
+1:      udiv    w10, w0, w9
+        msub    w11, w10, w9, w0
+        add     w11, w11, #'0'
+        sub     x1, x1, #1
+        strb    w11, [x1]
+        mov     w0, w10
+        cbnz    w0, 1b
+        mov     x0, x1
+        bl      platform_puts
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
         ret
 
 #ifdef ARMEDIT_DTB_DUMP
@@ -683,9 +764,14 @@ dtb_show:
 keybuf:   .space 256
         .p2align 3
 dtb_arg:  .space 8
+quad_text: .space 16    /* somewhere to build one number at a time */
 
         .section .rodata
 m_boot:   .asciz "armedit: boot\n"
+m_dhcp:   .asciz "armedit: the network gave us "
+m_nodhcp: .asciz "armedit: nobody answered DHCP - using QEMU's fixed addresses\n"
+m_dot4:   .asciz "."
+m_nl3:    .asciz "\n"
 #ifdef ARMEDIT_REBOOT_TEST
 m_reboot_returned: .asciz "armedit: reboot returned\n"
 #endif
