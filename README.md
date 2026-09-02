@@ -516,6 +516,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `tests/` | `make test` — the backend's judgement, and the aarch64 it emits, run |
 | `tests/treefb.py` | `make treefb` — the bare-metal display path, drawn through and read back |
 | `tests/rebootpath.py` | `make reboot-path` — restarting a machine with no PSCI, end to end |
+| `kernel/report.S` | what the machine found, on the panel as well as the wire |
+| `tests/machine.py` | `make machine` — both first boots, wire and pixels |
 | `tools/loadertree.py` | makes QEMU's device tree describe the machine this is aimed at |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
 
@@ -619,6 +621,47 @@ puts its own psci node back, so a file with the node removed arrives at the
 guest with the node present. That cost an afternoon. The test build forces the
 condition instead and says so, and everything past that point — the tree, the
 search, the stores — is real.
+
+### The first boot has one channel
+
+Everything above reports over the serial port, and on every machine this has run
+on that was the same thing as reporting somewhere. The target is not such a
+machine. A MacBook booted from its own disk has no serial port reachable without
+a special cable and a second computer — so a kernel that says *"no framebuffer on
+this machine, serial only"* over the serial port has, on that machine, said
+nothing. And "printed an explanation nobody can read" looks exactly like "died
+before printing anything", which is the worst pair of outcomes to be unable to
+tell apart on a first boot.
+
+So `kernel/report.S` puts what it found on the panel as well as the wire: the
+exception level the loader left it at, the CPU, which of the two handovers
+arrived and where, the screen — distinguishing one **handed over** by a loader
+from a **ramfb it asked for**, because those are different code paths and which
+ran is the fact worth having — the serial port and whether it is a PL011 or an
+s5l, how the machine would restart, and whether anybody can type at it. Addresses
+print as sixteen hex digits, not eight: on this machine an address is
+`0x40200000` and eight is plenty, and on the target memory starts above the
+thirty-second bit, where an eight-digit print of a real address is a different
+number that looks plausible.
+
+It runs before the network and before the editor, since those are the likeliest
+things to go wrong and a report that only appears once everything worked is a
+report about the case nobody needed one for. Anything absent prints as absent —
+that is the useful answer, and a line that simply is not there could always be a
+line that was never written.
+
+If there is no keyboard, it stays. That is the expected first boot on real
+hardware, where the keyboard is behind a USB stack that does not exist yet, and
+starting an editor there would replace the only useful thing on the screen with
+an empty document nobody can fill in. The last line says it is stopping, because
+a machine that stopped on purpose and one that hung look the same otherwise.
+
+`make machine` checks both first boots — the one with a keyboard and a screen it
+asked for, and the one handed a screen by a loader with nothing to type at.
+Twenty checks: every field on the wire by name and value, the report drawn in the
+pixels at the address the tree named rather than only sent down the wire, that it
+comes before the network is tried, and that on the machine that cannot be typed
+at the page is still there four seconds later with no editor over it.
 
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different

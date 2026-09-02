@@ -548,6 +548,36 @@ kmain:
         bl      console_init
         tbnz    w0, #31, .Lno_display
 
+/*
+ * Say what this machine turned out to be, on the machine's own screen.
+ *
+ * Everything above here reported over the serial port, which on the target is
+ * a cable most people do not have into a header most people cannot reach. A
+ * kernel that explains itself only there has, on that machine, not explained
+ * itself - and "printed something nobody can read" and "died before printing"
+ * look identical from in front of the display.
+ *
+ * Before the network and before the editor, because those are the parts most
+ * likely to be what goes wrong, and a report that only appears once everything
+ * worked is a report about the case nobody needed one for.
+ */
+        LEA     x9, dtb_arg
+        ldr     x0, [x9]
+        bl      SYM(report_show)
+
+/*
+ * And if nothing can be typed at it, stay there.
+ *
+ * The editor needs somebody to type. On a machine with no keyboard - the
+ * expected first boot on real hardware, where the keyboard is behind a USB
+ * stack that does not exist yet - starting it would replace the only useful
+ * thing on the screen with an empty document that cannot be filled in.
+ */
+        bl      platform_haskbd
+        cbnz    w0, 1f
+        bl      SYM(report_hold)
+1:
+
         LEA     x0, m_ready
         bl      platform_puts
         LEA     x0, m_keys

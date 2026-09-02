@@ -262,6 +262,19 @@ platform_puts:
  * A machine with no keyboard still has the wire, which is how this kernel was
  * driven before the driver existed.
  */
+/*
+ * platform_haskbd - w0 = 1 if this machine turned out to have a keyboard.
+ *
+ * Asked by the report, which changes what it does with the answer: a machine
+ * with no way to type at it is a machine where nothing further is going to
+ * happen, and the most useful thing it can put on its screen is what it found.
+ */
+        .globl  platform_haskbd
+platform_haskbd:
+        LEA     x9, kbd_present
+        ldr     w0, [x9]
+        ret
+
         .globl  platform_getc
 platform_getc:
         stp     x29, x30, [sp, #-16]!
