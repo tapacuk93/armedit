@@ -462,6 +462,18 @@ SYM(vpci_qdesc):
 9:      mov     x0, #0
         ret
 
+/* vpci_qsize_of - w0 = a queue, out w0 = the size the device proposes. */
+        .globl  SYM(vpci_qsize_of)
+SYM(vpci_qsize_of):
+        LEA     x9, vpci_common
+        ldr     x9, [x9]
+        cbz     x9, 9f
+        strh    w0, [x9, #COMMON_QSELECT]
+        ldrh    w0, [x9, #COMMON_QSIZE]
+        ret
+9:      mov     w0, #0
+        ret
+
 /* vpci_mult - out w0 = the notification multiplier the device declared. */
         .globl  SYM(vpci_mult)
 SYM(vpci_mult):

@@ -285,6 +285,39 @@ vcon_qtest:
         ldp     x29, x30, [sp], #48
         ret
 
+/*
+ * vcon_heard - out w0 = 1 if the device answered on the control queue.
+ *
+ * The buffer posted there before DEVICE_READY was sent. If it came back the
+ * device said something; if it did not, the control conversation never
+ * started and everything after it was a monologue.
+ */
+        .globl  vcon_heard
+vcon_heard:
+        LEA     x9, cr_desc
+        ldrh    w10, [x9, #14]
+        and     w11, w10, #0x0080
+        lsr     w11, w11, #7
+        and     w12, w10, #0x8000
+        lsr     w12, w12, #15
+        cmp     w11, w12
+        cset    w0, eq
+        ret
+
+/* vcon_said - out w0 = the event in whatever the device sent. */
+        .globl  vcon_said
+vcon_said:
+        LEA     x9, cr_buf
+        ldrh    w0, [x9, #4]
+        ret
+
+/* vcon_said_id - out w0 = the port id in whatever the device sent. */
+        .globl  vcon_said_id
+vcon_said_id:
+        LEA     x9, cr_buf
+        ldr     w0, [x9]
+        ret
+
 /* vcon_desc - out x0 = where we told the device our descriptors are. */
         .globl  vcon_desc
 vcon_desc:
@@ -447,6 +480,7 @@ vcon_puts:
 
         .section .rodata
 s_probe_nl: .asciz "\n"
+s_hello:    .asciz "HELLO FROM ARMEDIT\n"
 
         .section .bss
         .p2align 12

@@ -62,7 +62,69 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_RX
+#ifdef ARMEDIT_PROBE_BLIND
+/*
+ * Transmit and do not wait.
+ *
+ * Every test so far has decided "did it work" by whether the descriptor came
+ * back marked used. If this device prints without doing that, every one of
+ * those answers has been about the wrong thing.
+ */
+        movz    w0, #0x1043
+        mov     w1, #1
+        bl      vcon_blind
+        wfe
+1:      wfe
+        b       1b
+#elif defined(ARMEDIT_PROBE_NOFF2)
+        movz    w0, #0x1043
+        mov     w1, #0
+        bl      SYM(vpci_open_n)
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #ARMEDIT_PROBE_QN
+        bl      SYM(vpci_notify_off)
+        cmp     w0, #ARMEDIT_PROBE_NOFF2
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_QOK)
+        movz    w0, #0x1043
+        mov     w1, #0
+        bl      SYM(vpci_open_n)
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #ARMEDIT_PROBE_QOK
+        LEA     x1, dtb_arg             /* any aligned scratch will do here */
+        LEA     x2, dtb_arg
+        LEA     x3, dtb_arg
+        mov     w4, #8
+        bl      SYM(vpci_queue)
+        cmn     w0, #1
+        b.eq    1f
+#elif defined(ARMEDIT_PROBE_QSZ)
+        movz    w0, #0x1043
+        mov     w1, #0
+        bl      SYM(vpci_open_n)
+        cmn     w0, #1
+        b.eq    1f
+        mov     w0, #ARMEDIT_PROBE_QN
+        bl      SYM(vpci_qsize_of)
+        cmp     w0, #ARMEDIT_PROBE_QSZ
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_HEARD)
+        bl      vcon_init
+        bl      vcon_heard              /* did it answer at all? */
+        cbz     w0, 1f
+#elif defined(ARMEDIT_PROBE_SAID)
+        bl      vcon_init
+        bl      vcon_said
+        cmp     w0, #ARMEDIT_PROBE_SAID
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_SAIDID)
+        bl      vcon_init
+        bl      vcon_said_id
+        cmp     w0, #ARMEDIT_PROBE_SAIDID
+        b.ne    1f
+#elif defined(ARMEDIT_PROBE_RX)
         mov     w0, #0                  /* console zero, the one that answers */
         mov     w1, #ARMEDIT_PROBE_Q
         mov     w2, #ARMEDIT_PROBE_W
