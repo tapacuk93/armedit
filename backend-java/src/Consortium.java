@@ -596,18 +596,37 @@ final class Consortium {
      * be choosing that knowingly.
      */
     static String afterwards(int registered, int threshold, boolean canWait) {
+        String who = ("WHO IS HERE       This deployment has %d registered account%s.%s\n")
+                .formatted(registered, registered == 1 ? "" : "s",
+                        registered <= 1
+                                ? "\n                  The person who asked for this is the "
+                                  + "entire user base."
+                                : "");
         if (!canWait) {
-            return ("WHAT A HOLD DOES  It ends this. There are %d registered accounts and "
-                    + "the\n                  waiting list needs %d distinct people, so nothing "
-                    + "can come\n                  off it. Do not hold in order to see more "
-                    + "evidence; there\n                  will not be any.").formatted(registered, threshold);
+            /*
+             * The last sentence is the one that matters, and it is about what
+             * the question even is. On a deployment too small to reach the
+             * threshold, "we cannot settle whether anybody wants this" is not
+             * an open question that time would close: everybody who could want
+             * it has already asked. A reviewer holding out for demand there is
+             * holding out for evidence that already exists, and should be
+             * judging the operation instead.
+             */
+            return who + ("WHAT A HOLD DOES  It ends this. The waiting list below this panel "
+                    + "needs %d\n                  distinct people and cannot get them here, so "
+                    + "nothing comes\n                  off it. Do not hold in order to see "
+                    + "whether anybody wants\n                  this - everybody who could has "
+                    + "already asked. Hold only if\n                  the operation itself is "
+                    + "wrong, too narrow to match twice,\n                  or so broad it will "
+                    + "match what it should not.").formatted(threshold);
         }
-        return ("WHAT A HOLD DOES  A hold every counted member agrees on ends this. A hold\n"
-                + "                  some members vote against keeps it instead, and it ships\n"
-                + "                  once %d distinct people have asked for something it\n"
-                + "                  matches, or expires unasked. So hold if it is wrong, and\n"
-                + "                  hold apart from the others if you would rather wait and\n"
-                + "                  see whether anybody wants it.").formatted(threshold);
+        return who + ("WHAT A HOLD DOES  A hold every counted member agrees on ends this. A "
+                + "hold some\n                  members vote against keeps it instead, and it "
+                + "comes back to\n                  this panel once %d distinct people have "
+                + "asked for something\n                  it matches - with that number in front "
+                + "of you - or expires\n                  unasked. So hold if it is wrong, and "
+                + "hold apart from the\n                  others if the only thing you are "
+                + "missing is whether anybody\n                  wants it.").formatted(threshold);
     }
 
     /**

@@ -106,15 +106,29 @@ public class WaitingTest {
         String cannot = Triage.demand(1, 1, 3, false);
         ok(cannot.contains("Decide"), "a model that cannot defer is told to decide");
         ok(cannot.contains("never to decide"), "...and told what deferring would mean");
+        ok(cannot.contains("1 registered account,"),
+           "...and told how many people there are");
+        ok(cannot.contains("entire user base"),
+           "...and that with one of them, demand is not the open question");
         String can = Triage.demand(1, 9, 3, true);
-        ok(!can.contains("never to decide") && can.contains("can happen"),
-           "a model that can defer is told that instead");
+        ok(!can.contains("never to decide") && can.contains("9 registered accounts"),
+           "a model that can defer is told the count too");
 
         String ends = Consortium.afterwards(1, 3, false);
         ok(ends.contains("It ends this"), "the panel is told a hold ends it, where it does");
+        ok(ends.contains("1 registered account."),
+           "...and how many people are on this deployment");
+        ok(ends.contains("entire user base"),
+           "...and that the one who asked is all of them");
+        ok(ends.contains("everybody who could has\n                  already asked")
+           || ends.contains("everybody who could has already asked"),
+           "...so demand is not a reason to hold");
         String keeps = Consortium.afterwards(9, 3, true);
-        ok(keeps.contains("some members vote against keeps it"),
+        ok(keeps.contains("9 registered accounts"), "a larger panel is told the count as well");
+        ok(keeps.contains("members vote against keeps it"),
            "...and told how to say \"wait and see\" where it can");
+        ok(keeps.contains("comes back to"),
+           "...and that waiting returns it to them rather than going past them");
 
         // --- a split hold is doubt; an agreed one is a refusal
         var yes = new Consortium.Vote("m1", true, "worth having", List.of(), null);

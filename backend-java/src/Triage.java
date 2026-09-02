@@ -139,13 +139,19 @@ final class Triage {
                 : "One person asked for this once. That is not evidence that it is "
                   + "general; it is a reason to look.";
         String wait = canWait
-                ? ("If the panel is also unsure, this is kept and shipped once %d distinct "
-                   + "people have asked for something it matches. There are %d registered "
-                   + "accounts, so that can happen.").formatted(threshold, registered)
-                : ("There are %d registered accounts and the waiting list below the panel "
-                   + "needs %d distinct people, so nothing can ever come off it. On this "
-                   + "deployment an unsure answer is a decision never to decide. Decide.")
-                          .formatted(registered, threshold);
+                ? ("This deployment has %d registered accounts. If the panel is also unsure, "
+                   + "this is kept until %d distinct people have asked for something it "
+                   + "matches, and then goes back to the panel with that number in front of "
+                   + "it.").formatted(registered, threshold)
+                : ("This deployment has %d registered account%s, and the waiting list below "
+                   + "the panel needs %d distinct people, so nothing can ever come off it. "
+                   + "%sOn this deployment an unsure answer is a decision never to decide. "
+                   + "Decide.").formatted(registered, registered == 1 ? "" : "s", threshold,
+                        registered <= 1
+                                ? "The person who asked for this is the entire user base, so "
+                                  + "whether anybody wants it is not the open question - "
+                                  + "everybody who could has already asked. "
+                                : "");
         return "EVIDENCE    " + asked + " " + wait;
     }
 
