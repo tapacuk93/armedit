@@ -683,6 +683,50 @@ pixels at the address the tree named rather than only sent down the wire, that i
 comes before the network is tried, and that on the machine that cannot be typed
 at the page is still there four seconds later with no editor over it.
 
+### USB, and why not wifi first
+
+The machine needs two things it has not got: something to type on, and a
+network. Wifi on it is Broadcom silicon behind PCIe, behind an IOMMU, wanting
+firmware that lives inside the macOS install, and then 802.11 and a WPA
+supplicant above that. Each of those is a project, none is testable without the
+machine, and at the end of it you have a network and still no keyboard.
+
+USB answers both. A keyboard is USB; an Ethernet adapter is USB and this kernel
+already has IP and TCP waiting behind one. And Apple's USB ports are a
+DesignWare dwc3 controller, which in host mode *is* an xHCI — the standard
+registers at offset zero of its region — so one driver reaches both that and
+every ordinary machine. It is also the one piece of this that QEMU can emulate
+faithfully, which means it can be built against something rather than guessed
+at.
+
+`kernel/arch/aarch64/xhci.S` finds the controller two ways, because the target
+and the test bed disagree about what kind of thing it is: the device tree first,
+under `snps,dwc3`, which is how a platform device is described and what the Mac
+has; PCI class `0x0C0330` second, which is what QEMU has. Then it reads what the
+controller says about itself, resets it — halt, reset, and wait for *Controller
+Not Ready* separately, because that is a later condition than the reset bit and
+writing in the gap is how a driver works on one board and not the next — and
+reports which root ports have something plugged in.
+
+That last number is the one worth having. A base address and a version can both
+be right by accident; the same plausible numbers come back from a controller
+nobody is really talking to. `make machine` plugs in nothing, then a keyboard,
+then a keyboard and a mouse, and requires 0, 1, 2 — a progression only a driver
+reading the real port registers, at the address the capability length really
+gave, can produce.
+
+It caught exactly that. The registers were being read a byte at a time, and a
+controller is entitled to answer anything narrower than a word with nothing: the
+version came back `0.0` and the capability length came back zero, which put the
+operational registers at the wrong address and every port read after them
+somewhere that was not a port. The numbers still looked plausible and one of the
+eight "ports" still reported something attached. Word-wide reads now, masked
+here rather than fetched narrow from the bus.
+
+No rings, no transfers, no device addressed yet. Bring-up is what is wrong first
+on unfamiliar hardware and the part a report can show without a driver behind
+it, so it is worth having on its own.
+
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different
 registers, and the bit that says "you may write" has the opposite sense to the

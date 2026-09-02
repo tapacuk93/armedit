@@ -175,6 +175,62 @@ SYM(pci_find_n):
         ret
 
 /*
+ * pci_class - x0 = a class code, 24 bits: class, subclass, interface.
+ *   out x0 = a config-space address, or 0.
+ *
+ * By what a device *is* rather than who made it. Vendor and device ids find a
+ * particular part; a class code finds whatever this machine happens to have
+ * that speaks the standard, which is the right question for a controller whose
+ * register interface is specified and whose maker is not.
+ *
+ * xHCI is the case in hand: QEMU's is Red Hat's, a real PC's is Intel's or
+ * AMD's, and they are the same registers. Looking for one vendor would refuse
+ * the others for no reason.
+ */
+        .globl  SYM(pci_class)
+SYM(pci_class):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     w19, w0
+
+        bl      SYM(pci_base)
+        cbz     x0, 9f
+        mov     x20, x0
+        mov     w21, #0
+1:      cmp     w21, #32
+        b.hs    9f
+        mov     w22, #0
+2:      cmp     w22, #8
+        b.hs    3f
+        lsl     x9, x21, #15
+        add     x9, x9, x22, lsl #12
+        add     x9, x20, x9
+
+        ldr     w10, [x9, #CFG_VENDOR]
+        and     w11, w10, #0xFFFF
+        mov     w12, #VENDOR_NONE
+        cmp     w11, w12
+        b.eq    4f
+
+        ldr     w10, [x9, #CFG_CLASS]
+        lsr     w10, w10, #8            /* the revision is the low byte */
+        cmp     w10, w19
+        b.ne    4f
+        mov     x0, x9
+        b       8f
+4:      add     w22, w22, #1
+        b       2b
+3:      add     w21, w21, #1
+        b       1b
+9:      mov     x0, #0
+8:      ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
  * pci_bar - x0 = a config-space address, w1 = which BAR, out x0 = its address.
  *
  * Memory BARs only, and 64-bit ones are read as a pair. An I/O BAR comes back

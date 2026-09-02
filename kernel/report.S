@@ -241,6 +241,57 @@ SYM(report_show):
         bl      report_nl
 14:
 
+/*
+ * The USB controller, if this machine has one anywhere.
+ *
+ * It is the road to both of the things this machine has not got - something to
+ * type on and a network - so whether it is there, whether it resets, and
+ * whether anything is plugged into it are the three facts most worth having
+ * from a first boot. A controller that resets and then reports a device on a
+ * port is one this kernel is genuinely talking to, which is the difference
+ * between a wrong base address and a driver bug: otherwise they are the same
+ * silence.
+ */
+        LEA     x0, m_usb
+        bl      report_puts
+        bl      SYM(xhci_find)
+        cbnz    x0, 19f
+        LEA     x0, m_absent
+        bl      report_puts
+        bl      report_nl
+        b       20f
+19:     bl      report_hex
+        LEA     x0, m_xhci
+        bl      report_puts
+        bl      SYM(xhci_version)
+        mov     x23, x0
+        lsr     x0, x23, #8
+        bl      report_dec
+        LEA     x0, m_dot
+        bl      report_puts
+        and     x0, x23, #0xFF
+        lsr     x0, x0, #4
+        bl      report_dec
+        LEA     x0, m_comma
+        bl      report_puts
+        bl      SYM(xhci_reset)
+        cmn     w0, #1
+        b.ne    21f
+        LEA     x0, m_noreset
+        bl      report_puts
+        bl      report_nl
+        b       20f
+21:     bl      SYM(xhci_ports)
+        bl      report_dec
+        LEA     x0, m_ports
+        bl      report_puts
+        bl      SYM(xhci_attached)
+        bl      report_dec
+        LEA     x0, m_attached
+        bl      report_puts
+        bl      report_nl
+20:
+
 /* And whether anybody can type at it, which decides what happens next. */
         LEA     x0, m_keyboard
         bl      report_puts
@@ -384,6 +435,13 @@ m_mb:       .asciz "MB"
 m_screen:   .asciz "  screen        "
 m_serial:   .asciz "  serial        "
 m_restart:  .asciz "  restart       "
+m_usb:      .asciz "  usb           "
+m_xhci:     .asciz " xhci "
+m_dot:      .asciz "."
+m_comma:    .asciz ", "
+m_noreset:  .asciz "would not reset"
+m_ports:    .asciz " ports, "
+m_attached: .asciz " attached"
 m_keyboard: .asciz "  keyboard      "
 m_wdt:      .asciz "watchdog at "
 m_hvc:      .asciz "psci, hvc"

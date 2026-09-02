@@ -63,7 +63,7 @@ def base_tree():
 
 
 class Machine:
-    def __init__(self, name, port, dtb=None, keyboard=True, ramfb=False):
+    def __init__(self, name, port, dtb=None, keyboard=True, ramfb=False, usb=None):
         self.name = name
         self.port = port
         self.serial = os.path.join(SCRATCH, name + ".log")
@@ -78,6 +78,12 @@ class Machine:
             argv += ["-device", "virtio-keyboard-device"]
         if ramfb:
             argv += ["-device", "ramfb"]
+        # None means no controller at all; an empty tuple means a controller
+        # with nothing plugged into it, which is a different machine.
+        if usb is not None:
+            argv += ["-device", "qemu-xhci"]
+            for d in usb:
+                argv += ["-device", d]
         self.argv = argv
 
     def __enter__(self):
@@ -208,6 +214,48 @@ def main():
         ok("armedit: type in the display window" not in log,
            "...and the editor never started over it")
         ok("KERNEL FAULT" not in log, "and nothing faulted doing that either")
+
+    # --- the USB controller, which is the road to both of the things this
+    # machine has not got: something to type on, and a network.
+    #
+    # The count of occupied ports is the assertion that matters. A base address
+    # and a version can both be right by accident - the same numbers come back
+    # from a controller nobody is really talking to. A count that goes 0, 1, 2
+    # as devices are plugged in is a driver reading the port registers the
+    # controller actually keeps, at the address its capability length actually
+    # gave. It was 1 and 0 in the right places while that address was wrong,
+    # which is why the progression is checked and not one reading.
+    cases = [("no controller", None, 4632),
+             ("nothing plugged in", (), 4633),
+             ("a keyboard", ("usb-kbd",), 4634),
+             ("a keyboard and a mouse", ("usb-kbd", "usb-mouse"), 4635)]
+    said = {}
+    for label, devices, port in cases:
+        with Machine("usb%d" % port, port, ramfb=True,
+                     usb=devices if devices is not None else None) as m:
+            log = m.log()
+            said[label] = field(log, "usb") or ""
+            ok("KERNEL FAULT" not in log, "nothing faults with %s" % label)
+
+    ok(said["no controller"] == "absent",
+       "a machine with no controller says absent", said["no controller"])
+    for label in ("nothing plugged in", "a keyboard", "a keyboard and a mouse"):
+        ok("xhci 1.0" in said[label],
+           "the controller is found, and says which xHCI it is (%s)" % label,
+           said[label])
+        ok("would not reset" not in said[label], "...and it resets (%s)" % label)
+    ok("8 ports" in said["a keyboard"],
+       "its own shape is read rather than assumed", said["a keyboard"])
+
+    def attached(label):
+        m = re.search(r"(\d+) attached", said[label])
+        return int(m.group(1)) if m else -1
+
+    ok(attached("nothing plugged in") == 0,
+       "an empty controller reports nothing attached")
+    ok(attached("a keyboard") == 1, "...one device, one port occupied")
+    ok(attached("a keyboard and a mouse") == 2,
+       "...and two, so these are the real port registers")
 
     print()
     if failures:
