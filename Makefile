@@ -261,6 +261,17 @@ $(B)/vzrun: tools/vzrun.swift tools/vz.plist
 vz: $(B)/vzrun $(B)/kernel.img
 	VZRUN_SECONDS=$${VZRUN_SECONDS:-10} $(B)/vzrun $(B)/kernel.img
 
+# A reference: boot somebody else's kernel under the same host and see whether
+# the framework's console carries anything. It does - which is how we know the
+# silence is ours. Needs a distribution vmlinuz; see tools/refkernel.py.
+.PHONY: vz-reference
+vz-reference: $(B)/vzrun
+	@test -n "$(VMLINUZ)" || (echo "give it a kernel: make vz-reference VMLINUZ=path"; exit 1)
+	@python3 tools/refkernel.py $(VMLINUZ) $(B)/reference.Image
+	@VZRUN_SECONDS=$${VZRUN_SECONDS:-25} VZRUN_OUT=$(B)/reference.log 	   $(B)/vzrun $(B)/reference.Image "console=hvc0" >/dev/null 2>&1 || true
+	@echo "--- what the reference kernel put on the console:"
+	@head -c 600 $(B)/reference.log; echo
+
 .PHONY: boot-dtb
 boot-dtb:
 	@$(MAKE) --no-print-directory clean-kernel
