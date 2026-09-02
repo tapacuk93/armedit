@@ -11,7 +11,7 @@ device the guest configures, and this is a buffer the guest is simply given.
 
 QEMU does not hand over such a buffer, which is why this path had until now
 been tested only as a parser: dtb.S and screen.S could read a node, and nothing
-had ever drawn through what they read. tools/addfb.py closes that by putting
+had ever drawn through what they read. tools/loadertree.py closes that by putting
 the node into QEMU's own tree, so the kernel takes the route it will take on
 hardware and the pixels can be read back out of guest memory afterwards.
 
@@ -186,9 +186,9 @@ def pixels(buf):
 def run(name, addr, width, height, stride, port, dtb_in):
     """Boot at one geometry and report what came back, for the caller to judge."""
     dtb = os.path.join(SCRATCH, name + ".dtb")
-    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "addfb.py"),
-                    dtb_in, dtb, hex(addr), str(width), str(height),
-                    "x8r8g8b8", str(stride)],
+    subprocess.run([sys.executable, os.path.join(ROOT, "tools", "loadertree.py"),
+                    dtb_in, dtb, "--fb", hex(addr), str(width), str(height),
+                    "--stride", str(stride)],
                    stderr=subprocess.DEVNULL, check=True)
     with Machine(name, dtb, port) as m:
         tree = stub_dtb_address(m)

@@ -430,7 +430,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `ops/` | approved operations: the machine code, its source, and the votes |
 | `tests/` | `make test` — the backend's judgement, and the aarch64 it emits, run |
 | `tests/treefb.py` | `make treefb` — the bare-metal display path, drawn through and read back |
-| `tools/addfb.py` | puts a loader's `simple-framebuffer` node into a tree that lacks one |
+| `tests/rebootpath.py` | `make reboot-path` — restarting a machine with no PSCI, end to end |
+| `tools/loadertree.py` | makes QEMU's device tree describe the machine this is aimed at |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
 
 ## Getting to bare metal
@@ -466,7 +467,7 @@ out whether an offset was right.
 That much tested the *parser*. Nothing had ever drawn through what it read,
 because QEMU hands over no such framebuffer — it offers ramfb, which the guest
 configures, and that is a different route through different code. `make treefb`
-closes the gap without the machine: `tools/addfb.py` puts the node a real
+closes the gap without the machine: `tools/loadertree.py` puts the node a real
 loader would have left into QEMU's own device tree, the kernel takes the path
 it will take on hardware, and the pixels are read back out of guest memory
 afterwards.
@@ -516,6 +517,23 @@ What no test without the machine can show is that a real Apple watchdog answers
 those three words by restarting, and the README should not pretend otherwise —
 the sequence is the one Linux's `apple_wdt` driver performs, which is as close
 to a specification as a part with no public documentation has.
+
+`make reboot-path` runs that whole path in a booted kernel: ten checks that the
+watchdog is found in QEMU's own tree, that reset-enable lands at `0x1c` and
+zeroes at `0x14` and `0x10`, that the poison left in the first watchdog is
+still there afterwards, and that having armed one the kernel *stops* rather
+than going on to the PSCI call — while a machine with no watchdog does go on to
+it, because then there is genuinely nothing else to try.
+
+Two things about that test are worth keeping. QEMU answers a PSCI call whatever
+its device tree says, so a clean restart and a fall-through look identical from
+outside; the test build prints a line where the call would be instead, which is
+the only way to tell them apart. And the no-PSCI condition cannot be described
+in the tree at all: QEMU's virt board patches whatever tree it is handed and
+puts its own psci node back, so a file with the node removed arrives at the
+guest with the node present. That cost an afternoon. The test build forces the
+condition instead and says so, and everything past that point — the tree, the
+search, the stores — is real.
 
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different

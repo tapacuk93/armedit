@@ -75,14 +75,18 @@ SYM(wdt_find):
 
 /*
  * wdt_reboot - restart through the watchdog.
- *   out w0 = -1, and only ever -1: there is no watchdog, or there is one and
- *   it did not bite. Coming back at all is the failure.
+ *   out w0 = 1 if a watchdog was found and armed, 0 if there was none.
  *
- * The wait afterwards is not politeness. The reset is queued rather than
- * immediate and takes some tens of milliseconds to arrive, and a caller that
- * treated an instant return as a refusal would fall through to something else
- * while the machine was already on its way down - reporting a failure that was
- * about to be contradicted by the hardware.
+ * Returning at all means it did not bite, so neither answer is success. They
+ * are still different answers: "there was nothing to try" leaves a caller free
+ * to try something else, and "it was armed and the machine is still here" does
+ * not - the machine may yet go down, and firing another reset instruction into
+ * one that is already on its way is how a clean restart becomes a fault report
+ * about a restart.
+ *
+ * The wait is part of that. The reset is queued rather than immediate and
+ * takes some tens of milliseconds to arrive; a caller that read an instant
+ * return as a refusal would move on while the hardware was still working.
  */
         .globl  SYM(wdt_reboot)
 SYM(wdt_reboot):
@@ -99,7 +103,10 @@ SYM(wdt_reboot):
         mov     x0, #200                /* milliseconds; it needs about 25 */
         bl      wdt_wait_ms
 
-9:      mov     w0, #-1
+        mov     w0, #1                  /* armed; still here, but it was tried */
+        b       10f
+9:      mov     w0, #0                  /* no watchdog on this machine */
+10:
         ldr     x19, [sp, #16]
         ldp     x29, x30, [sp], #32
         ret

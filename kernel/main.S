@@ -465,6 +465,31 @@ kmain:
         ldr     w1, [x0]
 #endif
 
+#ifdef ARMEDIT_REBOOT_TEST
+/*
+ * Restart on purpose, before anything else can happen.
+ *
+ * The reboot a bare-metal Apple machine performs is three stores to a watchdog
+ * found in the device tree, and reaching it from the editor means typing a
+ * word and having an operation answer #REBOOT - which needs a network, a
+ * backend and an operation that has been agreed. None of that exists on the
+ * machine at first boot, and none of it is what this is testing.
+ *
+ * So this build calls the bottom of the path directly, on a machine whose tree
+ * has no psci node and does have a watchdog. What can then be checked is the
+ * part that is actually in question: that a kernel with no PSCI finds the
+ * watchdog rather than firing an hvc into the dark, that it writes the right
+ * words to the right offsets, and that having armed one it stops rather than
+ * also trying everything else.
+ *
+ * It reports afterwards, which is only reachable because the watchdog in the
+ * test is ordinary memory and ordinary memory does not restart anything.
+ */
+        bl      platform_reboot
+        LEA     x0, m_reboot_returned
+        bl      platform_puts
+#endif
+
 
 #ifdef ARMEDIT_DTB_DUMP
 /*
@@ -631,6 +656,9 @@ dtb_arg:  .space 8
 
         .section .rodata
 m_boot:   .asciz "armedit: boot\n"
+#ifdef ARMEDIT_REBOOT_TEST
+m_reboot_returned: .asciz "armedit: reboot returned\n"
+#endif
 #if defined(ARMEDIT_PROBE_COMPAT) && !defined(ARMEDIT_PROBE_TREE)
 s_probe:  .asciz ARMEDIT_PROBE_COMPAT
 #endif

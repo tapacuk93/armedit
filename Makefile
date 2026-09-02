@@ -73,7 +73,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb clean
+.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path clean
 all: tty window kernel backend
 tty: $(B)/armedit-tty
 window: $(B)/armedit-window
@@ -235,12 +235,19 @@ e2e: $(B)/kernel.img
 	@python3 tests/e2e.py
 
 # The bare-metal display path: a framebuffer the kernel is given rather than
-# one it asks for. QEMU offers no such thing, so tools/addfb.py puts the node a
+# one it asks for. QEMU offers no such thing, so tools/loadertree.py puts the node a
 # real loader would have left into QEMU's own tree, and the test reads the
 # pixels back out of guest memory afterwards.
 .PHONY: treefb
 treefb: $(B)/kernel.img
 	@python3 tests/treefb.py
+
+# Restarting a machine that has no PSCI, which is the one this is aimed at.
+# Builds a kernel that reboots on purpose, hands it a tree with a watchdog in
+# it, and reads back the three words it wrote.
+.PHONY: reboot-path
+reboot-path:
+	@python3 tests/rebootpath.py
 
 .PHONY: boot-fault
 boot-fault:

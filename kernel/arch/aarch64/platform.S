@@ -346,6 +346,23 @@ platform_reboot:
         LEA     x0, s_psci
         bl      reboot_method
 1:      mov     w19, w0
+#ifdef ARMEDIT_REBOOT_TEST
+/*
+ * Pretend nobody offered.
+ *
+ * The branch below - no PSCI, so find a watchdog - cannot be reached under
+ * QEMU by describing a machine that has none. QEMU's virt board patches the
+ * device tree it is handed and puts its own psci node back, so a tree with
+ * that node removed arrives at the guest with it present. That was worth an
+ * afternoon to find, and it is written down in tests/rebootpath.py so it is
+ * not found twice.
+ *
+ * So the test build forces the condition rather than describing it.
+ * Everything past this point is the real path: QEMU's real tree, a real search
+ * through it for a watchdog, real stores to the address it gives back.
+ */
+        mov     w19, #0
+#endif
 
 /*
  * No psci node at all is not a machine that forgot to describe itself. It is
@@ -356,7 +373,23 @@ platform_reboot:
  */
         cbnz    w19, 4f
         bl      SYM(wdt_reboot)
+        cbnz    w0, 3f                  /* armed: do not also fire an hvc into
+                                           a machine that is already going down */
 4:
+#ifdef ARMEDIT_REBOOT_TEST
+/*
+ * The test build says it got here instead of getting here.
+ *
+ * "It armed the watchdog and then stopped" cannot be checked by watching a
+ * machine that restarts either way - QEMU answers the PSCI call below whatever
+ * its device tree says, so a fall-through and a success look identical from
+ * outside. Saying so and returning makes the difference legible, and the test
+ * asserts this line never appears.
+ */
+        LEA     x0, m_psci_reached
+        bl      SYM(uart_puts)
+        b       3f
+#endif
         movz    w0, #0x0009
         movk    w0, #0x8400, lsl #16    /* PSCI SYSTEM_RESET */
         cmp     w19, #2
@@ -413,6 +446,9 @@ platform_idle:
         ret
 
         .section .rodata
+#ifdef ARMEDIT_REBOOT_TEST
+m_psci_reached: .asciz "armedit: reached the PSCI call\n"
+#endif
 s_psci_02: .asciz "arm,psci-0.2"
 s_psci_10: .asciz "arm,psci-1.0"
 s_psci:    .asciz "arm,psci"
