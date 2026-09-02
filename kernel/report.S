@@ -289,6 +289,26 @@ SYM(report_show):
         bl      report_dec
         LEA     x0, m_attached
         bl      report_puts
+
+/*
+ * And whether it will take an instruction.
+ *
+ * A No-Op command is the smallest thing that can be asked for and the only one
+ * whose meaning cannot be got wrong. Its completion says the controller is
+ * reading commands out of memory this kernel wrote and writing answers back
+ * where this kernel is looking - which is every hard part of a ring
+ * implementation, proved before any device is involved.
+ */
+        bl      SYM(xhci_start)
+        cmn     w0, #1
+        b.eq    22f
+        bl      SYM(xhci_noop)
+        cmn     w0, #1
+        b.eq    22f
+        LEA     x0, m_answers
+        b       23f
+22:     LEA     x0, m_silent
+23:     bl      report_puts
         bl      report_nl
 20:
 
@@ -441,7 +461,9 @@ m_dot:      .asciz "."
 m_comma:    .asciz ", "
 m_noreset:  .asciz "would not reset"
 m_ports:    .asciz " ports, "
-m_attached: .asciz " attached"
+m_attached: .asciz " attached, "
+m_answers:  .asciz "answers commands"
+m_silent:   .asciz "takes no commands"
 m_keyboard: .asciz "  keyboard      "
 m_wdt:      .asciz "watchdog at "
 m_hvc:      .asciz "psci, hvc"

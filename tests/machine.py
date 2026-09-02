@@ -244,6 +244,15 @@ def main():
            "the controller is found, and says which xHCI it is (%s)" % label,
            said[label])
         ok("would not reset" not in said[label], "...and it resets (%s)" % label)
+        # The one that proves a ring rather than a register read: a No-Op
+        # command placed in memory by this kernel, executed, and reported back
+        # on the event ring it was handed. Every way a ring implementation goes
+        # wrong - a physical address the controller cannot reach, a cycle bit
+        # the wrong way round, a doorbell at the wrong offset, an event ring
+        # pointer never given - produces the same silence, and none of them is
+        # about USB.
+        ok("answers commands" in said[label],
+           "...and executes a command from a ring we built (%s)" % label)
     ok("8 ports" in said["a keyboard"],
        "its own shape is read rather than assumed", said["a keyboard"])
 
