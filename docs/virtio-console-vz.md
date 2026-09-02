@@ -107,6 +107,11 @@ If notifications are in fact never seen, everything observed follows. What has
 not been found is a mechanism by which they would be lost, given that the
 offsets and multiplier read correctly and every doorbell has been rung.
 
+Tested since: a descriptor posted once and the doorbell rung a thousand times
+over several seconds. Nothing. So a notification is not being *lost* - the
+device is not acting on this queue at all, which is a stronger statement and
+removes the last hypothesis this investigation had.
+
 ## What to try next
 
 Read Linux's `virtio_ring.c` packed path and `virtio_console.c` initialisation
