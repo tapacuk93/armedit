@@ -297,6 +297,32 @@ def test_browse(key, daemon_log):
             ok(fetched, "...and the backend recorded the fetch")
 
 
+def test_follow_a_link(key, daemon_log):
+    """A page arrives with its links numbered, and "open 2" follows one."""
+    if not key:
+        skip("\"open 1\" follows a link off the page", "no backend key")
+        return
+    with Machine("link", key=key) as m:
+        m.type("open example.com")
+        m.submit(20.0)
+        shot = m.screen()
+        ok(rows_with_text(shot) > 5, "the page arrives with its links listed")
+
+        m.cmd("sendkey ret", 0.3)
+        m.type("open 1")
+        m.submit(22.0)
+        ok(m.faults() == 0, "...and following one does not fault")
+        if daemon_log:
+            with open(daemon_log) as f:
+                fetched = [l for l in f if "fetched" in l]
+            # The second fetch must be somewhere else: following a link that
+            # led back to the same page would look identical to not following
+            # it at all.
+            went = len(fetched) >= 2 and fetched[-1].split()[-3] != fetched[-2].split()[-3]
+            ok(went, "\"open 1\" follows a link off the page",
+               "" if not fetched else fetched[-1].split()[-3])
+
+
 def test_model(key):
     """A request only a model can answer comes back and lands on the screen."""
     if not key:
@@ -343,6 +369,7 @@ def main():
     test_offline_colour()
     test_reboot(key)
     test_browse(key, daemon_log)
+    test_follow_a_link(key, daemon_log)
     test_model(key)
     test_typing_through_a_request(key)
 

@@ -26,6 +26,7 @@ _main:
         ldr     x0, [x20, #8]
         LEA     x1, out
         mov     w2, #(1 << 16)
+        mov     x3, #0                  /* no screen: this is not the editor */
         bl      SYM(browse_open)
         cmn     w0, #1
         b.eq    .Lnone

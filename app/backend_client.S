@@ -316,10 +316,20 @@ SYM(backend_fetch):
         bl      SYM(str_starts)
         cbz     w0, .Lno_browse
 
+        LEA     x0, ctxbuf              /* the screen, which "open 3" reads the
+                                           link out of - filled here because
+                                           nothing has filled it yet at this
+                                           point in the request, and reading it
+                                           empty is how "open 1" became an
+                                           attempt to resolve the host "1" */
+        mov     w1, #CTX_SZ
+        bl      SYM(editor_context)
+
         LEA     x0, instrbuf
         add     x0, x0, #5              /* past "open " */
         LEA     x1, replybuf
         mov     w2, #REPLY_SZ
+        LEA     x3, ctxbuf
         bl      SYM(browse_open)
         cmn     w0, #1
         b.eq    .Lno_browse             /* neither route worked: let the normal

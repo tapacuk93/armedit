@@ -78,7 +78,7 @@ final class Fetch {
                 }
                 String body = res.body();
                 if (body.length() > MAX_BYTES) body = body.substring(0, MAX_BYTES);
-                return new Page(where, text(body), null);
+                return new Page(where, text(body) + links(body, where), null);
             }
             return new Page(where, null, "too many redirects");
         } catch (Exception x) {
@@ -171,6 +171,56 @@ final class Fetch {
         s = s.replaceAll("(?m)^-\\s*$", "");
         s = s.replaceAll("\n{3,}", "\n\n");
         return s.strip();
+    }
+
+    /** How many links are worth listing. A page is not a directory. */
+    private static final int MAX_LINKS = 30;
+
+    private static final Pattern ANCHOR = Pattern.compile(
+            "(?is)<a\\s[^>]*?href\\s*=\\s*[\"\']([^\"\']+)[\"\'][^>]*>(.*?)</a>");
+
+    /**
+     * The page's links, numbered, appended to its text.
+     *
+     * A browser that renders a page and discards its links has rendered a
+     * screenshot. Numbering them is what makes them reachable from an editor
+     * whose entire interface is typing a line: "open 3" is a sentence, and a
+     * URL is not something anybody wants to retype.
+     *
+     * Resolved against the page they came from, because "/about" means nothing
+     * on its own, and deduplicated, because a navigation bar repeated in the
+     * header and the footer is one link twice.
+     */
+    static String links(String html, String base) {
+        var seen = new java.util.LinkedHashMap<String, String>();
+        var m = ANCHOR.matcher(html);
+        while (m.find() && seen.size() < MAX_LINKS) {
+            String href = m.group(1).strip();
+            if (href.isEmpty() || href.startsWith("#")
+                    || href.toLowerCase(Locale.ROOT).startsWith("javascript:")) {
+                continue;
+            }
+            String url;
+            try {
+                url = URI.create(base).resolve(href).toString();
+            } catch (Exception x) {
+                continue;
+            }
+            if (!url.regionMatches(true, 0, "http", 0, 4)) continue;
+            String label = text(m.group(2)).replaceAll("\\s+", " ").strip();
+            if (label.length() > 60) label = label.substring(0, 60);
+            seen.putIfAbsent(url, label);
+        }
+        if (seen.isEmpty()) return "";
+
+        var b = new StringBuilder("\n\n--- links ---\n");
+        int n = 1;
+        for (var e : seen.entrySet()) {
+            b.append('[').append(n++).append("] ").append(e.getKey());
+            if (!e.getValue().isEmpty()) b.append("  ").append(e.getValue());
+            b.append('\n');
+        }
+        return b.toString();
     }
 
     private static String entities(String s) {

@@ -123,6 +123,11 @@ because from the editor's side those are one request with two sources.
 
 It goes two ways, and the choice between them is the point:
 
+A page arrives with its links numbered at the bottom, whichever route it came
+by, so `open 3` opens the third one. The screen is the link table — which also
+means you can see what you are about to open, and edit the line if you want
+somewhere else.
+
 **Directly.** Resolve the name, open a socket, send a `GET`, and `net/html.S`
 turns the reply into text. Nothing in the middle, nobody else's logs, no
 backend needed. This is better whenever it works.
@@ -470,8 +475,6 @@ Next, in rough order:
       handshake, record layer and certificate pinning are not. Until then the
       backend reaches AWS and aicoin over TLS from Java, and the editor talks
       to its backend in the clear
-- [ ] links: pages render as text, but nothing follows a link yet — `html.S`
-      collects them and the editor does not offer them
 - [ ] local persistence on the device itself, so a screen survives losing the
       backend
 - [ ] mounting the account's folders into the provisioned machine's home

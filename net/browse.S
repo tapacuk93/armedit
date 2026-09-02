@@ -48,7 +48,8 @@
         .p2align 2
 
 /*
- * browse_open - x0 = what the person wrote, x1 = out, w2 = capacity.
+ * browse_open - x0 = what the person wrote, x1 = out, w2 = capacity,
+ *               x3 = the screen it was written on, or 0.
  *   out w0 = bytes of text, or -1 if neither route produced a page.
  *
  * "what the person wrote" is not a URL. It is "google", "news.ycombinator.com",
@@ -67,7 +68,26 @@ SYM(browse_open):
         mov     x19, x0                 /* what they wrote */
         mov     x20, x1                 /* out             */
         mov     w21, w2                 /* capacity        */
+        mov     x25, x3                 /* the screen, for "open 3" */
 
+/*
+ * "open 3" means the third link on the screen.
+ *
+ * A page arrives with its links numbered at the bottom, whichever route it
+ * came by, so following one is a matter of finding the line that starts with
+ * that number rather than of remembering a table. The screen is the table -
+ * which also means the person can see what they are about to open, and can
+ * edit the line if they want somewhere else.
+ */
+        mov     x0, x19
+        mov     x1, x25
+        cbz     x1, 1f                  /* a caller with no screen cannot mean
+                                           a link on it */
+        LEA     x2, br_link
+        bl      browse_numbered
+        cbz     w0, 1f
+        LEA     x19, br_link
+1:
         mov     x0, x19
         LEA     x1, br_host
         LEA     x2, br_path
@@ -444,6 +464,105 @@ browse_url:
         ldp     x29, x30, [sp], #80
         ret
 
+/*
+ * browse_numbered - x0 = what they wrote, x1 = the screen, x2 = out.
+ *   out w0 = 1 if it was a link number and the link was found.
+ *
+ * Looks for a line of the form "[n] <url>", which is how both routes present a
+ * page's links. Nothing else about the screen is examined: a person who typed
+ * a number meant one of the numbers in front of them.
+ */
+browse_numbered:
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        str     x23, [sp, #48]
+        mov     x19, x0
+        mov     x20, x1
+        mov     x21, x2
+
+        /* Is what they wrote just a number? */
+        mov     w22, #0                 /* the number */
+        mov     w23, #0                 /* how many digits */
+1:      ldrb    w9, [x19]
+        cbz     w9, 2f
+        cmp     w9, #' '
+        b.ls    2f
+        sub     w10, w9, #'0'
+        cmp     w10, #9
+        b.hi    .Lbn_no
+        mov     w11, #10
+        madd    w22, w22, w11, w10
+        add     w23, w23, #1
+        add     x19, x19, #1
+        b       1b
+2:      cbz     w23, .Lbn_no
+        cbz     w22, .Lbn_no            /* there is no link zero */
+
+        /* Find "[n] " at the start of a line of the screen. */
+        mov     x9, x20
+.Lbn_line:
+        ldrb    w10, [x9]
+        cbz     w10, .Lbn_no
+        cmp     w10, #'['
+        b.ne    .Lbn_next
+        add     x11, x9, #1
+        mov     w12, #0
+        mov     w13, #0
+3:      ldrb    w14, [x11]
+        sub     w15, w14, #'0'
+        cmp     w15, #9
+        b.hi    4f
+        mov     w16, #10
+        madd    w12, w12, w16, w15
+        add     w13, w13, #1
+        add     x11, x11, #1
+        b       3b
+4:      cbz     w13, .Lbn_next
+        cmp     w14, #']'
+        b.ne    .Lbn_next
+        cmp     w12, w22
+        b.ne    .Lbn_next
+
+        add     x11, x11, #1            /* past the bracket */
+5:      ldrb    w14, [x11]
+        cmp     w14, #' '
+        b.ne    6f
+        add     x11, x11, #1
+        b       5b
+6:      /* Copy the URL, which ends at whitespace - a label may follow it. */
+        mov     w12, #0
+7:      ldrb    w14, [x11, w12, uxtw]
+        cbz     w14, 8f
+        cmp     w14, #' '
+        b.ls    8f
+        cmp     w12, #250
+        b.hs    8f
+        strb    w14, [x21, w12, uxtw]
+        add     w12, w12, #1
+        b       7b
+8:      strb    wzr, [x21, w12, uxtw]
+        cbz     w12, .Lbn_no
+        mov     w0, #1
+        b       .Lbn_out
+
+.Lbn_next:
+        ldrb    w10, [x9], #1           /* on to the next line */
+        cbz     w10, .Lbn_no
+        cmp     w10, #'\n'
+        b.ne    .Lbn_next
+        b       .Lbn_line
+
+.Lbn_no:
+        mov     w0, #0
+.Lbn_out:
+        ldr     x23, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
 /* browse_prefix - x0 = text, x1 = a lower-case prefix, out w0 = 1 if it fits. */
 browse_prefix:
 1:      ldrb    w9, [x1]
@@ -580,5 +699,7 @@ br_req:     .space 1024
 br_routes:  .space (264 * REMEMBER)
 br_next:    .space 4
 br_secure:  .space 4
+        .p2align 3
+br_link:    .space 256
         .p2align 3
 br_page:    .space PAGE_SZ
