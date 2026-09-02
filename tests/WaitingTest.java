@@ -140,6 +140,21 @@ public class WaitingTest {
         ok(Triage.read("verdict: unsure\nwhy: could go either way\n").unsure(),
            "and lower case is the same verdict");
 
+        // --- and what a panel is told when the threshold sends it back
+        //
+        // The waiting list is not a way past the panel: reaching the threshold
+        // asks them again with the fact they were missing. So the second
+        // sitting has to be told what the first one decided, what has changed,
+        // and that this time a hold is final - otherwise it is the same
+        // question asked until it gets the answer somebody wanted.
+        String again = Consortium.settled(4, "half of us thought it too narrow");
+        ok(again.contains("held once already"), "the second sitting is told it is one");
+        ok(again.contains("half of us thought it too narrow"),
+           "...and reminded what its own reason was");
+        ok(again.contains("4 distinct people"), "...and given the evidence that changed");
+        ok(again.contains("A hold now ends it"),
+           "...and told this is the last time it is asked");
+
         // --- the people who settled a question are carried, not just counted
         var consensus = new Consensus();
         var settled = consensus.record("alice", "screen", "reboot", "#REBOOT");

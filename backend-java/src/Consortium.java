@@ -430,6 +430,29 @@ final class Consortium {
         return sustain * 2 >= heard;
     }
 
+    /**
+     * What to tell a panel that is seeing this for the second time.
+     *
+     * It held once, because it could not settle whether anybody wanted the
+     * thing. Since then people have. That is new information and it is the
+     * information the earlier hold was short of - so it is put in front of
+     * them plainly, along with what their own reason was, and they are told
+     * that this is the last time: a hold now ends it rather than parking it
+     * again. A gate asked the same question repeatedly until it says yes is
+     * not a gate.
+     */
+    static String settled(int people, String earlier) {
+        return ("WHAT A HOLD DOES  This was held once already and kept, because the panel\n"
+                + "                  was split rather than agreed. The reason recorded then\n"
+                + "                  was: %s\n"
+                + "                  Since then %d distinct people have asked for something\n"
+                + "                  it matches. That is the evidence the earlier hold was\n"
+                + "                  short of, and it is why you are being asked again.\n"
+                + "                  A hold now ends it. It will not be kept a second time.")
+                .formatted(earlier == null || earlier.isBlank() ? "(not recorded)" : earlier,
+                           people);
+    }
+
     private static final String FORMAT = """
 
             Answer in exactly this shape and nothing else:

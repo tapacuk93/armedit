@@ -474,12 +474,25 @@ public final class Armeditd {
     }
 
     /**
-     * Enough people asked. Compile it again and put it in the tree.
+     * Enough people asked. Go back to the panel with the answer.
      *
-     * Again, rather than from a stored binary: the record keeps the source, and
-     * the machine code is re-derived by the compiler that would have produced
-     * it the first time. A record that held bytes whose source had been lost is
-     * the state this whole arrangement exists to prevent.
+     * This is not a way past the consortium and it was briefly written as one.
+     * The panel's doubt was that it could not settle whether anybody wanted the
+     * operation - so the threshold does not overrule that verdict, it supplies
+     * the missing fact and asks again. Members who held out for evidence now
+     * have it. Members whose objection was about the code still have their
+     * objection, and it still counts.
+     *
+     * If they hold again the operation is dropped rather than parked a second
+     * time. The thing that was missing has been supplied; waiting longer would
+     * only be waiting for a different answer to the same question, which is how
+     * a gate becomes a formality.
+     *
+     * The operation is compiled again rather than restored from a stored
+     * binary: the record keeps the source, and the machine code is re-derived
+     * by the compiler that would have produced it the first time. A record
+     * holding bytes whose source had been lost is the state this whole
+     * arrangement exists to prevent.
      */
     private void release(Waiting.Record rec) {
         try {
@@ -492,11 +505,24 @@ public final class Armeditd {
             }
             var op = learned.get(0);
             String observed = exercise(op);
-            var verdict = new Consortium.Verdict(true,
-                    ("%d people asked for this after the panel could not settle it: %s")
-                            .formatted(rec.who().size(), rec.why()),
-                    java.util.List.of(), java.util.List.of());
-            var written = distro.commit(op, verdict, observed, rec.who().size());
+            String wallet = accounts.anyWallet();
+            if (wallet == null || wallet.isBlank()) return;   /* try again next time */
+
+            int people = rec.who().size();
+            var verdict = consortium.decide(wallet, op.name(),
+                    Consortium.aboutBlob(op.name(), op.pattern(), op.arguments(),
+                            op.js(), op.blob().code(), op.blob().sha(), observed, people,
+                            Consortium.settled(people, rec.why())));
+            System.out.printf("armedit: consortium on \"%s\", asked again with %d people "
+                            + "behind it: %s - %s%n",
+                    op.name(), people, verdict.commit() ? "COMMIT" : "HOLD", verdict.why());
+            if (!verdict.commit()) {
+                System.out.printf("armedit: \"%s\" held again with the evidence in hand "
+                                + "- dropped%n", op.name());
+                waiting.drop(rec.name());
+                return;
+            }
+            var written = distro.commit(op, verdict, observed, people);
             System.out.printf("armedit: %s comes off the waiting list: %s%n", op.name(),
                     written.stream().map(java.nio.file.Path::toString)
                             .collect(java.util.stream.Collectors.joining(", ")));

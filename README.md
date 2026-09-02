@@ -272,11 +272,20 @@ needs to know that holding while others commit is how to say so.
 one readable file per record, saying what it matches, why the doubt, who has
 asked, and when it expires. Every request that its pattern would have answered
 counts the account that made it, distinct accounts only, the same rule consensus
-uses. Reach the threshold (three by default) and it is compiled again from the
-source in the record and shipped. Reach the expiry first (thirty days) and it is
-forgotten, which is the ordinary outcome — most things nobody asks for twice
-were correctly doubted. Somebody asking pushes the expiry out, so a thing
-gaining support does not lapse on a date set before anyone had heard of it.
+uses. Reach the expiry first (thirty days) and it is forgotten, which is the
+ordinary outcome — most things nobody asks for twice were correctly doubted.
+Somebody asking pushes the expiry out, so a thing gaining support does not lapse
+on a date set before anyone had heard of it.
+
+Reach the threshold (three by default) and it goes **back to the panel**, not
+past it. The doubt was that they could not settle whether anybody wanted the
+thing; the threshold does not overrule that, it supplies the missing fact and
+asks again. Members who held out for evidence now have it. Members whose
+objection was about the code still have their objection and it still counts, and
+if they hold again the operation is dropped rather than parked a second time —
+the thing that was missing has been supplied, and waiting longer would only be
+waiting for a different answer to the same question, which is how a gate becomes
+a formality.
 
 What is stored is the source, never the binary. The machine code is re-derived
 by the compiler that would have produced it the first time, so the file is
@@ -292,11 +301,13 @@ anything is kept, and where the threshold is unreachable nothing is: the models
 are told so in their prompts (*"on this deployment an unsure answer is a decision
 never to decide. Decide."*) and the code declines to park what they defer.
 
-This is a real loosening and it should be read as one. An operation the panel
-held can now reach the repository without the panel ever agreeing, on the
-strength of enough distinct people having asked. That is the trade the waiting
-list makes, it is written into the votes file when it happens, and the three
-things that bound it are distinct accounts, a threshold, and an expiry.
+Nothing here is a way past the consortium, and the first version of it was —
+the threshold shipped the operation directly, and the note here said so and
+called it a trade. It was not a trade worth making. The waiting list gathers
+the evidence the panel said it lacked; it does not vote. Machine code still
+enters this repository only when several models have separately agreed it
+should, and the count of people who asked is now part of what they are told
+when they decide.
 
 ### Backend configuration
 
