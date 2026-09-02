@@ -46,7 +46,33 @@
 #define USED_FLAGS      0
 #define USED_IDX        2
 
-#define TXQ             1               /* queue 0 receives, queue 1 transmits */
+/*
+ * Which queue actually transmits, found by asking.
+ *
+ * The specification says queue 1 for port zero, and on this device queue 1
+ * completes nothing at all while queue 3 completes a device-readable buffer.
+ * Queue 0 completes anything offered to it. So the layout here is not the one
+ * the specification describes for a device that offers no multiport feature,
+ * and the only honest way to find the transmit queue was to try each and see
+ * which answered.
+ */
+/*
+ * The multiport layout, arrived at by experiment.
+ *
+ * Queue 0 completes whatever it is given, queue 3 completes readable buffers
+ * and prints nothing, and queue 1 - the one the specification names as port
+ * zero's transmit queue - completes nothing at all. That is exactly what a
+ * multiport console looks like with its port still shut: 0 and 1 are the
+ * port's pair, 2 and 3 are the control pair, and the port does not carry
+ * anything until the driver has said on the control queue that it is ready and
+ * that the port is open.
+ *
+ * The device reports no multiport feature, which is why this took finding
+ * rather than reading.
+ */
+#define TXQ             1
+#define CTRQ            2
+#define CTLQ            3
 #define RXQ             0
 
         .section .text
@@ -124,17 +150,17 @@ vcon_init:
         cmp     w19, #2
         b.ls    3f
         mov     w0, #2
-        LEA     x1, c0_desc
-        LEA     x2, c0_drv
-        LEA     x3, c0_dev
+        LEA     x1, cr_desc
+        LEA     x2, cr_drv
+        LEA     x3, cr_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
         cmp     w19, #3
         b.ls    3f
         mov     w0, #3
-        LEA     x1, c1_desc
-        LEA     x2, c1_drv
-        LEA     x3, c1_dev
+        LEA     x1, ct_desc
+        LEA     x2, ct_drv
+        LEA     x3, ct_dev
         mov     w4, #QSIZE
         bl      SYM(vpci_queue)
 3:
@@ -165,6 +191,98 @@ vcon_init:
 .Lvi_out:
         ldr     x19, [sp, #16]
         ldp     x29, x30, [sp], #32
+        ret
+
+/*
+ * vcon_rxtest - w0 = which console. out w0 = 1 if it filled a buffer.
+ *
+ * The other direction. Everything tried so far has asked this device to read
+ * from guest memory and it has never once finished; the entropy device on the
+ * same bus writes into guest memory through the same code and finishes
+ * immediately. So: hand the console a device-writable buffer, have the host
+ * feed it something, and see whether it completes that.
+ *
+ * If it does, the device services its queues and the fault is specific to the
+ * direction. If it does not, the device is not looking at its queues at all
+ * and everything about the rings is beside the point.
+ */
+/*
+ * vcon_qtest - w0 = console, w1 = queue, w2 = 1 for device-writable.
+ *
+ * The receive queue completes and the transmit queue does not, which leaves
+ * two explanations: the direction, or the queue. Trying a readable buffer on
+ * the queue that works, and a writable one on the queue that does not, tells
+ * them apart - and only one of them is a bug in this driver.
+ */
+        .globl  vcon_qtest
+vcon_qtest:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        mov     w19, w0
+        mov     w21, w1                 /* which queue */
+        mov     w22, w2                 /* writable? */
+
+        mov     w0, #1
+        bl      SYM(vpci_packed)
+        movz    w0, #VCON_DEVICE
+        mov     w1, w19
+        bl      SYM(vpci_open_n)
+        cmn     w0, #1
+        b.eq    .Lrx_no
+
+        mov     w0, w21
+        LEA     x1, rx_desc
+        LEA     x2, rx_drv
+        LEA     x3, rx_dev
+        mov     w4, #QSIZE
+        bl      SYM(vpci_queue)
+        cmn     w0, #1
+        b.eq    .Lrx_no
+
+        LEA     x9, rx_desc             /* one writable buffer, slot zero */
+        LEA     x10, rx_buf
+        str     x10, [x9, #0]
+        mov     w11, #64
+        str     w11, [x9, #8]
+        strh    wzr, [x9, #12]
+        dsb     sy
+        mov     w11, #0x0080            /* AVAIL */
+        cbz     w22, 3f
+        orr     w11, w11, #2            /* ...and device-writable */
+3:      strh    w11, [x9, #14]
+        dsb     sy
+
+        bl      SYM(vpci_ready)
+        mov     w0, w21
+        bl      SYM(vpci_kick_queue)
+
+        mov     w20, #0
+1:      LEA     x9, rx_desc
+        ldrh    w11, [x9, #14]
+        and     w12, w11, #0x0080
+        lsr     w12, w12, #7
+        and     w13, w11, #0x8000
+        lsr     w13, w13, #15
+        cmp     w12, w13
+        b.ne    2f
+        cmp     w12, #1                 /* both set: the device is done */
+        b.eq    .Lrx_yes
+2:      add     w20, w20, #1
+        mov     w9, #0x8000
+        movk    w9, #0x0028, lsl #16
+        cmp     w20, w9
+        b.lo    1b
+.Lrx_no:
+        mov     w0, #0
+        b       .Lrx_out
+.Lrx_yes:
+        mov     w0, #1
+.Lrx_out:
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /* vcon_desc - out x0 = where we told the device our descriptors are. */
@@ -340,21 +458,27 @@ tx_dev:    .space 8        /* device event suppression */
         .p2align 12
 rx_desc:   .space (16 * QSIZE)
         .p2align 12
+rx_buf:    .space 64
+        .p2align 12
 rx_drv:    .space 8
         .p2align 12
 rx_dev:    .space 8
         .p2align 12
-c0_desc:   .space (16 * QSIZE)
+cr_desc:   .space (16 * QSIZE)
         .p2align 12
-c0_drv:    .space 8
+cr_drv:    .space 8
         .p2align 12
-c0_dev:    .space 8
+cr_dev:    .space 8
         .p2align 12
-c1_desc:   .space (16 * QSIZE)
+cr_buf:    .space 64
         .p2align 12
-c1_drv:    .space 8
+ct_desc:   .space (16 * QSIZE)
         .p2align 12
-c1_dev:    .space 8
+ct_drv:    .space 8
+        .p2align 12
+ct_dev:    .space 8
+        .p2align 12
+ct_buf:    .space 16
         .p2align 12
 tx_buf:    .space 512
         .p2align 3
@@ -362,3 +486,5 @@ vcon_up:   .space 4
 tx_size:   .space 4
 tx_next:   .space 4
 tx_wrap:   .space 4
+ct_next:   .space 4
+ct_wrap:   .space 4

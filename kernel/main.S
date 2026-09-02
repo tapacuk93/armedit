@@ -62,7 +62,13 @@ kmain:
         ldr     x0, [x9]
         bl      SYM(dtb_init)
 
-#ifdef ARMEDIT_PROBE_COUNT
+#ifdef ARMEDIT_PROBE_RX
+        mov     w0, #0                  /* console zero, the one that answers */
+        mov     w1, #ARMEDIT_PROBE_Q
+        mov     w2, #ARMEDIT_PROBE_W
+        bl      vcon_qtest
+        cbz     w0, 1f
+#elif defined(ARMEDIT_PROBE_COUNT)
         movz    w0, #0x1AF4
         movz    w1, #ARMEDIT_PROBE_DEVID
         bl      SYM(pci_count)

@@ -52,10 +52,22 @@ let console = VZVirtioConsoleDeviceSerialPortConfiguration()
 // handle is attached, and a pipe that something upstream has stopped reading
 // behaves differently from a file. When a device is not consuming buffers at
 // all, ruling out the shape of the far end is cheaper than reasoning about it.
+// Something for the guest to read, when asked.
+//
+// The console's transmit direction has never completed a descriptor, and the
+// entropy device on the same bus completes one immediately - the difference
+// being that entropy writes into guest memory and a console transmit asks the
+// device to read from it. Feeding input tests the other direction: if the
+// receive queue completes, the device services queues and only the read path
+// is wrong.
+let feed: FileHandle? = ProcessInfo.processInfo.environment["VZRUN_IN"].flatMap {
+    FileHandle(forReadingAtPath: $0)
+}
+
 if let path = ProcessInfo.processInfo.environment["VZRUN_OUT"] {
     FileManager.default.createFile(atPath: path, contents: nil)
     guard let out = FileHandle(forWritingAtPath: path) else { die("cannot write \(path)") }
-    let sink = FileHandle(forReadingAtPath: "/dev/null")!
+    let sink = feed ?? FileHandle(forReadingAtPath: "/dev/null")!
     console.attachment = VZFileHandleSerialPortAttachment(
         fileHandleForReading: sink, fileHandleForWriting: out)
 } else {
