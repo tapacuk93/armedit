@@ -69,6 +69,16 @@ def main(out, inc):
     prop("reg", struct.pack(">QQ", 0, 0), "mem")
     u32(2)
 
+    # And where configuration space is, so the kernel can find a bus. An EFI
+    # machine says this in ACPI rather than in a tree, so the loader looks it
+    # up there and writes it in here - which is the whole job of a loader:
+    # turning what one firmware knows into what the next thing expects.
+    begin("pcie@0")
+    prop("compatible", b"pci-host-ecam-generic\0")
+    prop("device_type", b"pci\0")
+    prop("reg", struct.pack(">QQ", 0, 0), "ecam")
+    u32(2)
+
     # Where the framebuffer is is decided at run time, so the node is written
     # with room for it and the loader writes the numbers in.
     begin("chosen")

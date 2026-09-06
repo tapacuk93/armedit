@@ -73,7 +73,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network efi-boot clean
+.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network efi-boot efi-run clean
 all: tty window kernel backend
 tty: $(B)/armedit-tty
 window: $(B)/armedit-window
@@ -300,6 +300,9 @@ vz: $(B)/vzrun $(B)/kernel.img
 # console on that machine will not let it do.
 EFI_OBJ := $(B)/efi/efi.obj
 
+# QEMU's own EFI firmware, which is where the handover can be run.
+EDK2 ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
+
 # The loader includes the generated tree's offsets, so it waits for them.
 $(B)/efi/%.obj: boot/%.S $(B)/efidtb.S
 	@mkdir -p $(dir $@)
@@ -338,6 +341,22 @@ $(B)/vzgui: tools/vzgui.swift tools/vz.plist
 .PHONY: efi-boot
 efi-boot: $(B)/esp.img
 	@python3 tests/efiboot.py
+
+# armedit the way the target will run it: booted from a disk by firmware that
+# owns the machine first, with a keyboard and a network on the USB controller
+# and nothing virtio about it. This is the closest thing to the real machine
+# that can be sat in front of.
+#
+# The firmware's variables are made fresh every time. They are stored, and a
+# boot entry recorded against an older disk image sends the firmware looking
+# for something that is not there - which presents as a machine that boots to
+# a shell for no reason anybody can see.
+.PHONY: efi-run
+efi-run: $(B)/esp.img
+	@test -f $(EDK2) || (echo "no EFI firmware at $(EDK2)"; exit 1)
+	@cp $(EDK2) $(B)/code.fd
+	@python3 -c "open('$(B)/vars.fd','wb').truncate($$(stat -f%z $(EDK2)))"
+	$(QEMU) -M virt -cpu cortex-a72 -m 512 	  -drive if=pflash,format=raw,readonly=on,file=$(B)/code.fd 	  -drive if=pflash,format=raw,file=$(B)/vars.fd 	  -drive format=raw,file=$(B)/esp.img,if=virtio 	  -device ramfb -device qemu-xhci -device usb-kbd 	  -netdev user,id=u0 -device usb-net,netdev=u0 	  -display cocoa,zoom-to-fit=on,left-command-key=on
 
 .PHONY: vz-efi
 vz-efi: $(B)/vzgui $(B)/esp.img

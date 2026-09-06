@@ -875,12 +875,39 @@ machine:
       memory        0000000048000000 + 313MB
       screen        handed over at 000000005c7a0000 800x600, stride 3200, depth 32
 
+It also has to find the *bus*. The display comes from a protocol, but a
+keyboard is on PCI, and an EFI machine does not describe PCI in a device tree —
+it describes it in ACPI. So the loader walks four hops of the firmware's own
+tables (configuration table → root pointer → extended table list → the table
+signed `MCFG`) and writes the address into the tree it is building:
+
+    armedit: bus at 0000004010000000
+
+Which is what makes `make efi-run` worth having. It boots armedit the way the
+target will boot it — from a disk, by firmware that owns the machine first,
+with a keyboard and a network on the USB controller and nothing virtio about
+it — in a window you can type into. That is the closest thing to the real
+machine that can be sat in front of, and every part of the chain is one the Mac
+will use: a loader hands over a tree, the kernel finds the screen in it, finds
+the bus in it, brings up the USB controller, enumerates a keyboard, and the
+editor starts.
+
+`make efi-boot` proves it on two machines, because a machine proves one thing or
+the other. The first has nothing to type on, so the kernel stops on its report
+and the report can be read off the screen. The second has a keyboard and a
+network, so the editor starts and is typed at.
+
 **Two findings worth writing down.** Under macOS's Virtualization framework the
 EFI firmware reports a *Blt-only* display: no linear framebuffer, no address, a
 format of 3. The first version of this crashed there, writing to address zero,
 which is why the base and the format are now checked before either is used — and
 it means the handover cannot be proved on that host, whatever else it is good
 for. QEMU's EDK II gives a real one, and is therefore the proving ground.
+
+A third, smaller one: the firmware's variables are *stored*, and a boot entry
+recorded against an older disk image sends it looking for something that is not
+there — which presents as a machine that boots to a shell for no reason anybody
+can see. Every run here makes them fresh.
 
 And the memory node is taken from the firmware's own map, largest ordinary
 region first. Taking the *first* would take a small hole below whatever the

@@ -39,6 +39,8 @@
 /* Offsets into EFI_SYSTEM_TABLE, past its 24-byte header. */
 #define ST_CONOUT       64
 #define ST_BOOTSERVICES 96
+#define ST_NTABLES      104
+#define ST_TABLES       112
 
 /* Offsets into EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL. */
 #define OUT_STRING      8
@@ -323,6 +325,89 @@ efi_handover:
         bl      efi_put64
 
 /*
+ * And where configuration space is, which an EFI machine says in ACPI.
+ *
+ * There is no device tree to copy this out of - that is the point of a loader
+ * here - so it is walked out of the tables the firmware publishes: the
+ * configuration table for the one with ACPI's identifier, the root pointer for
+ * the extended table list, that list for the one signed MCFG, and MCFG's first
+ * entry for the address. Four hops, each a fixed offset, and every one of them
+ * checked, because a firmware without ACPI is a machine this simply has no bus
+ * on rather than a reason to read whatever is at those addresses.
+ */
+        ldr     x9, [x19, #ST_NTABLES]
+        ldr     x10, [x19, #ST_TABLES]
+        cbz     x9, .Lno_acpi
+        cbz     x10, .Lno_acpi
+        adrp    x11, acpi_guid
+        add     x11, x11, :lo12:acpi_guid
+        ldp     x12, x13, [x11]
+9:      cbz     x9, .Lno_acpi
+        ldp     x14, x15, [x10]
+        cmp     x14, x12
+        b.ne    10f
+        cmp     x15, x13
+        b.eq    11f
+10:     add     x10, x10, #24                   /* a guid and a pointer */
+        sub     x9, x9, #1
+        b       9b
+11:     ldr     x10, [x10, #16]                 /* the root pointer */
+        cbz     x10, .Lno_acpi
+        ldr     x10, [x10, #24]                 /* the extended table list */
+        cbz     x10, .Lno_acpi
+
+        ldr     w9, [x10, #4]                   /* how long the list is */
+        cmp     w9, #36
+        b.ls    .Lno_acpi
+        sub     w9, w9, #36
+        lsr     w9, w9, #3                      /* how many tables */
+        add     x11, x10, #36
+12:     cbz     w9, .Lno_acpi
+        ldr     x12, [x11]
+        cbz     x12, 13f
+        ldr     w13, [x12]
+        movz    w14, #0x434D                    /* "MCFG", as it lies in memory: */
+        movk    w14, #0x4746, lsl #16           /* M then C then F then G, and a
+                                                   word read of it is therefore
+                                                   0x4746434d and not the two
+                                                   halves swapped, which is a
+                                                   signature no table has */
+        cmp     w13, w14
+        b.eq    14f
+13:     add     x11, x11, #8
+        sub     w9, w9, #1
+        b       12b
+
+14:     ldr     w13, [x12, #4]                  /* is there an entry in it? */
+        cmp     w13, #60
+        b.lo    .Lno_acpi
+        ldr     x13, [x12, #44]                 /* where configuration space is */
+        cbz     x13, .Lno_acpi
+        ldrb    w14, [x12, #54]                 /* the first bus it covers */
+        ldrb    w15, [x12, #55]                 /* and the last */
+        sub     w15, w15, w14
+        add     w15, w15, #1
+        lsl     x15, x15, #20                   /* a megabyte a bus */
+        mov     x0, x13
+        add     x1, x21, #EFI_DTB_ECAM
+        bl      efi_put64
+        mov     x0, x15
+        add     x1, x21, #(EFI_DTB_ECAM + 8)
+        bl      efi_put64
+        adrp    x0, m_bus
+        add     x0, x0, :lo12:m_bus
+        bl      efi_say
+        adrp    x9, efi_dtb
+        add     x9, x9, :lo12:efi_dtb
+        ldr     x0, [x9, #EFI_DTB_ECAM]
+        rev     x0, x0
+        bl      efi_hex
+        adrp    x0, m_nl
+        add     x0, x0, :lo12:m_nl
+        bl      efi_say
+.Lno_acpi:
+
+/*
  * And where memory is, out of the firmware's own map.
  *
  * The largest run of ordinary memory, which on every machine this could boot
@@ -584,6 +669,7 @@ m_space:  .short ' ', 0
 m_by:     .short 'x', 0
 m_stride: .short ',', ' ', 's', 't', 'r', 'i', 'd', 'e', ' ', 0
 m_format: .short ',', ' ', 'f', 'o', 'r', 'm', 'a', 't', ' ', 0
+m_bus: .short 'a','r','m','e','d','i','t',':',' ','b','u','s',' ','a','t',' ',0
 m_nl:     .short 13, 10, 0
 m_blt:
         .short  'a', 'r', 'm', 'e', 'd', 'i', 't', ':', ' '
@@ -602,6 +688,17 @@ m_nogop:
  * this is bytes rather than something more readable: written any other way it
  * would be a different protocol, and the firmware would simply say it has none.
  */
+/*
+ * ACPI's identifier among the firmware's tables. The second revision, because
+ * the first has no extended list and therefore no table above four gigabytes -
+ * which on a machine that puts its configuration space up there is the
+ * difference between finding the bus and not.
+ */
+        .p2align 3
+acpi_guid:
+        .byte 0x71, 0xe8, 0x68, 0x88, 0xf1, 0xe4, 0xd3, 0x11
+        .byte 0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81
+
         .p2align 3
 gop_guid:
         .byte 0xde, 0xa9, 0x42, 0x90, 0xdc, 0x23, 0x38, 0x4a

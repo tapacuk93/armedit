@@ -15,11 +15,18 @@ screen and the memory map into a device tree, exits boot services, and jumps
 with x0 pointing at the tree. That is m1n1's shape from a different direction,
 and an EFI machine is where it can be run.
 
-What is checked is both halves. The loader says what the firmware gave it, on
+What is checked is both halves, on two machines, because a machine proves one
+thing or the other and not both. The loader says what the firmware gave it on
 the serial line, which is the last thing it can say before the firmware is
 gone. The kernel says the rest in pixels, because after the handover the screen
-is the only thing it has - so the screen is read back and required to hold the
-editor's own colours, which nothing in the firmware draws in.
+is all it has.
+
+The first machine has nothing to type on, so the kernel stops on its report and
+the report can be read off the screen. The second has a keyboard and a network,
+both on the USB controller and neither of them virtio - which is the shape the
+target has - so the editor starts, and what is checked there is that it can be
+used. Nothing in the firmware draws in the editor's colours, so finding them on
+either machine means the kernel took the machine.
 """
 
 import collections
@@ -76,6 +83,40 @@ def screen(port, path):
     return c
 
 
+def type_at(port, text):
+    """Type at the machine and count what it drew, in the editor's own green."""
+    s = socket.create_connection(("127.0.0.1", port), timeout=10)
+    time.sleep(0.4)
+    s.recv(65536)
+    for ch in text:
+        s.sendall(("sendkey " + ("spc" if ch == " " else ch) + "\n").encode())
+        time.sleep(0.16)
+        try:
+            s.recv(65536)
+        except Exception:
+            pass
+    time.sleep(1.5)
+    path = os.path.join(SCRATCH, "typed.ppm")
+    if os.path.exists(path):
+        os.remove(path)
+    s.sendall(("screendump " + path + "\n").encode())
+    time.sleep(3.0)
+    s.close()
+    if not os.path.exists(path):
+        return 0
+    d = open(path, "rb").read()
+    at = 0
+    for _ in range(4):
+        while d[at:at + 1].isspace():
+            at += 1
+        while not d[at:at + 1].isspace():
+            at += 1
+    at += 1
+    px = d[at:]
+    return sum(1 for i in range(0, len(px) - 2, 3)
+               if (px[i], px[i + 1], px[i + 2]) == FG)
+
+
 def main():
     os.makedirs(SCRATCH, exist_ok=True)
     if not os.path.exists(FIRMWARE):
@@ -96,35 +137,50 @@ def main():
     with open(varsf, "wb") as f:
         f.truncate(os.path.getsize(FIRMWARE))
 
-    serial = os.path.join(SCRATCH, "efi.log")
-    if os.path.exists(serial):
-        os.remove(serial)
-    port = 4683
-    p = subprocess.Popen([
-        "qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a72", "-m", "512",
-        "-drive", "if=pflash,format=raw,readonly=on,file=" + code,
-        "-drive", "if=pflash,format=raw,file=" + varsf,
-        "-drive", "format=raw,file=" + esp + ",if=virtio",
-        "-device", "ramfb", "-display", "none",
-        "-serial", "file:" + serial,
-        "-monitor", "tcp:127.0.0.1:%d,server,nowait" % port,
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        time.sleep(30)
-        colours = screen(port, os.path.join(SCRATCH, "efi.ppm"))
-    finally:
-        p.terminate()
+    def run(name, port, usb):
+        serial = os.path.join(SCRATCH, name + ".log")
+        if os.path.exists(serial):
+            os.remove(serial)
+        argv = [
+            "qemu-system-aarch64", "-M", "virt", "-cpu", "cortex-a72", "-m", "512",
+            "-drive", "if=pflash,format=raw,readonly=on,file=" + code,
+            "-drive", "if=pflash,format=raw,file=" + varsf,
+            "-drive", "format=raw,file=" + esp + ",if=virtio",
+            "-device", "ramfb",
+        ]
+        if usb:
+            argv += ["-device", "qemu-xhci", "-device", "usb-kbd",
+                     "-netdev", "user,id=u0", "-device", "usb-net,netdev=u0"]
+        argv += ["-display", "none", "-serial", "file:" + serial,
+                 "-monitor", "tcp:127.0.0.1:%d,server,nowait" % port]
+        # Fresh firmware variables per boot: they are stored, and an entry
+        # recorded against an older image sends the firmware looking for
+        # something that is not there.
+        with open(varsf, "wb") as f:
+            f.truncate(os.path.getsize(FIRMWARE))
+        p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
-            p.wait(timeout=5)
-        except Exception:
-            p.kill()
-    time.sleep(0.5)
-    log = open(serial, "rb").read().decode(errors="replace") if os.path.exists(serial) else ""
+            time.sleep(30)
+            colours = screen(port, os.path.join(SCRATCH, name + ".ppm"))
+            typed = type_at(port, "hello from bare metal") if usb else 0
+        finally:
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except Exception:
+                p.kill()
+        time.sleep(0.5)
+        log = (open(serial, "rb").read().decode(errors="replace")
+               if os.path.exists(serial) else "")
+        return log, colours, typed
+
+    # --- a machine with nothing to type on, which stops on its report
+    log, colours, _ = run("alone", 4683, usb=False)
 
     ok("EFI console is alive" in log, "the firmware starts the loader")
     m = re.search(r"screen at ([0-9a-f]+) (\d+)x(\d+), stride (\d+), format (\d+)", log)
     ok(m is not None, "...which is given a display it can address",
-       (re.search(r"armedit: .*", log) or [""])[0] if "armedit" in log else "nothing")
+       (re.search(r"armedit: screen.*", log) or [""])[0] if "screen at" in log else "nothing")
     ok("blt only" not in log, "...a real one, not a draw-for-me one")
     ok("drawn" in log, "...and can write to it")
 
@@ -138,11 +194,20 @@ def main():
     ok(colours.get(FG, 0) > 5000,
        "...and drew what it found on the machine, in its own foreground",
        "%d pixels" % colours.get(FG, 0))
-
-    # Which is the whole claim: the handover happened. Nothing else puts those
-    # two colours on a screen this firmware owns.
     ok(colours.get(BG, 0) + colours.get(FG, 0) > sum(colours.values()) * 0.9,
        "...over the whole display, so the firmware's console is gone")
+
+    # --- and one with a keyboard and a network, which is the target's shape
+    log2, colours2, typed = run("used", 4684, usb=True)
+
+    m = re.search(r"bus at ([0-9a-f]+)", log2)
+    ok(m is not None and int(m.group(1), 16) != 0,
+       "the loader finds configuration space in ACPI and passes it on",
+       m.group(1) if m else "nothing")
+    ok(colours2.get(BG, 0) > 100000, "the editor starts, having found a keyboard")
+    ok(typed > 300,
+       "...and can be typed at, over USB, on a bus that came from ACPI",
+       "%d pixels of text" % typed)
 
     print()
     if failures:
