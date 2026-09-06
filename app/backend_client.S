@@ -739,8 +739,25 @@ SYM(backend_apply):
 
         cmp     w20, #ST_OK
         b.eq    .Lap_ok
+/*
+ * Nothing built in answered, and there is nobody to ask.
+ *
+ * This used to return in silence, on the reasoning that a machine with no
+ * backend has nothing to say. It has one thing to say, and it is the only
+ * thing the person at the keyboard needs: that the key worked and the request
+ * went nowhere. Silence is indistinguishable from a key that did not arrive,
+ * and the first thing anybody does about a key that did not arrive is press
+ * it again.
+ *
+ * It is also how the ordinary near-miss presents. The built-in operation
+ * matches "colours", and somebody who writes "colors" gets no operation, no
+ * backend, and no word about either.
+ */
         cmp     w20, #ST_NOKEY
-        b.eq    .Lap_out                /* no key: these keys do nothing */
+        b.ne    .Lap_havekey
+        LEA     x0, m_nokey
+        b       .Lap_say
+.Lap_havekey:
         cmp     w20, #ST_BADADDR
         b.ne    1f
         LEA     x0, m_badaddr
@@ -1045,7 +1062,12 @@ s_json_tail:        .asciz "\"}"
 s_key_text:         .asciz "\"text\""
 s_nl:               .asciz "\n"
 m_reply_open:       .asciz "\n--- REPLY ---\n"
-m_nokey:            .asciz "\nNO ARMEDIT KEY. REGISTER AT ARMEDIT.OEAIO.COM AND SET ARMEDIT_KEY.\n"
+/*
+ * Both halves of why, because either one alone sends somebody looking in the
+ * wrong place: nothing this machine already knows matched what was written,
+ * and there is no backend configured to ask about the rest.
+ */
+m_nokey:            .asciz "\nNOTHING HERE ANSWERS THAT, AND THERE IS NO BACKEND TO ASK.\nBUILT IN: colours <name>\n"
 m_badaddr:          .asciz "\nARMEDIT_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
 m_unreachable:      .asciz "\nBACKEND UNREACHABLE.\n"
 m_badreply:         .asciz "\nBACKEND REPLY HAD NO TEXT FIELD.\n"

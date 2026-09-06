@@ -303,8 +303,11 @@ EFI_OBJ := $(B)/efi/efi.obj
 # QEMU's own EFI firmware, which is where the handover can be run.
 EDK2 ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
 
-# The loader includes the generated tree's offsets, so it waits for them.
-$(B)/efi/%.obj: boot/%.S $(B)/efidtb.S
+# The loader includes the generated tree's offsets and carries the kernel
+# inside itself, so it waits for both. The kernel is not a link-time input -
+# it is assembled in - and without saying so here make will happily rebuild
+# the kernel and link a loader containing the one before it.
+$(B)/efi/%.obj: boot/%.S $(B)/efidtb.S $(B)/kernel.img
 	@mkdir -p $(dir $@)
 	$(CC) -I$(B) -target aarch64-unknown-windows -ffreestanding -c $< -o $@
 

@@ -914,6 +914,29 @@ region first. Taking the *first* would take a small hole below whatever the
 firmware put at the bottom; taking none at all is what the report was saying
 before, with `memory absent` printed on a machine that plainly had some.
 
+### Saying nothing is a bug
+
+Cmd+P with no backend used to return in silence, on the reasoning that a
+machine with nothing to ask has nothing to say. It has one thing to say, and it
+is the only thing the person at the keyboard needs: that the key worked and the
+request went nowhere. Silence is indistinguishable from a key that never
+arrived, and the first thing anybody does about a key that never arrived is
+press it again.
+
+It is also how the ordinary near-miss presents. The built-in operation matches
+`colours`, and somebody who writes `colors` got no operation, no backend, and no
+word about either:
+
+    colors red
+    NOTHING HERE ANSWERS THAT, AND THERE IS NO BACKEND TO ASK.
+    BUILT IN: colours <name>
+
+The message had been written and was never reached. Finding that took longer
+than it should have, because of a missing dependency rather than a missing
+line: the loader carries the kernel inside itself with `.incbin`, which is not
+a link-time input, so make would rebuild the kernel and cheerfully link a loader
+containing the one before it. Every fix looked like it had done nothing.
+
 ### The translator in front of everything
 
 Every driver above hands a controller a physical address and expects it to be
