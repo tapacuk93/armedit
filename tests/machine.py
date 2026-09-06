@@ -321,8 +321,10 @@ def main():
         net = field(m.log(), "usb device") or ""
     ok(net.startswith("0525:a4a2"),
        "an Ethernet adapter says something else entirely", net)
-    ok(net.endswith("class 2"),
+    ok("class 2" in net,
        "...and calls itself a communications device, which is what it is", net)
+    ok("a network at" in net,
+       "...and is brought up as a network, with the address it reports", net)
 
     # --- and finally: can it be typed at?
     #

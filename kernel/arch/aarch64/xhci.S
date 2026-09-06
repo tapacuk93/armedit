@@ -520,6 +520,65 @@ SYM(xhci_noop):
         ret
 
 /*
+ * xhci_pump - take one event off the ring and file it where it belongs.
+ *   out w0 = its type, or -1 if there was none.
+ *
+ * There is one event ring for the whole controller, and by now there is more
+ * than one thing on it: a keyboard reporting keys and an adapter reporting
+ * frames, on different endpoints of different devices. A reader that took
+ * whatever event was next and assumed it was its own would work perfectly with
+ * one device attached and lose every other completion with two - the keyboard
+ * eating the network's frames and the network eating keys.
+ *
+ * So a transfer event is filed against the endpoint it names, and each caller
+ * looks in its own place. The endpoint number is in the event; nothing has to
+ * be inferred.
+ */
+        .globl  SYM(xhci_pump)
+SYM(xhci_pump):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        bl      xhci_event
+        cmn     w0, #1
+        b.eq    8f
+        mov     w19, w0
+        cmp     w0, #32
+        b.ne    8f
+        LEA     x9, xhci_last
+        ldr     w10, [x9, #12]
+        lsr     w10, w10, #16
+        and     w10, w10, #0x1F                 /* which endpoint it is for */
+        ldr     w11, [x9, #8]                   /* residue and completion code */
+        LEA     x12, xhci_eplen
+        str     w11, [x12, w10, uxtw #2]
+        LEA     x12, xhci_epflag
+        mov     w11, #1
+        str     w11, [x12, w10, uxtw #2]
+        mov     w0, w19
+8:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
+ * xhci_epdone - w0 = an endpoint index.
+ *   out w0 = the bytes left unmoved, or -1 if it has not finished.
+ *
+ * Clears the mark as it reads it, because a completion is news once.
+ */
+        .globl  SYM(xhci_epdone)
+SYM(xhci_epdone):
+        LEA     x9, xhci_epflag
+        ldr     w10, [x9, w0, uxtw #2]
+        cbz     w10, 9f
+        str     wzr, [x9, w0, uxtw #2]
+        LEA     x9, xhci_eplen
+        ldr     w0, [x9, w0, uxtw #2]
+        ret
+9:      mov     w0, #-1
+        ret
+
+/*
  * xhci_wait - w0 = the event type wanted. out w0 = 0 if it came, -1 if not.
  *
  * Events that are not the one being waited for are stepped over rather than
@@ -539,7 +598,7 @@ xhci_wait:
 1:      cmp     w20, #0x800000
         b.hs    9f
         add     w20, w20, #1
-        bl      xhci_event
+        bl      SYM(xhci_pump)
         cmn     w0, #1
         b.eq    1b
         cmp     w0, w19
@@ -841,9 +900,18 @@ SYM(xhci_enumerate):
         LEA     x10, xhci_devctx
         str     x10, [x9, w26, uxtw #3]
 
-        LEA     x9, xhci_ep0                    /* where the next one goes */
+/* Close the control ring, so that using it for ever stays inside it. */
+        LEA     x9, xhci_ep0
+        add     x10, x9, #((RING_TRBS - 1) * TRB_SZ)
+        str     x9, [x10]
+        str     wzr, [x10, #8]
+        mov     w11, #(TRB_LINK | TRB_TC)
+        str     w11, [x10, #12]
         LEA     x10, xhci_ep0put
         str     x9, [x10]
+        LEA     x10, xhci_ep0cycle
+        mov     w11, #1
+        str     w11, [x10]
 
         mov     w0, #6                          /* addressing the device */
         bl      xhci_step
@@ -894,9 +962,54 @@ SYM(xhci_enumerate):
  */
         LEA     x9, SYM(xhci_class)
         ldr     w9, [x9]
-        cbnz    w9, 1f
+        cbnz    w9, 2f
         mov     w0, w26
         bl      SYM(xhci_keyboard)
+        b       1f
+/*
+ * A communications device is an adapter, and the class says so at the device
+ * level rather than hiding it in the interfaces the way a keyboard does. Its
+ * configuration is read here because the driver needs it and the reading is
+ * the same either way.
+ */
+2:      LEA     x10, SYM(usbnet_stage)
+        mov     w11, #91
+        str     w11, [x10]
+        cmp     w9, #2
+        b.ne    1f
+        mov     w11, #92
+        str     w11, [x10]
+        mov     w0, w26
+        movz    w1, #0x0200
+        LEA     x2, xhci_cfg
+        mov     w3, #9
+        bl      xhci_ask
+        cmn     w0, #1
+        b.eq    1f
+        LEA     x10, SYM(usbnet_stage)
+        mov     w11, #93
+        str     w11, [x10]
+        LEA     x9, xhci_cfg
+        ldrb    w10, [x9, #2]
+        ldrb    w11, [x9, #3]
+        orr     w20, w10, w11, lsl #8
+        cmp     w20, #256
+        b.ls    3f
+        mov     w20, #256
+3:      mov     w0, w26
+        movz    w1, #0x0200
+        LEA     x2, xhci_cfg
+        mov     w3, w20
+        bl      xhci_ask
+        cmn     w0, #1
+        b.eq    1f
+        LEA     x10, SYM(usbnet_stage)
+        mov     w11, #94
+        str     w11, [x10]
+        mov     w0, w26
+        LEA     x1, xhci_cfg
+        mov     w2, w20
+        bl      SYM(usbnet_start)
 1:
         mov     w0, #0
         bl      xhci_step
@@ -1045,7 +1158,7 @@ SYM(xhci_keyboard):
  */
         mov     w0, #9                          /* choosing a configuration */
         bl      xhci_step
-        LEA     x9, xhci_req
+        LEA     x9, SYM(xhci_req)
         strb    wzr, [x9]                       /* OUT, standard, to the device */
         mov     w10, #9                         /* SET_CONFIGURATION */
         strb    w10, [x9, #1]
@@ -1165,7 +1278,7 @@ SYM(xhci_keyboard):
  */
         mov     w0, #11                         /* asking for boot protocol */
         bl      xhci_step
-        LEA     x9, xhci_req
+        LEA     x9, SYM(xhci_req)
         mov     w10, #0x21                      /* OUT, class, to the interface */
         strb    w10, [x9]
         mov     w10, #0x0B                      /* SET_PROTOCOL */
@@ -1198,6 +1311,144 @@ SYM(xhci_keyboard):
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #96
+        ret
+
+/*
+ * xhci_addep - describe one endpoint to the controller.
+ *   w0 = slot, w1 = the endpoint's USB address, w2 = its type,
+ *   w3 = its maximum packet size, x4 = the ring it is to use.
+ *   out w0 = its index, which is what the doorbell wants.
+ *
+ * Adds to the input context rather than sending anything: a device with two
+ * endpoints wants them described together, because Configure Endpoint replaces
+ * what the controller knows rather than adding to it, and sending one at a time
+ * leaves the second command undoing the first.
+ *
+ * The index is the controller's, not USB's. Endpoint N carrying data to the
+ * host is 2N+1 and carrying data to the device is 2N, because the two
+ * directions of one number are two endpoints here, and the control endpoint is
+ * one.
+ */
+        .globl  SYM(xhci_addep)
+SYM(xhci_addep):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        mov     w19, w1
+        mov     w20, w2
+        mov     w21, w3
+        mov     x22, x4
+
+        and     w23, w19, #0xF
+        lsl     w23, w23, #1
+        tbz     w19, #7, 1f
+        add     w23, w23, #1                    /* it carries data to us */
+1:
+        bl      xhci_ctxsize
+        mov     w24, w0
+
+        LEA     x9, xhci_input
+        ldr     w10, [x9, #4]
+        mov     w11, #1
+        lsl     w11, w11, w23
+        orr     w10, w10, w11
+        orr     w10, w10, #1                    /* the slot changes with them */
+        str     w10, [x9, #4]
+
+        add     w9, w23, #1
+        LEA     x10, xhci_input
+        madd    x10, x24, x9, x10               /* this endpoint's context */
+        lsl     w11, w20, #3
+        orr     w11, w11, #(3 << 1)             /* three errors before giving up */
+        orr     w11, w11, w21, lsl #16
+        str     w11, [x10, #4]
+        orr     x11, x22, #1                    /* its ring, and its cycle state */
+        str     x11, [x10, #8]
+        str     w21, [x10, #16]
+
+        mov     w0, w23
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * xhci_slotctx - w0 = slot, w1 = the highest endpoint index now in use.
+ *
+ * The slot context has to go with any endpoint change, and its "context
+ * entries" field has to name the highest index in use. A controller told about
+ * an endpoint the slot does not admit to having ignores it, and the ring stays
+ * silent - which is indistinguishable from a device that has nothing to say.
+ */
+        .globl  SYM(xhci_slotctx)
+SYM(xhci_slotctx):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     w19, w1
+        bl      xhci_ctxsize
+        LEA     x10, xhci_input
+        add     x10, x10, w0, uxtw
+        LEA     x12, xhci_devctx
+        ldr     w13, [x12]                      /* as the controller left it */
+        bic     w13, w13, #(0x1F << 27)
+        orr     w13, w13, w19, lsl #27
+        str     w13, [x10]
+        ldr     w13, [x12, #4]
+        str     w13, [x10, #4]
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
+/* xhci_beginctx - start a fresh description of what a slot has. */
+        .globl  SYM(xhci_beginctx)
+SYM(xhci_beginctx):
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        LEA     x0, xhci_input
+        mov     x1, #(33 * 64)
+        bl      xhci_zero
+        ldp     x29, x30, [sp], #16
+        ret
+
+/* xhci_applyctx - w0 = slot. Send what has been described. out w0 = 0 or -1. */
+        .globl  SYM(xhci_applyctx)
+SYM(xhci_applyctx):
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        mov     w2, w0
+        mov     w0, #(12 << 10)                 /* Configure Endpoint */
+        LEA     x1, xhci_input
+        bl      xhci_command
+        ldp     x29, x30, [sp], #16
+        ret
+
+/*
+ * xhci_ring - w0 = the doorbell to ring for a slot, w1 = which endpoint index.
+ *
+ * A doorbell is a notification and not a message: the only thing it carries is
+ * which ring has something new on it.
+ */
+        .globl  SYM(xhci_ring)
+SYM(xhci_ring):
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     w19, w0
+        mov     w20, w1
+        bl      SYM(xhci_find)
+        cbz     x0, 8f
+        dsb     sy
+        ldr     w9, [x0, #XHCI_DBOFF]
+        and     w9, w9, #0xFFFFFFFC
+        add     x9, x0, w9, uxtw
+        str     w20, [x9, w19, uxtw #2]
+        dsb     sy
+8:      ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /*
@@ -1238,11 +1489,12 @@ SYM(xhci_key):
 /* Keep the device supplied with somewhere to write. */
         bl      xhci_topup
 
-        bl      xhci_event
+        bl      SYM(xhci_pump)
+        LEA     x9, SYM(xhci_intdci)
+        ldr     w0, [x9]
+        bl      SYM(xhci_epdone)
         cmn     w0, #1
         b.eq    9f
-        cmp     w0, #32                         /* a transfer event */
-        b.ne    9f
 
 /*
  * Which buffer this completion is for. They complete in the order they were
@@ -1421,6 +1673,139 @@ xhci_topup:
         ret
 
 /*
+ * xhci_bulkq - the same as xhci_bulk, but queued and not waited for.
+ *   w0 = slot, w1 = endpoint index, x2 = buffer, w3 = length,
+ *   x4 = the ring, x5 = where its producer is.
+ *
+ * For receiving. A bulk endpoint carrying frames has nothing to say until one
+ * arrives, which may be in a millisecond or never, and a receive that waited
+ * would stop the editor between keystrokes. So one is kept outstanding and the
+ * caller asks whether it has finished - which is what xhci_epdone answers.
+ */
+        .globl  SYM(xhci_bulkq)
+SYM(xhci_bulkq):
+        stp     x29, x30, [sp, #-64]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        mov     w19, w0
+        mov     w20, w1
+        mov     x21, x2
+        mov     w22, w3
+        mov     x23, x4
+        mov     x24, x5
+
+        ldr     x9, [x24]
+        cbnz    x9, 1f
+        mov     x9, x23
+1:      str     x21, [x9]
+        str     w22, [x9, #8]
+        movz    w10, #((1 << 10) | (1 << 5) | 1)  /* normal, interrupt, cycle */
+        str     w10, [x9, #12]
+        add     x9, x9, #TRB_SZ
+        add     x10, x23, #((RING_TRBS - 1) * TRB_SZ)
+        cmp     x9, x10
+        b.lo    2f
+        mov     x9, x23
+2:      str     x9, [x24]
+
+        mov     w0, w19
+        mov     w1, w20
+        bl      SYM(xhci_ring)
+        mov     w0, #0
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #64
+        ret
+
+/*
+ * xhci_bulk - w0 = slot, w1 = endpoint index, x2 = a buffer, w3 = how many
+ *   bytes, x4 = the ring to queue on, x5 = where that ring's producer is.
+ *   out w0 = how many bytes moved, or -1.
+ *
+ * One transfer, queued and waited for. Bulk endpoints have no timing: the
+ * controller moves the data when the device is ready, and "ready" for a
+ * receive means "when a packet arrives", which may be never. So the wait is
+ * bounded and giving up is an ordinary answer rather than an error - a network
+ * with nothing on it is a network.
+ */
+        .globl  SYM(xhci_bulk)
+SYM(xhci_bulk):
+        stp     x29, x30, [sp, #-96]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        mov     w19, w0
+        mov     w20, w1
+        mov     x21, x2
+        mov     w22, w3
+        mov     x23, x4
+        mov     x24, x5
+
+        ldr     x25, [x24]
+        cbnz    x25, 1f
+        mov     x25, x23                        /* first use: the ring's start */
+1:      str     x21, [x25]
+        str     w22, [x25, #8]
+        movz    w9, #((1 << 10) | (1 << 5) | 1) /* normal, interrupt, cycle */
+        str     w9, [x25, #12]
+        add     x25, x25, #TRB_SZ
+
+        add     x9, x23, #((RING_TRBS - 1) * TRB_SZ)
+        cmp     x25, x9
+        b.lo    2f
+        mov     x25, x23                        /* the ring is only ever used
+                                                   one transfer at a time, so
+                                                   rewinding it when empty is
+                                                   enough and needs no link */
+2:      str     x25, [x24]
+
+        mov     w0, w19
+        mov     w1, w20
+        bl      SYM(xhci_ring)
+
+/*
+ * Wait for this endpoint, not for an event. With two devices on one ring the
+ * next event to arrive is quite often somebody else's, and taking it would
+ * report this transfer as finished while it was still in flight.
+ */
+        mov     w26, #0
+4:      mov     w0, w20
+        bl      SYM(xhci_epdone)
+        cmn     w0, #1
+        b.ne    5f
+        add     w26, w26, #1
+        cmp     w26, #0x400000
+        b.hs    9f
+        bl      SYM(xhci_pump)
+        b       4b
+5:      mov     w26, w0
+        lsr     w9, w26, #24
+        cmp     w9, #1
+        b.eq    3f
+        cmp     w9, #13                         /* short, which is an answer */
+        b.ne    9f
+/*
+ * What is left over, not what was moved. A transfer event reports the residue
+ * - how much of the buffer went unused - so the length is the difference, and
+ * reading it as the count gives a number that grows as less arrives.
+ */
+3:      and     w9, w26, #0xFFFFFF
+        sub     w0, w22, w9
+        b       10f
+9:      mov     w0, #-1
+10:     ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #96
+        ret
+
+/*
  * xhci_step - w0 = which stage is being attempted, remembered for the report.
  *
  * Enumeration is six things in a row and each fails differently: a port that
@@ -1473,9 +1858,7 @@ SYM(xhci_control):
         cbz     x0, 9f
         mov     x22, x0
 
-        LEA     x9, xhci_ep0put
-        ldr     x23, [x9]
-        LEA     x24, xhci_req
+        LEA     x24, SYM(xhci_req)
 
 /* Which way this transfer goes, decided once and used three times. */
         ldrb    w25, [x24]                      /* bmRequestType */
@@ -1486,37 +1869,30 @@ SYM(xhci_control):
         b       1f
 2:      mov     w10, #3                         /* from it */
 1:
-        ldr     w9, [x24]                       /* the request, as it stands */
-        str     w9, [x23]
-        ldr     w9, [x24, #4]
-        str     w9, [x23, #4]
-        mov     w9, #8
-        str     w9, [x23, #8]
-        movz    w9, #((2 << 10) | (1 << 6) | 1) /* setup, immediate, cycle */
-        orr     w9, w9, w10, lsl #16
-        str     w9, [x23, #12]
-        add     x23, x23, #TRB_SZ
+        mov     w23, w10                        /* which way this transfer goes */
+
+        ldr     x0, [x24]                       /* the request, as it stands */
+        mov     w1, #8
+        movz    w2, #((2 << 10) | (1 << 6))     /* setup, immediate */
+        orr     w2, w2, w23, lsl #16
+        bl      xhci_ep0put3
 
         cbz     w21, 3f
-        str     x20, [x23]
-        str     w21, [x23, #8]
-        movz    w9, #((3 << 10) | 1)            /* data, cycle */
-        cmp     w10, #3
+        mov     x0, x20
+        mov     w1, w21
+        movz    w2, #(3 << 10)                  /* data */
+        cmp     w23, #3
         b.ne    4f
-        movk    w9, #1, lsl #16                 /* and it comes from the device */
-4:      str     w9, [x23, #12]
-        add     x23, x23, #TRB_SZ
+        movk    w2, #1, lsl #16                 /* and it comes from the device */
+4:      bl      xhci_ep0put3
 
-3:      str     xzr, [x23]
-        str     wzr, [x23, #8]
-        movz    w9, #((4 << 10) | (1 << 5) | 1) /* status, interrupt, cycle */
-        cmp     w10, #3
+3:      mov     x0, #0
+        mov     w1, #0
+        movz    w2, #((4 << 10) | (1 << 5))     /* status, interrupt */
+        cmp     w23, #3
         b.eq    5f
-        movk    w9, #1, lsl #16                 /* acknowledged the other way */
-5:      str     w9, [x23, #12]
-        add     x23, x23, #TRB_SZ
-        LEA     x9, xhci_ep0put
-        str     x23, [x9]
+        movk    w2, #1, lsl #16                 /* acknowledged the other way */
+5:      bl      xhci_ep0put3
 
 /*
  * Ring the device's own doorbell. There is one per slot, and the value is
@@ -1558,6 +1934,57 @@ SYM(xhci_control):
         ret
 
 /*
+ * xhci_ep0put3 - x0 = the first two words, w1 = the third, w2 = the fourth
+ *   without its cycle bit. Writes one TRB on the control ring and moves on.
+ *
+ * The ring wraps. It did not, and for five transfers nothing noticed: a
+ * control ring of sixteen entries is three transfers of three TRBs and two of
+ * two, and the sixth walked off the end into whatever was laid out after it.
+ * The symptom was an adapter that initialised, took its packet filter, and
+ * then would not answer a question - which reads as the device disagreeing
+ * about a message rather than as this side writing outside its own ring.
+ *
+ * So the last entry is a link back to the start, and the cycle bit is carried
+ * in a variable instead of being written as one. A link whose own cycle is not
+ * turned over as it is passed stops the controller there, believing what
+ * follows has not been written yet.
+ */
+xhci_ep0put3:
+        stp     x29, x30, [sp, #-48]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        mov     x19, x0
+        mov     w20, w1
+
+        LEA     x9, xhci_ep0put
+        ldr     x10, [x9]
+        LEA     x11, xhci_ep0cycle
+        ldr     w12, [x11]
+
+        str     x19, [x10]
+        str     w20, [x10, #8]
+        orr     w2, w2, w12
+        str     w2, [x10, #12]
+        add     x10, x10, #TRB_SZ
+
+        LEA     x13, xhci_ep0
+        add     x14, x13, #((RING_TRBS - 1) * TRB_SZ)
+        cmp     x10, x14
+        b.lo    1f
+        ldr     w15, [x14, #12]
+        bic     w15, w15, #1
+        orr     w15, w15, w12
+        str     w15, [x14, #12]
+        mov     x10, x13
+        eor     w12, w12, #1
+        str     w12, [x11]
+1:      str     x10, [x9]
+
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        ret
+
+/*
  * xhci_ask - w0 = slot, w1 = descriptor type and index, x2 = where, w3 = how
  * many. A standard GET_DESCRIPTOR, which is most of what is ever asked.
  */
@@ -1570,7 +1997,7 @@ xhci_ask:
         mov     x20, x2
         mov     w21, w3
 
-        LEA     x9, xhci_req
+        LEA     x9, SYM(xhci_req)
         mov     w10, #0x80                      /* IN, standard, to the device */
         strb    w10, [x9]
         mov     w10, #6                         /* GET_DESCRIPTOR */
@@ -1788,15 +2215,30 @@ xhci_ep0:    .space (RING_TRBS * TRB_SZ)
         .p2align 6
 xhci_desc:   .space 32                  /* what the device says it is */
         .p2align 6
-xhci_req:    .space 8                   /* the eight bytes of a request */
+        .globl  SYM(xhci_req)
+SYM(xhci_req): .space 8                 /* the eight bytes of a request */
         .p2align 6
 xhci_cfg:    .space 256                 /* the configuration, as it arrived */
         .p2align 6
 xhci_intring: .space (RING_TRBS * TRB_SZ)
         .p2align 3
 xhci_intput: .space 8
+        .globl  SYM(xhci_bulkin)
+        .globl  SYM(xhci_bulkout)
+        .globl  SYM(xhci_inpos)
+        .globl  SYM(xhci_outpos)
         .globl  SYM(xhci_intdci)
         .globl  SYM(xhci_kbdslot)
+        .p2align 6
+SYM(xhci_bulkin):  .space (RING_TRBS * TRB_SZ)
+        .p2align 6
+SYM(xhci_bulkout): .space (RING_TRBS * TRB_SZ)
+        .p2align 3
+SYM(xhci_inpos):   .space 8
+SYM(xhci_outpos):  .space 8
+        .p2align 3
+xhci_epflag: .space (32 * 4)            /* which endpoints have finished */
+xhci_eplen:  .space (32 * 4)            /* and what they said when they did */
 SYM(xhci_intdci):  .space 4
 SYM(xhci_kbdslot): .space 4
 xhci_prod:   .space 4                   /* buffers handed to the controller */
@@ -1807,6 +2249,7 @@ xhci_reports: .space (REPORTS_N * 8)    /* what is held down, several deep */
 xhci_before:  .space 8                  /* and what was, last time */
         .p2align 3
 xhci_ep0put: .space 8
+xhci_ep0cycle: .space 4
         .globl  SYM(xhci_vendor)
         .globl  SYM(xhci_product)
         .globl  SYM(xhci_class)

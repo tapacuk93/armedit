@@ -518,6 +518,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `tests/rebootpath.py` | `make reboot-path` — restarting a machine with no PSCI, end to end |
 | `kernel/report.S` | what the machine found, on the panel as well as the wire |
 | `kernel/dhcp.S` | asking the network for an address instead of assuming one |
+| `kernel/arch/aarch64/xhci.S` | the USB controller: rings, devices, endpoints |
+| `kernel/arch/aarch64/usbnet.S` | a network over it, in RNDIS |
 | `tests/network.py` | `make network` — the exchange, read back off the wire |
 | `tests/machine.py` | `make machine` — both first boots, wire and pixels |
 | `tools/loadertree.py` | makes QEMU's device tree describe the machine this is aimed at |
@@ -834,6 +836,55 @@ command after any reset, which is every enumeration, and looked exactly like a
 controller refusing to allocate a slot. And moving the event ring's dequeue
 pointer, added so a keyboard would not stop working after sixteen keys, clobbered
 the register holding the event type on its way out.
+
+### A network on the same controller
+
+The adapter identifies itself as `0525:a4a2 class 2`, and behind that it is
+**RNDIS** — Microsoft's, and what a phone offers when it shares its connection
+over a cable. Of the three ways a USB adapter can present a network (CDC-ECM is
+the standard, vendor-specific parts like ASIX are what most cheap dongles are,
+RNDIS is the other), it is the one that can be *tested*: QEMU's `usb-net` speaks
+it. It is also, independently, the most likely thing to be plugged into a laptop
+that has no network — a phone.
+
+Two interfaces, and only one carries anything: a control interface where
+commands travel inside ordinary control transfers, and a data interface with a
+pair of bulk endpoints. RNDIS does not put Ethernet frames on the wire, it puts
+messages — a frame travels inside one behind a forty-four byte header, both
+directions, with the offset counted from the header's own ninth byte rather than
+its start.
+
+`kernel/arch/aarch64/usbnet.S` initialises it, sets the packet filter (without
+which the link comes up and carries nothing — a failure with no symptom), and
+asks the adapter for its own hardware address, which matters because the DHCP
+server hands out a lease against it. Then `net_send`/`net_recv` dispatch to
+whichever device the machine has, so ARP, IP, TCP and DHCP are unchanged and
+have no business knowing which wire they are on:
+
+    armedit: the network gave us 10.0.2.15
+
+`make network` boots a machine with **no virtio device at all** and requires a
+lease, the four packets on the wire over bulk endpoints, and the frames carrying
+the address the adapter reported rather than one this kernel invented.
+
+Four bugs, and the shape of them is the same every time — something that reads
+as the far end refusing.
+
+The control ring had no link back to its start, and nothing wrapped it. Sixteen
+entries is five control transfers, so the adapter initialised, accepted its
+packet filter, and then would not answer a question — which reads as a protocol
+disagreement and was this side writing past the end of its own ring.
+
+Both devices share one event ring, and a reader that took whatever event was
+next and assumed it was its own worked perfectly with one device attached and
+lost every other completion with two. Transfer events are filed against the
+endpoint they name now, and each caller looks in its own place.
+
+The bulk endpoint types were swapped: bulk *out* is 2 and bulk *in* is 6, and
+the controller accepted both descriptions and then moved nothing. And the
+dispatch into the USB path branched away with the caller's frame still pushed —
+not a crash, and not a symptom either, just a machine carrying on with a stack
+pointer nobody expects.
 
 The serial port is found the same way. Apple's is not a PL011 — it is the s5l,
 inherited from the iPhone, and it disagrees about everything: different

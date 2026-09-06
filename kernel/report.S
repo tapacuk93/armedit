@@ -358,9 +358,36 @@ SYM(report_show):
  */
         LEA     x9, SYM(xhci_kbdslot)
         ldr     w9, [x9]
-        cbz     w9, 25f
+        cbz     w9, 27f
         LEA     x0, m_iskbd
         bl      report_puts
+        b       25f
+27:     LEA     x9, SYM(usbnet_slot)
+        ldr     w9, [x9]
+        cbnz    w9, 29f
+        LEA     x9, SYM(usbnet_stage)
+        ldr     w9, [x9]
+        LEA     x0, m_netstop
+        bl      report_puts
+        LEA     x9, SYM(usbnet_stage)
+        ldr     w0, [x9]
+        bl      report_dec
+        b       25f
+29:
+        LEA     x0, m_isnet
+        bl      report_puts
+        LEA     x19, SYM(usbnet_mac)
+        mov     w20, #0
+28:     cmp     w20, #6
+        b.hs    25f
+        ldrb    w0, [x19, w20, uxtw]
+        bl      report_hex8
+        add     w20, w20, #1
+        cmp     w20, #6
+        b.hs    25f
+        LEA     x0, m_dash
+        bl      report_puts
+        b       28b
 25:     bl      report_nl
 20:
 
@@ -472,6 +499,35 @@ report_hex:
         ldp     x29, x30, [sp], #32
         ret
 
+/* report_hex8 - x0 as two hex digits, which is how one octet is written. */
+report_hex8:
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        str     x19, [sp, #16]
+        mov     x19, x0
+        LEA     x1, r_text
+        lsr     x9, x19, #4
+        and     x9, x9, #0xF
+        cmp     w9, #10
+        b.lo    1f
+        add     w9, w9, #('a' - 10)
+        b       2f
+1:      add     w9, w9, #'0'
+2:      strb    w9, [x1]
+        and     x9, x19, #0xF
+        cmp     w9, #10
+        b.lo    3f
+        add     w9, w9, #('a' - 10)
+        b       4f
+3:      add     w9, w9, #'0'
+4:      strb    w9, [x1, #1]
+        strb    wzr, [x1, #2]
+        LEA     x0, r_text
+        bl      report_puts
+        ldr     x19, [sp, #16]
+        ldp     x29, x30, [sp], #32
+        ret
+
 /* report_hex16 - x0 as four hex digits, which is how USB ids are written. */
 report_hex16:
         stp     x29, x30, [sp, #-32]!
@@ -548,6 +604,9 @@ m_colon:    .asciz ":"
 m_stopped:  .asciz "stopped at step "
 m_class:    .asciz " class "
 m_iskbd:    .asciz ", a keyboard"
+m_isnet:    .asciz ", a network at "
+m_netstop:  .asciz ", a network that stopped at step "
+m_dash:     .asciz ":"
 m_keyboard: .asciz "  keyboard      "
 m_wdt:      .asciz "watchdog at "
 m_hvc:      .asciz "psci, hvc"

@@ -221,10 +221,20 @@ net_init:
 .Lni_fail:
         mov     w9, #128
         str     w9, [x19, #VIRTIO_STATUS]
+/*
+ * No virtio device. That is not the same as no network: the USB adapter, if
+ * one was found and brought up while the machine was describing itself, is a
+ * network and everything above the link works over it unchanged.
+ */
 .Lni_none:
         LEA     x9, vnet_dev
         str     xzr, [x9]
-        mov     w0, #-1
+        LEA     x9, SYM(usbnet_slot)
+        ldr     w9, [x9]
+        cbz     w9, 24f
+        mov     w0, #0
+        b       .Lni_out
+24:     mov     w0, #-1
 .Lni_out:
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
@@ -267,10 +277,27 @@ net_send:
         stp     x29, x30, [sp, #-48]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
+/*
+ * A virtio device if this machine has one, and the USB adapter if it has not.
+ *
+ * Dispatched here rather than by the callers, because everything above the
+ * link - ARP, IP, TCP, DHCP - is the same code either way and has no business
+ * knowing which wire it is on. On the target there is no virtio anything, and
+ * the adapter is what a person plugs in.
+ */
         LEA     x9, vnet_dev
         ldr     x9, [x9]
-        cbz     x9, .Lns_fail
-        mov     w10, #FRAME_MAX
+        cbnz    x9, 20f
+/*
+ * Hand it to the adapter - and undo this frame first. Branching away with the
+ * prologue still pushed leaves the callee returning to our caller with the
+ * stack forty-eight bytes low, which is not a crash and not a symptom: it is a
+ * machine that carries on with a stack pointer nobody expects.
+ */
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        b       SYM(usbnet_send)
+20:     mov     w10, #FRAME_MAX
         cmp     w1, w10
         b.hi    .Lns_fail
 
@@ -344,9 +371,11 @@ net_recv:
         stp     x19, x20, [sp, #16]
         LEA     x9, vnet_dev
         ldr     x9, [x9]
-        cbz     x9, .Lnr_none
-
-        LEA     x10, rx_used
+        cbnz    x9, 21f
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
+        b       SYM(usbnet_recv)
+21:     LEA     x10, rx_used
         ldrh    w11, [x10, #2]
         LEA     x12, rx_last
         ldrh    w13, [x12]
@@ -407,7 +436,13 @@ net_recv:
 /* net_mac - x0 = where to put six bytes of our own address. */
         .globl  net_mac
 net_mac:
-        LEA     x9, vnet_mac
+        LEA     x9, vnet_dev
+        ldr     x9, [x9]
+        cbnz    x9, 22f
+        LEA     x9, SYM(usbnet_mac)
+        b       23f
+22:     LEA     x9, vnet_mac
+23:
         mov     w10, #0
 1:      cmp     w10, #6
         b.hs    9f

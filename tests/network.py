@@ -46,7 +46,7 @@ def ok(passed, what, detail=""):
         failures.append(what)
 
 
-def boot(name, netdev, seconds, pcap=None):
+def boot(name, netdev, seconds, pcap=None, usb=False):
     serial = os.path.join(SCRATCH, name + ".log")
     for p in (serial, pcap):
         if p and os.path.exists(p):
@@ -55,8 +55,13 @@ def boot(name, netdev, seconds, pcap=None):
             "-kernel", os.path.join(BUILD, "kernel.img"), "-device", "ramfb",
             "-device", "virtio-keyboard-device",
             "-global", "virtio-mmio.force-legacy=false",
-            "-netdev", netdev, "-device", "virtio-net-device,netdev=n0",
-            "-display", "none", "-serial", "file:" + serial]
+            "-netdev", netdev, "-display", "none", "-serial", "file:" + serial]
+    if usb:
+        # No virtio network at all: the adapter is the only way off this
+        # machine, which is the arrangement on the target.
+        argv += ["-device", "qemu-xhci", "-device", "usb-net,netdev=n0"]
+    else:
+        argv += ["-device", "virtio-net-device,netdev=n0"]
     if pcap:
         argv += ["-object", "filter-dump,id=f0,netdev=n0,file=" + pcap]
     p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -169,6 +174,39 @@ def main():
        "a network with no server is reported, not waited on forever")
     ok("KERNEL FAULT" not in log2, "...without faulting either")
     ok("armedit: network device found" in log2, "...and the boot carries on")
+
+    # --- and the same thing over USB, which is how the target will do it
+    #
+    # There is no virtio on that machine. A network there is an adapter on the
+    # end of a cable, or a phone sharing its connection - and either way the
+    # frames go out over bulk endpoints on the same controller the keyboard is
+    # on, wrapped in RNDIS messages. Everything above the link is unchanged and
+    # does not know which wire it is on, which is the point.
+    upcap = os.path.join(SCRATCH, "usb.pcap")
+    ulog = boot("usb", "user,id=n0", 16, upcap, usb=True)
+
+    ok("a network at" in ulog, "the adapter comes up and says its own address",
+       (re.search(r"a network at [0-9a-f:]+", ulog) or [""])[0] if "a network at" in ulog
+       else (re.search(r"stopped at step \d+", ulog) or ["nothing"])[0])
+    ok("the network gave us 10.0.2.15" in ulog,
+       "...and DHCP runs over it, with no virtio device on the machine")
+    ok("nobody answered DHCP" not in ulog, "...without falling back")
+    ok("KERNEL FAULT" not in ulog, "...and nothing faulted doing it")
+
+    useen = dhcp_packets(upcap)
+    ok([k for k, _, _, _ in useen][:4] == [DISCOVER, OFFER, REQUEST, ACK],
+       "the same four packets are on the wire, over bulk endpoints",
+       " ".join(NAMES.get(k, str(k)) for k, _, _, _ in useen[:4]))
+
+    # The address in the frames has to be the adapter's own, which this kernel
+    # asked it for rather than invented: a lease is handed out against it, and
+    # one made up here would be a lease for a machine that does not exist.
+    mac = re.search(r"a network at ([0-9a-f:]+)", ulog)
+    first = next((p for p in useen if p[0] == DISCOVER), None)
+    ok(mac is not None and first is not None
+       and ":".join("%02x" % b for b in first[3]) == mac.group(1),
+       "the frames carry the address the adapter reported",
+       mac.group(1) if mac else "")
 
     print()
     if failures:
