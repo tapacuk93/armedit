@@ -523,6 +523,8 @@ decides only *where* the windows fall, never what the pad contains.
 | `kernel/arch/aarch64/dart.S` | Apple's IOMMU, opened by bypass — the one untested file |
 | `tests/network.py` | `make network` — the exchange, read back off the wire |
 | `tests/machine.py` | `make machine` — both first boots, wire and pixels |
+| `boot/efi.S` | a loader: it owns the machine, then hands it to the kernel |
+| `tests/efiboot.py` | `make efi-boot` — the handover, under real EFI firmware |
 | `tools/loadertree.py` | makes QEMU's device tree describe the machine this is aimed at |
 | `backend/` | the earlier assembly backend, kept until the Java one is proven |
 
@@ -837,6 +839,53 @@ command after any reset, which is every enumeration, and looked exactly like a
 controller refusing to allocate a slot. And moving the event ring's dequeue
 pointer, added so a keyboard would not stop working after sixteen keys, clobbered
 the register holding the event type on its way out.
+
+### The handover, which had never happened
+
+Every bare-metal test above starts the kernel with QEMU's `-kernel`, which puts
+the image in memory and jumps to it. That is not how the target starts. There a
+loader owns the machine first, brings the display up, describes it in a device
+tree, gives the machine back and jumps — and nothing had ever done that to this
+kernel, so the handover was tested only as a parser.
+
+`boot/efi.S` is now that loader. It carries the kernel inside itself, asks the
+firmware for the display, makes somewhere two-megabyte aligned for the kernel to
+live, copies it there and zeroes the bss it did not carry, writes the screen and
+the memory map into a device tree, exits boot services, and jumps with `x0`
+pointing at the tree. That is m1n1's shape from a different direction, and an
+EFI machine is where it can be run.
+
+The tree is generated with its numbers left blank and the offsets of the blanks
+beside it (`tools/mkefidtb.py`), because a loader knows them only at run time and
+a flattened-tree *writer* hand-assembled in a language with no structs is worse
+than a reader tested against imagination.
+
+`make efi-boot` boots it under QEMU's EDK II firmware and checks both halves.
+The loader says what it was given on the serial line — the last thing it can say
+before the firmware is gone. The kernel says the rest in pixels, because after
+the handover the screen is all it has, so the screen is read back and required
+to hold the editor's own colours over nine-tenths of the display. Nothing in the
+firmware draws in those colours, so finding them means the kernel took the
+machine:
+
+    this machine
+      running at EL1
+      cpu           00000000410fd083
+      handover      000000005c46eed8 device tree
+      memory        0000000048000000 + 313MB
+      screen        handed over at 000000005c7a0000 800x600, stride 3200, depth 32
+
+**Two findings worth writing down.** Under macOS's Virtualization framework the
+EFI firmware reports a *Blt-only* display: no linear framebuffer, no address, a
+format of 3. The first version of this crashed there, writing to address zero,
+which is why the base and the format are now checked before either is used — and
+it means the handover cannot be proved on that host, whatever else it is good
+for. QEMU's EDK II gives a real one, and is therefore the proving ground.
+
+And the memory node is taken from the firmware's own map, largest ordinary
+region first. Taking the *first* would take a small hole below whatever the
+firmware put at the bottom; taking none at all is what the report was saying
+before, with `memory absent` printed on a machine that plainly had some.
 
 ### The translator in front of everything
 

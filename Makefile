@@ -73,7 +73,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network clean
+.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network efi-boot clean
 all: tty window kernel backend
 tty: $(B)/armedit-tty
 window: $(B)/armedit-window
@@ -300,12 +300,22 @@ vz: $(B)/vzrun $(B)/kernel.img
 # console on that machine will not let it do.
 EFI_OBJ := $(B)/efi/efi.obj
 
-$(B)/efi/%.obj: boot/%.S
+# The loader includes the generated tree's offsets, so it waits for them.
+$(B)/efi/%.obj: boot/%.S $(B)/efidtb.S
 	@mkdir -p $(dir $@)
-	$(CC) -target aarch64-unknown-windows -ffreestanding -c $< -o $@
+	$(CC) -I$(B) -target aarch64-unknown-windows -ffreestanding -c $< -o $@
 
-$(B)/BOOTAA64.EFI: $(EFI_OBJ)
-	lld-link -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ $(EFI_OBJ)
+$(B)/efidtb.S: tools/mkefidtb.py
+	@mkdir -p $(B)
+	@python3 tools/mkefidtb.py $@ $(B)/efidtb.inc
+
+$(B)/efi/efidtb.o: $(B)/efidtb.S
+	@mkdir -p $(dir $@)
+	$(CC) -I$(B) -target aarch64-unknown-windows -ffreestanding -c $< -o $@
+
+# The kernel travels inside the loader, so the loader depends on it.
+$(B)/BOOTAA64.EFI: $(EFI_OBJ) $(B)/efi/efidtb.o $(B)/kernel.img
+	lld-link -subsystem:efi_application -entry:efi_main -nodefaultlib -out:$@ $(EFI_OBJ) $(B)/efi/efidtb.o
 
 .PHONY: efi
 efi: $(B)/esp.img
@@ -323,6 +333,12 @@ $(B)/vzgui: tools/vzgui.swift tools/vz.plist
 	@codesign --entitlements tools/vz.plist -s - $@
 
 # EFI's console is a framebuffer one, so seeing it means having a window.
+# The handover: a loader that owns the machine first, brings the display up,
+# describes it, gives the machine back and jumps. Needs QEMU's EFI firmware.
+.PHONY: efi-boot
+efi-boot: $(B)/esp.img
+	@python3 tests/efiboot.py
+
 .PHONY: vz-efi
 vz-efi: $(B)/vzgui $(B)/esp.img
 	$(B)/vzgui $(B)/esp.img
