@@ -252,6 +252,36 @@ SYM(report_show):
  * between a wrong base address and a driver bug: otherwise they are the same
  * silence.
  */
+/*
+ * The address translator, before the controller that sits behind it.
+ *
+ * Printed even though nothing on this machine has one, because the machine
+ * that does is the one where this line decides what an engineer looks at
+ * next: a USB controller that finds itself and then answers nothing is a
+ * driver bug if there is no translator and an unopened translator if there
+ * is, and those are different afternoons.
+ */
+        LEA     x0, m_iommu
+        bl      report_puts
+        LEA     x9, SYM(dart_at)
+        ldr     x9, [x9]
+        cbnz    x9, 30f
+        LEA     x0, m_absent
+        bl      report_puts
+        bl      report_nl
+        b       31f
+30:     LEA     x9, SYM(dart_at)
+        ldr     x0, [x9]
+        bl      report_hex
+        LEA     x0, m_stream
+        bl      report_puts
+        LEA     x9, SYM(dart_stream)
+        ldr     w0, [x9]
+        bl      report_dec
+        LEA     x0, m_opened
+        bl      report_puts
+        bl      report_nl
+31:
         LEA     x0, m_usb
         bl      report_puts
         bl      SYM(xhci_find)
@@ -590,6 +620,9 @@ m_mb:       .asciz "MB"
 m_screen:   .asciz "  screen        "
 m_serial:   .asciz "  serial        "
 m_restart:  .asciz "  restart       "
+m_iommu:    .asciz "  iommu         "
+m_stream:   .asciz " stream "
+m_opened:   .asciz ", opened"
 m_usb:      .asciz "  usb           "
 m_xhci:     .asciz " xhci "
 m_dot:      .asciz "."

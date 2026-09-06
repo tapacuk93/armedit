@@ -520,6 +520,7 @@ decides only *where* the windows fall, never what the pad contains.
 | `kernel/dhcp.S` | asking the network for an address instead of assuming one |
 | `kernel/arch/aarch64/xhci.S` | the USB controller: rings, devices, endpoints |
 | `kernel/arch/aarch64/usbnet.S` | a network over it, in RNDIS |
+| `kernel/arch/aarch64/dart.S` | Apple's IOMMU, opened by bypass — the one untested file |
 | `tests/network.py` | `make network` — the exchange, read back off the wire |
 | `tests/machine.py` | `make machine` — both first boots, wire and pixels |
 | `tools/loadertree.py` | makes QEMU's device tree describe the machine this is aimed at |
@@ -836,6 +837,48 @@ command after any reset, which is every enumeration, and looked exactly like a
 controller refusing to allocate a slot. And moving the event ring's dequeue
 pointer, added so a keyboard would not stop working after sixteen keys, clobbered
 the register holding the event type on its way out.
+
+### The translator in front of everything
+
+Every driver above hands a controller a physical address and expects it to be
+read. On Apple hardware that is not what happens: a **DART** — an IOMMU — sits
+between each peripheral and memory, and a device behind an unprogrammed one
+reads nothing at any address it is given. The USB stack would find the
+controller, reset it, read its shape correctly, and then get silence from every
+ring.
+
+`kernel/arch/aarch64/dart.S` opens the way through by bypass rather than by
+building page tables. A page table is worth having eventually — it is the only
+thing that stops a device writing anywhere in memory — but this kernel has no
+MMU on, no allocator, and no distinction between what a driver may touch and
+what it may not, so a table here would describe the whole of memory and protect
+nothing, at the cost of a walker written for hardware nobody here can test
+against. Bypass is one register write per stream and says plainly what it does.
+
+**This is the one file that has never run.** There is no DART in any emulator;
+the only machine with one is the target. So everything that can be discovered is
+discovered rather than assumed: *which* translator comes from the phandle the
+controller itself names, and *which stream* from the number beside it — a
+machine has several DARTs, they all carry the same compatible string, and taking
+the first would program somebody else's device. The register offsets are the
+exception and cannot be otherwise; they are Linux's `apple-dart` driver's, for
+the family that covers the M1.
+
+The tests cover the half that can be covered, the way the watchdog's do —
+finding is separate from writing precisely so that a host test can call one
+without the other. The sample tree carries two translators and the controller
+points at the second, so a reader that took the first fails. The write goes to
+poisoned memory and is read back, including a check that the streams belonging
+to other devices were left alone.
+
+And the report says which, because on the machine that has one this line decides
+what gets looked at next:
+
+    iommu         absent
+
+A USB controller that finds itself and then answers nothing is a driver bug
+where that reads *absent*, and an unopened translator where it does not. Those
+are different afternoons.
 
 ### A network on the same controller
 

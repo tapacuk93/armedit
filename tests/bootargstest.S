@@ -260,6 +260,87 @@ _main:
         bl      expect_eq
 
 /*
+ * ---- the address translator in front of the USB controller ----
+ *
+ * On this hardware a DART sits between every device and memory, and a device
+ * behind an unprogrammed one reads nothing at any address it is given. The
+ * half that can be checked without the machine is which one is found and
+ * which stream of it: a machine has several DARTs, they all carry the same
+ * compatible string, and the one that matters is the one the controller names
+ * by phandle. A reader that took the first would take the wrong one - so the
+ * sample tree has two, and the controller points at the second.
+ */
+        LEA     x0, SYM(fdt_apple)
+        bl      SYM(dtb_init)
+        LEA     x0, s_dwc3_test
+        bl      SYM(dart_find)
+        mov     x1, #0
+        LEA     x2, t_dart_open
+        bl      expect_eq
+
+        LEA     x9, SYM(dart_at)
+        ldr     x0, [x9]
+        movz    x1, #0x0000
+        movk    x1, #0x02F0, lsl #16
+        movk    x1, #0x0005, lsl #32    /* 0x502f00000, the second one */
+        LEA     x2, t_dart_which
+        bl      expect_eq
+
+        LEA     x9, SYM(dart_stream)
+        ldr     w0, [x9]
+        mov     x1, #1
+        LEA     x2, t_dart_stream
+        bl      expect_eq
+
+/*
+ * And the write itself, against memory standing in for registers. What no test
+ * here can show is that a real translator answers this word by letting the
+ * controller through; the word is the one Linux's apple-dart driver writes.
+ */
+/*
+ * Poison the whole region, including the control words. The first attempt
+ * filled 256 bytes and the control words begin at exactly 256, so the check
+ * that other streams were left alone was reading past what it had written.
+ */
+        LEA     x0, dart
+        mov     x1, #0
+1:      cmp     x1, #512
+        b.hs    2f
+        mov     w2, #0xAA
+        strb    w2, [x0, x1]
+        add     x1, x1, #1
+        b       1b
+2:      LEA     x0, dart
+        mov     w1, #1
+        bl      SYM(dart_bypass)
+
+        LEA     x9, dart
+        ldr     w0, [x9, #(0x100 + 4)]  /* stream one's control word */
+        mov     x1, #0x1100             /* both bypasses, translation off */
+        LEA     x2, t_dart_word
+        bl      expect_eq
+
+/* Stream zero belongs to something else and must be left as it was. */
+        LEA     x9, dart
+        ldr     w0, [x9, #0x100]
+        movz    w1, #0xAAAA
+        movk    w1, #0xAAAA, lsl #16
+        LEA     x2, t_dart_other
+        bl      expect_eq
+
+/* A machine with no translator says so, and its callers carry on. */
+        LEA     x0, SYM(fdt_sample)
+        bl      SYM(dtb_init)
+        LEA     x0, s_dwc3_test
+        bl      SYM(dart_find)
+        mov     w1, #-1                 /* a word, as the answer is */
+        LEA     x2, t_dart_none
+        bl      expect_eq
+
+        LEA     x0, SYM(fdt_apple)
+        bl      SYM(dtb_init)
+
+/*
  * ---- restarting a machine that has no PSCI ----
  *
  * Apple Silicon has no secure monitor to make a PSCI call to, so the reboot
@@ -488,6 +569,13 @@ t_apple_stride: .asciz "  ...and the stride, which is not the width             
 t_apple_depth:  .asciz "  ...and ten bits a channel, as an Apple panel reports      "
 t_apple_ram:     .asciz "  memory is found by device_type, where RAM really starts  "
 t_apple_ramsize: .asciz "  ...and how much of it there is                            "
+t_dart_open:   .asciz "  a device says which translator is in front of it          "
+t_dart_which:  .asciz "  ...and it is that one, not the first in the tree          "
+t_dart_stream: .asciz "  ...on the stream it named                                 "
+t_dart_word:   .asciz "  opening it turns translation off and both bypasses on     "
+t_dart_other:  .asciz "  ...and leaves the streams belonging to other devices      "
+t_dart_none:   .asciz "  a machine with no translator says so                      "
+s_dwc3_test:   .asciz "snps,dwc3"
 t_wdt_addr:   .asciz "  the watchdog is found under the general half of its list "
 t_wdt_none:   .asciz "  a machine with no watchdog says so                       "
 t_wdt_ctrl:   .asciz "  arming it enables reset                                  "
@@ -506,3 +594,5 @@ h:      .space 8
 stride: .space 8
 depth:  .space 8
 wdt:    .space 64
+        .p2align 3
+dart:   .space 512

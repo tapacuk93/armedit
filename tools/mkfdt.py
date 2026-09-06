@@ -82,6 +82,33 @@ def main(out, apple=False):
         prop("reg", struct.pack(">QQ", 0x23D2B0000, 0x4000))
         u32(2)
 
+        # The address translator, and a USB controller that names it.
+        #
+        # Two of them, because a machine has several and they all match the
+        # same compatible string: the one that matters is the one the
+        # controller points at by phandle, and a tree with only one could not
+        # tell a reader that picks the first from a reader that reads the
+        # property.
+        begin("iommu@82f00000")
+        prop("compatible", b"apple,t8103-dart\0apple,dart\0")
+        prop("reg", struct.pack(">QQ", 0x8_2F00_0000, 0x4000))
+        prop("phandle", struct.pack(">I", 0x21))
+        u32(2)
+
+        begin("iommu@502f00000")
+        prop("compatible", b"apple,t8103-dart\0apple,dart\0")
+        prop("reg", struct.pack(">QQ", 0x5_02F0_0000, 0x4000))
+        prop("phandle", struct.pack(">I", 0x22))
+        u32(2)
+
+        begin("usb@382280000")
+        prop("compatible", b"apple,t8103-dwc3\0apple,dwc3\0snps,dwc3\0")
+        prop("reg", struct.pack(">QQ", 0x3_8228_0000, 0x100000))
+        # The second translator, stream one - neither of them the first thing
+        # a lazy reader would find.
+        prop("iommus", struct.pack(">II", 0x22, 1))
+        u32(2)
+
         # And the framebuffer where m1n1 leaves it: inside /chosen, not at the
         # root, with a compatible list whose general half is the one anybody
         # else's reader matches. Both of those are how the real tree is written

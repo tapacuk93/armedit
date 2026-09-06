@@ -201,6 +201,14 @@ def main():
         ok(field(log, "restart") == "psci, hvc",
            "...how it would restart", field(log, "restart"))
         ok(field(log, "keyboard") == "yes", "...and whether anybody can type at it")
+        # A machine with no address translator says so, which is the answer
+        # that matters on the machine that has one: a USB controller that finds
+        # itself and then answers nothing is a driver bug where this line reads
+        # "absent" and an unopened translator where it does not.
+        ok(field(log, "iommu") == "absent",
+           "...whether an address translator stands in front of its devices",
+           field(log, "iommu"))
+
         ok("KERNEL FAULT" not in log, "and nothing faulted saying it")
 
         # Before the network, because the network is a likelier thing to hang on

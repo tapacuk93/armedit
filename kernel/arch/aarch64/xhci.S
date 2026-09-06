@@ -122,6 +122,21 @@ SYM(xhci_find):
  * Apple's generic one, then Synopsys' - and the last is the one every other
  * operating system matches, so it is the one to ask for.
  */
+/*
+ * Open the way to memory before looking for the controller.
+ *
+ * On this hardware an address translator sits in front of the USB controller,
+ * and a controller behind an unprogrammed one reads nothing at any address it
+ * is given - so every ring below would be written correctly and answered by
+ * nobody. Done here, before the controller is even found, because it is the
+ * same tree lookup and because there is nothing to be gained by finding a
+ * controller this machine cannot talk to.
+ *
+ * A machine without one says so and nothing changes. See dart.S.
+ */
+        LEA     x0, s_dwc3
+        bl      SYM(dart_open)
+
         LEA     x0, s_dwc3
         mov     w1, #0
         bl      SYM(dtb_reg)

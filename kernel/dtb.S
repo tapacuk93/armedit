@@ -403,6 +403,144 @@ dtb_be32:
         orr     w0, w9, w12
         ret
 
+/*
+ * dtb_byphandle - w0 = a phandle. out x0 = that node's first address, or 0.
+ *
+ * A phandle is how one node points at another: the pointed-at node carries a
+ * `phandle` property with a number in it, and everybody who refers to it
+ * quotes that number. There is no index - finding the node means walking the
+ * tree looking at every `phandle` there is.
+ *
+ * Needed because the thing this kernel has to find on Apple hardware is named
+ * that way and no other. A USB controller says which address translator sits
+ * in front of it with `iommus = <&dart 1>`, which is a phandle and a stream
+ * number, and there are several translators that all match the same compatible
+ * string. Picking the wrong one programs somebody else's device.
+ *
+ * Written as its own walk rather than folded into dtb_walk, because every
+ * other lookup here matches a property's *name* against a string and this one
+ * matches a property's *value* against a number.
+ */
+        .globl  SYM(dtb_byphandle)
+SYM(dtb_byphandle):
+        stp     x29, x30, [sp, #-96]!
+        mov     x29, sp
+        stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
+        stp     x23, x24, [sp, #48]
+        stp     x25, x26, [sp, #64]
+        str     x27, [sp, #80]
+        mov     w19, w0
+        cbz     w19, .Lbp_none
+
+        LEA     x9, dtb_base
+        ldr     x20, [x9]
+        cbz     x20, .Lbp_none
+        mov     x1, x20
+        add     x1, x1, #8
+        bl      dtb_be32
+        add     x21, x20, x0                    /* the structure block */
+        mov     x1, x20
+        add     x1, x1, #12
+        bl      dtb_be32
+        add     x22, x20, x0                    /* the strings */
+
+        mov     x23, x21                        /* the cursor */
+        mov     w24, #0                         /* does this node match? */
+        mov     x25, #0                         /* and where does it live? */
+        mov     w26, #0                         /* has it said where? */
+
+.Lbp_token:
+        mov     x1, x23
+        bl      dtb_be32
+        add     x23, x23, #4
+        cmp     w0, #FDT_NOP
+        b.eq    .Lbp_token
+        cmp     w0, #FDT_END
+        b.eq    .Lbp_none
+
+        cmp     w0, #FDT_BEGIN_NODE
+        b.ne    1f
+        mov     w24, #0
+        mov     w26, #0
+        mov     x1, x23
+        bl      dtb_skipstr
+        mov     x23, x0
+        b       .Lbp_token
+
+1:      cmp     w0, #FDT_END_NODE
+        b.ne    2f
+        cbz     w24, .Lbp_token
+        cbz     w26, .Lbp_token
+        mov     x0, x25
+        b       .Lbp_out
+
+2:      cmp     w0, #FDT_PROP
+        b.ne    .Lbp_none                       /* a token this does not know */
+        mov     x1, x23
+        bl      dtb_be32
+        mov     w9, w0                          /* its length */
+        LEA     x10, dtb_len
+        str     w9, [x10]
+        add     x1, x23, #4
+        bl      dtb_be32
+/*
+ * The name, kept where a call cannot reach it. dtb_streq works in x9 and x10,
+ * and this is compared against two names in a row - holding the pointer in x9
+ * across the first comparison left the second one dereferencing whatever the
+ * comparison had left behind.
+ */
+        add     x27, x22, x0
+        add     x23, x23, #8
+
+        mov     x0, x27
+        LEA     x1, s_phandle
+        bl      dtb_streq
+        cbz     w0, 3f
+        mov     x1, x23
+        bl      dtb_be32
+        cmp     w0, w19
+        cset    w24, eq
+        b       .Lbp_advance
+
+3:      mov     x0, x27
+        LEA     x1, s_reg
+        bl      dtb_streq
+        cbz     w0, .Lbp_advance
+/*
+ * Two address cells, which is what every machine this targets uses and what
+ * the root of an Apple tree declares. A tree that said otherwise would need
+ * reading here rather than assuming, and this is the one place that assumption
+ * is made - it is written down so that the next board makes it obvious.
+ */
+        mov     x1, x23
+        bl      dtb_be32
+        mov     x25, x0
+        lsl     x25, x25, #32
+        add     x1, x23, #4
+        bl      dtb_be32
+        orr     x25, x25, x0
+        mov     w26, #1
+
+.Lbp_advance:
+        LEA     x10, dtb_len
+        ldr     w9, [x10]
+        add     w9, w9, #3
+        and     w9, w9, #0xFFFFFFFC
+        add     x23, x23, w9, uxtw
+        b       .Lbp_token
+
+.Lbp_none:
+        mov     x0, #0
+.Lbp_out:
+        ldr     x27, [sp, #80]
+        ldp     x25, x26, [sp, #64]
+        ldp     x23, x24, [sp, #48]
+        ldp     x21, x22, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #96
+        ret
+
 /* dtb_skipstr - x1 = a NUL-terminated string, out x0 = past it, four-aligned. */
 dtb_skipstr:
         mov     x0, x1
@@ -465,6 +603,7 @@ s_compatible: .asciz "compatible"
 s_devtype:    .asciz "device_type"
 s_memory:     .asciz "memory"
 s_reg:        .asciz "reg"
+s_phandle:    .asciz "phandle"
 
         BSS
         .p2align 3
