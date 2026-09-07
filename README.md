@@ -337,6 +337,39 @@ enters this repository only when several models have separately agreed it
 should, and the count of people who asked is now part of what they are told
 when they decide.
 
+### Binding a wallet by showing a code
+
+Pasting a token into a form works, and it is the wrong shape for a phone: the
+token is long, it is secret, and pasting it is the moment it ends up in a
+screenshot. Worse, a pasted token could only be withdrawn by revoking *every*
+token that wallet had issued — a token is self-verifying, so nothing about the
+token itself can be taken away.
+
+So the page shows a code instead. armedit asks the proxy for an authorisation
+and gets back two things that are not interchangeable: the **id**, which goes in
+the code, and the **secret**, which stays here and is what the token is collected
+with. Both in the code would mean anyone who photographed the screen could
+collect the token instead of the service that asked for it. The wallet scans,
+shows who is asking, and on approval mints a token naming that grant — revocable
+in the wallet, one service at a time, without touching anything else.
+
+The code is drawn here rather than fetched. Asking a third party to render it
+would mean handing them the thing it says, which for an authorisation request is
+the whole of what is secret about it — and this backend has one dependency on
+purpose. `backend-java/src/Qr.java` is version 4 at level L: 33×33, up to 78
+bytes, and the largest version that is a *single block*, so no interleaving. The
+one free choice is the mask, made the way the standard says — all eight drawn,
+each scored by the four penalty rules, lowest wins.
+
+**It is checked by scanning it.** A test asserting the grid matched what this
+encoder produces would pass for as long as the encoder was consistently wrong,
+so `tests/qrscan.swift` decodes it with Vision — the framework behind the
+camera — and the payload has to be the text that went in. That test found three
+bugs, each of which left a code that is correct in every visible respect and
+that nothing can read: the alignment pattern two modules out of place, one module
+too many reserved in each format area, and the fifteen format bits written with
+rows and columns transposed.
+
 ### An account is its accesses, and accesses change
 
 A wallet and AWS access were settable only at registration, so a wallet opened

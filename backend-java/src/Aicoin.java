@@ -214,6 +214,70 @@ final class Aicoin {
         return extract(res.body());
     }
 
+    /**
+     * Ask the wallet's own proxy for an authorisation this backend can show as
+     * a code.
+     *
+     * The alternative is what this replaces: the owner opens their wallet,
+     * generates a token, and pastes it into a form. That works, and it puts a
+     * long secret through a clipboard and a text field, and what it produces
+     * cannot be withdrawn from this one service without withdrawing every
+     * token that wallet ever issued.
+     *
+     * Two things come back and they are not the same. The id is what goes in
+     * the code and is what the wallet reads; the secret stays here and is what
+     * the token is collected with. Putting both in the code would mean anybody
+     * who photographed the screen could collect the token instead of us.
+     */
+    record Authorisation(String id, String secret) {}
+
+    Authorisation authorize(String service, String note) throws Exception {
+        String body = """
+                {"service":"%s","note":"%s"}"""
+                .formatted(Json.escape(service), Json.escape(note));
+        var req = HttpRequest.newBuilder(base.resolve("/wallet/api/authorize/new"))
+                .timeout(Duration.ofSeconds(20))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build();
+        var res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() / 100 != 2) {
+            throw new IllegalStateException(
+                    "aicoin %d: %s".formatted(res.statusCode(), trim(res.body())));
+        }
+        var flat = Json.parse(res.body());
+        String id = flat.get("id");
+        String secret = flat.get("secret");
+        if (id == null || secret == null) {
+            throw new IllegalStateException("no request in " + trim(res.body()));
+        }
+        return new Authorisation(id, secret);
+    }
+
+    /**
+     * Has the owner said yes yet? Returns the token once, or null while the
+     * answer is still pending.
+     *
+     * The secret goes in the query rather than a header because this is a
+     * plain read of a resource this backend created and holds the only copy of
+     * the name for.
+     */
+    String collect(String id, String secret) throws Exception {
+        var req = HttpRequest.newBuilder(base.resolve(
+                        "/wallet/api/authorize/" + id + "?secret="
+                        + java.net.URLEncoder.encode(secret, java.nio.charset.StandardCharsets.UTF_8)))
+                .timeout(Duration.ofSeconds(20))
+                .GET()
+                .build();
+        var res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() / 100 != 2) {
+            return null;
+        }
+        var flat = Json.parse(res.body());
+        String token = flat.get("token");
+        return token == null || token.isBlank() ? null : token;
+    }
+
     /** One panelist's answer to a poll, exactly as it gave it. */
     record Said(String provider, String model, String text) {
         String member() { return provider + "/" + model; }

@@ -41,7 +41,7 @@ final class Page {
             <legend>AICOIN WALLET</legend>
             <label for="w">API token from your aicoin wallet page</label>
             <input id="w" autocomplete="off" spellcheck="false" placeholder="eyJhZGRyIjoi...">
-            <small>Pays for this account's model calls. aicoin fronts Claude and the other providers, so this one token covers all of them, and armedit never holds a provider key.</small>
+            <small>Pays for this account's model calls. aicoin fronts Claude and the other providers, so this one token covers all of them, and armedit never holds a provider key. If you would rather not paste a secret through a text field, leave this empty and scan a code with your wallet after the key is issued.</small>
             </fieldset>
             <fieldset>
             <legend>AWS ACCESS</legend>
@@ -65,12 +65,15 @@ final class Page {
 
             <div id="more" style="display:none">
             <fieldset>
-            <legend>CHANGE AN ACCESS</legend>
-            <small>An account is its accesses, and accesses change. A wallet opened after the fact, or a key rotated, is the same account with something different bound to it - not a reason to register again and reissue the key every device is carrying.</small>
-            <label for="w2">aicoin wallet token</label>
-            <input id="w2" type="password" autocomplete="off" spellcheck="false" placeholder="eyJhZGRyIjoi...">
-            <button id="wb" type="button">BIND THIS WALLET</button>
+            <legend>WALLET</legend>
+            <small>Scan this with the aicoin wallet on your phone and it authorises armedit to spend from it - the token is minted on the phone, by the key that never leaves it, and never passes through a clipboard or a text field. Revoke it in the wallet at any time and this account stops being able to spend, without touching anything else that wallet has authorised.</small>
+            <button id="qb" type="button">SHOW A CODE TO SCAN</button>
+            <div id="qr"></div>
             <div id="wout"></div>
+            </fieldset>
+            <fieldset>
+            <legend>AWS ACCESS</legend>
+            <small>An account is its accesses, and accesses change: a key rotated is the same account with something different bound to it, not a reason to register again and reissue the key every device is carrying.</small>
             <label for="k2">AWS access key id</label>
             <input id="k2" autocomplete="off" spellcheck="false" placeholder="AKIA...">
             <label for="s2">AWS secret access key</label>
@@ -131,11 +134,55 @@ final class Page {
              }catch(x){el.innerHTML='<span class="err">'+x+"</span>";}
             }
 
-            $("wb").addEventListener("click",()=>{
-             const v=$("w2").value.trim();
-             if(!v){$("wout").innerHTML='<span class="err">nothing to bind</span>';return;}
-             bind("/api/wallet",{wallet:v},$("wout"),"Wallet bound.");$("w2").value="";
+            // The code is drawn here rather than fetched from anywhere: a QR is
+            // a fixed grid with a fixed error-correcting code, and asking a
+            // third party to render one means handing them the thing it says.
+            function qr(id,el){
+             const img=document.createElement("img");
+             img.width=232;img.height=232;img.alt="authorisation code";
+             img.style.cssText="image-rendering:pixelated;background:#fff;padding:8px;margin-top:10px";
+             img.src="/api/qr?id="+encodeURIComponent(text);
+             el.innerHTML="";el.appendChild(img);
+            }
+
+            let pending=null,polling=null;
+            $("qb").addEventListener("click",async()=>{
+             const wout=$("wout");wout.textContent="asking the wallet proxy...";
+             if(polling)clearInterval(polling);
+             try{
+              const r=await fetch("/api/wallet/scan",{method:"POST",
+               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               body:"{}"});
+              const j=await r.json();
+              if(j.error){wout.innerHTML='<span class="err">'+j.error+"</span>";return;}
+              pending=j;
+              qr(j.id,$("qr"));
+              wout.textContent="Scan it with your wallet. This code is good for ten minutes.";
+              // Polled rather than pushed: the answer arrives on a phone, and
+              // a page that waited on a socket for it would be a socket held
+              // open for however long somebody takes to find their phone.
+              polling=setInterval(collect,2000);
+             }catch(x){wout.innerHTML='<span class="err">'+x+"</span>";}
             });
+
+            async function collect(){
+             if(!pending)return;
+             try{
+              const r=await fetch("/api/wallet/scan",{method:"POST",
+               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               body:JSON.stringify(pending)});
+              const j=await r.json();
+              if(j.bound){
+               clearInterval(polling);polling=null;pending=null;
+               $("qr").innerHTML="";
+               $("wout").textContent="Wallet bound."+(j.complete?"":
+                " This account still needs AWS access before it can work.");
+              }else if(j.error){
+               clearInterval(polling);polling=null;
+               $("wout").innerHTML='<span class="err">'+j.error+"</span>";
+              }
+             }catch(x){/* a poll that fails is a poll; the next one will do */}
+            }
 
             $("ab").addEventListener("click",()=>{
              const k=$("k2").value.trim(),sec=$("s2").value.trim();

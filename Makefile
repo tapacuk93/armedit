@@ -461,13 +461,19 @@ $(B)/browsetest: $(BROWSE_OBJ)
 test: $(B)/optest $(B)/localtest $(B)/bootargstest
 	@cd backend-java && ./gradlew -q installDist
 	@javac -cp backend-java/build/classes/java/main -d $(B)/tests \
-	   tests/ColourTest.java tests/ConsortiumTest.java tests/WaitingTest.java
+	   tests/ColourTest.java tests/ConsortiumTest.java tests/WaitingTest.java tests/QrTest.java
 	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   ColourTest $(B)/tests/colour.bin $(B)/tests/shout.bin
 	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   ConsortiumTest
 	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   WaitingTest
+	@java -cp "backend-java/build/classes/java/main:$(B)/tests" QrTest $(B)/qrgrid.txt
+	@echo "  --- and the code, read back by the framework a camera uses:"
+	@swiftc -O -o $(B)/qrscan tests/qrscan.swift
+	@test "$$($(B)/qrscan $(B)/qrgrid.txt)" = "$$(cat $(B)/qrgrid.txt.txt)" \
+	  && echo "    a scanner reads back exactly what went in       ok" \
+	  || (echo "    a scanner reads back exactly what went in       FAIL"; exit 1)
 	@echo "  --- and the aarch64 it emitted, executed:"
 	@for c in blue red green chartreuse; do \
 	   printf "    set-colour %-11s -> [%s]\n" "$$c" \

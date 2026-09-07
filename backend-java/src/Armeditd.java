@@ -125,8 +125,11 @@ public final class Armeditd {
     /* ------------------------------------------------------------ transport */
 
     /** One request, with nothing Netty-shaped left in it. */
-    record Req(String method, String path, Function<String, String> header, String body) {
+    record Req(String method, String path, Function<String, String> header, String body,
+               Map<String, String> query) {
         boolean isPost() { return "POST".equalsIgnoreCase(method); }
+        /** One query parameter, or null. Only the first value of a repeat. */
+        String query(String name) { return query.get(name); }
     }
 
     /** One response, ready to be written by whatever is carrying it. */
@@ -137,6 +140,10 @@ public final class Armeditd {
 
         static Res html(String body) {
             return new Res(200, "text/html; charset=utf-8", body.getBytes(StandardCharsets.UTF_8));
+        }
+
+        static Res svg(String body) {
+            return new Res(200, "image/svg+xml", body.getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -198,11 +205,17 @@ public final class Armeditd {
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest msg) {
+            var decoded = new QueryStringDecoder(msg.uri());
+            var params = new java.util.LinkedHashMap<String, String>();
+            decoded.parameters().forEach((k, v) -> {
+                if (!v.isEmpty()) params.put(k, v.get(0));
+            });
             var req = new Req(
                     msg.method().name(),
-                    new QueryStringDecoder(msg.uri()).path(),
+                    decoded.path(),
                     name -> msg.headers().get(name),
-                    msg.content().toString(StandardCharsets.UTF_8));
+                    msg.content().toString(StandardCharsets.UTF_8),
+                    params);
 
             jobs.execute(() -> {
                 Res res;
@@ -246,6 +259,8 @@ public final class Armeditd {
             case "/api/journal" -> routeJournal(r);
             case "/api/clouds" -> routeClouds(r);
             case "/api/wallet" -> routeWallet(r);
+            case "/api/wallet/scan" -> routeWalletScan(r);
+            case "/api/qr" -> routeQr(r);
             case "/api/aws" -> routeAws(r);
             case "/api/otp" -> routeOtp(r);
             case "/api/otp/reserve" -> routeOtpReserve(r);
@@ -1623,6 +1638,70 @@ public final class Armeditd {
         System.out.printf("armedit: %s bound a wallet%n", account.id());
         return Res.json(200, Json.obj("bound", true,
                 "complete", !account.awsKey().isBlank()));
+    }
+
+    /**
+     * Bind a wallet by showing its owner a code instead of asking for a token.
+     *
+     * POST with no body asks the proxy for an authorisation and answers with
+     * the code to display. POST with an id and a secret asks whether the owner
+     * has said yes yet, and binds the token when they have.
+     *
+     * The secret comes back to this page and goes out again on the next
+     * request rather than being kept here, which is worth being plain about:
+     * it means an authorisation belongs to the browser tab that started it,
+     * and closing the tab abandons it rather than leaving something on the
+     * server for the next person to collect.
+     */
+    private Res routeWalletScan(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        if (!r.isPost()) return Res.json(405, Json.obj("error", "POST only"));
+
+        var in = Json.parse(r.body());
+        String id = in.getOrDefault("id", "").trim();
+        String secret = in.getOrDefault("secret", "").trim();
+        try {
+            if (id.isEmpty() || secret.isEmpty()) {
+                var request = aicoin.authorize("armedit",
+                        "an editor that writes its own operations");
+                return Res.json(200, Json.obj("id", request.id(), "secret", request.secret()));
+            }
+            String token = aicoin.collect(id, secret);
+            if (token == null) {
+                return Res.json(200, Json.obj("waiting", true));
+            }
+            account.wallet(token);
+            accounts.persist();
+            System.out.printf("armedit: %s bound a wallet by scan%n", account.id());
+            return Res.json(200, Json.obj("bound", true,
+                    "complete", !account.awsKey().isBlank()));
+        } catch (Exception x) {
+            return Res.json(502, Json.obj("error", "the wallet proxy said: " + x));
+        }
+    }
+
+    /**
+     * The code for one authorisation request, as a picture.
+     *
+     * It takes an identifier rather than arbitrary text: this backend composes
+     * the link itself, so the endpoint cannot be used to render anything a
+     * stranger wants rendered on this origin. The identifier is checked for
+     * shape because it is put into a URL.
+     */
+    private Res routeQr(Req r) {
+        String id = r.query("id");
+        if (id == null || id.isEmpty() || id.length() > 64
+                || !id.chars().allMatch(c -> (c >= '0' && c <= '9')
+                        || (c >= 'a' && c <= 'f') || c == '-')) {
+            return Res.json(400, Json.obj("error", "an id is required"));
+        }
+        String where = publicAddr.isBlank() ? "" : publicAddr;
+        String svg = Qr.svg(where + "/authorize/" + id, 232);
+        if (svg == null) {
+            return Res.json(500, Json.obj("error", "that will not fit in a code"));
+        }
+        return Res.svg(svg);
     }
 
     private Res routeAws(Req r) {
