@@ -15,7 +15,12 @@
 SDK      := $(shell xcrun -sdk macosx --show-sdk-path)
 CC       := clang
 INC      := -Iinclude
-AS_MACHO := $(CC) $(INC) -arch arm64 -c
+# Set APP_STORE=1 for a build that is going to the shop. It closes the one
+# door that cannot be defended on somebody else's behalf: running machine code
+# the backend sent. See the note at op_install in app/ops.S.
+APP_STORE ?=
+APP_DEFS  := $(if $(APP_STORE),-DSUE_APP_STORE,)
+AS_MACHO := $(CC) $(INC) $(APP_DEFS) -arch arm64 -c
 KERNEL_DEFS ?=
 AS_ELF   := $(CC) $(INC) $(KERNEL_DEFS) -target aarch64-none-elf -c
 LD_MACHO := ld -lSystem -syslibroot $(SDK) -arch arm64
@@ -130,7 +135,7 @@ IOS_OBJ   := $(B)/ios/ops_table.o $(patsubst %.S,$(B)/ios/%.o,$(IOS_SRC))
 
 $(B)/ios/ops_table.o: $(OPS_TABLE)
 	@mkdir -p $(dir $@)
-	$(CC) $(INC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) -c $< -o $@
+	$(CC) $(INC) $(APP_DEFS) -target $(IOS_ARCH) -isysroot $(IOS_SDK) -c $< -o $@
 
 $(B)/ios/%.o: %.S
 	@mkdir -p $(dir $@)
@@ -524,6 +529,11 @@ test: $(B)/optest $(B)/localtest $(B)/bootargstest $(B)/storetest
 	   "$$(SUE_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"
 	@echo "  --- and what m1n1 would hand over on a real machine:"
 	@$(B)/bootargstest
+	@echo "  --- and the same operation in a build going to the shop:"
+	@$(MAKE) --no-print-directory $(B)/store/optest APP_STORE=1 B=$(B)/store >/dev/null
+	@test -z "$$(SUE_TAG=1 $(B)/store/optest $(B)/tests/colour.bin blue "a document" "" "" 2>&1)" \
+	  && echo "    code from the server does not run there            ok" \
+	  || (echo "    code from the server does not run there            FAIL"; exit 1)
 	@echo "  --- the document, kept and found again:"
 	@mkdir -p $(B)/storehome $(B)/storehome-stranger
 	@rm -f $(B)/storehome/.sue-document

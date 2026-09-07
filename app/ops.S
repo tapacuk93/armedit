@@ -72,6 +72,31 @@ SYM(op_append):
  */
         .globl  SYM(op_install)
 SYM(op_install):
+#ifdef SUE_APP_STORE
+/*
+ * Not in a build going to the App Store.
+ *
+ * Everything above is an argument about whose server it is, and that argument
+ * is the user's to make about their own machine - it is not one that can be
+ * made on behalf of somebody who installed this from a shop. A downloaded
+ * application that fetches machine code and jumps to it is exactly the thing
+ * the review rules exist to stop, and they are right about it: the person
+ * installing has no way to know whose backend it is pointed at.
+ *
+ * So the flag is set for that build and nowhere else. It is refused here
+ * rather than at the fetch, because here is the one place the code becomes
+ * runnable - every other route in ends up at this call, so there is nothing to
+ * remember to also close. op_available probes by installing, so it starts
+ * answering no on its own, and the backend already knows what to do with that:
+ * ask for the description instead of the code. Same operation, same answers,
+ * a little slower.
+ *
+ * A locally built copy keeps all of it. Somebody building this from source and
+ * pointing it at their own server is the case the whole mechanism is for.
+ */
+        mov     x0, #0
+        ret
+#else
         stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
@@ -159,6 +184,7 @@ SYM(op_install):
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #64
         ret
+#endif
 
 /*
  * op_sync_icache - x0 = address, w1 = length.
