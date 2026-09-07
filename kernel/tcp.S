@@ -54,8 +54,26 @@
  * minutes on one machine and a fraction of a second on another. It was short
  * enough here that a model taking a second and a half to answer looked exactly
  * like a backend that was not there.
+ *
+ * Two waits, because they are two different questions.
+ *
+ * A handshake that has not completed in ten seconds is not slow, it is a
+ * server that is not there - nothing about the far side's workload affects how
+ * long a SYN takes to be answered. Waiting longer for it only means the editor
+ * is frozen for longer before saying the thing it already knows.
+ *
+ * Waiting for the answer is the opposite. The far side is asking a model, and
+ * a model takes as long as it takes: the backend measured here answers in
+ * thirty-five to forty seconds, which is entirely ordinary and was just over
+ * the old limit. So the guest connected, sent the request, waited exactly
+ * thirty seconds, closed the connection, and reported that nothing at that
+ * address had answered - about a server that was in the middle of answering.
+ *
+ * The clock restarts on every byte that arrives, so this is a limit on silence
+ * rather than on the whole exchange.
  */
-#define WAIT_MS         30000
+#define CONNECT_MS      10000
+#define WAIT_MS         180000
 
         CODE
         .p2align 2
@@ -145,8 +163,8 @@ SYM(tcp_connect):
         b.eq    .Ltc_fail                       /* refused */
         bl      platform_ticks
         sub     x9, x0, x21
-        movz    x10, #(WAIT_MS & 0xFFFF)
-        movk    x10, #(WAIT_MS >> 16), lsl #16
+        movz    x10, #(CONNECT_MS & 0xFFFF)
+        movk    x10, #(CONNECT_MS >> 16), lsl #16
         cmp     x9, x10
         b.lo    1b
 .Ltc_fail:
