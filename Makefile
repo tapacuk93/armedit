@@ -276,6 +276,27 @@ boot-fault:
 	      cat $(B)/fault.log; exit 1)
 	@$(MAKE) --no-print-directory clean-kernel
 
+# The disk, end to end: a document written, the buffers scribbled over, and the
+# document read back. It is the round trip that matters - a write the device
+# acknowledges without performing reports success and leaves the disk as it
+# was, and a read that never happens returns whatever the buffer already held.
+.PHONY: disk
+disk:
+	@$(MAKE) --no-print-directory clean-kernel
+	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DSUE_DISK_TEST
+	@python3 -c "open('$(B)/disktest.img','wb').truncate(64*1024*1024)"
+	@$(QEMU) -M virt -accel hvf -cpu host -m 512 -kernel $(B)/kernel.img \
+	   -device ramfb -device qemu-xhci -device usb-kbd \
+	   -drive id=d0,if=none,file=$(B)/disktest.img,format=raw,cache=writethrough \
+	   -device usb-storage,drive=d0 \
+	   -display none -serial file:$(B)/disk.log > /dev/null 2>&1 & \
+	 P=$$!; sleep 12; kill $$P 2>/dev/null; true
+	@grep -a -q "^disk: a document written and read back" $(B)/disk.log \
+	  && echo "disk: a document written and read back" \
+	  || (echo "    the disk round trip failed"; \
+	      grep -a "disk\|usb" $(B)/disk.log | head -8; exit 1)
+	@$(MAKE) --no-print-directory clean-kernel
+
 # What the machine says about itself. The first question on any unfamiliar
 # board is whether the addresses came out right, and this is how a kernel with
 # no debugger answers it.
