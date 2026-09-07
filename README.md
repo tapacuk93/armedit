@@ -942,6 +942,17 @@ signed `MCFG`) and writes the address into the tree it is building:
 
     sue: bus at 0000004010000000
 
+`make efi-run` runs it on **this machine's own cores**, through
+Hypervisor.framework, rather than emulating a different processor. That is as
+close to bare metal as anything short of the machine: the guest's instructions
+execute at EL1 on Apple silicon, which is where the kernel will run on the
+target. Emulation is the fallback for a host without it, and `-cpu cortex-a72`
+is an ARM design — not the silicon this is aimed at.
+
+    sue: EFI console is alive
+    sue: screen at 000000005c7a0000 800x600, stride 800, format 1
+    sue: bus at 000000003f000000
+
 Which is what makes `make efi-run` worth having. It boots sue the way the
 target will boot it — from a disk, by firmware that owns the machine first,
 with a keyboard and a network on the USB controller and nothing virtio about

@@ -374,6 +374,7 @@ efi-run: $(B)/esp.img $(B)/sue-disk.img
 	@test -f $(EDK2) || (echo "no EFI firmware at $(EDK2)"; exit 1)
 	@cp $(EDK2) $(B)/code.fd
 	@python3 -c "open('$(B)/vars.fd','wb').truncate($$(stat -f%z $(EDK2)))"
+	@echo "--- sue, booted from a disk by firmware, on this machine's own cores"
 	$(QEMU) -M virt $(ACCEL) -m 512 	  -drive if=pflash,format=raw,readonly=on,file=$(B)/code.fd 	  -drive if=pflash,format=raw,file=$(B)/vars.fd 	  -drive format=raw,file=$(B)/esp.img,if=virtio 	  -device ramfb -device qemu-xhci -device usb-kbd 	  -drive id=disk0,if=none,file=$(B)/sue-disk.img,format=raw 	  -device usb-storage,drive=disk0 	  -netdev user,id=u0 -device usb-net,netdev=u0 	  -display cocoa,zoom-to-fit=on,left-command-key=on
 
 .PHONY: vz-efi
