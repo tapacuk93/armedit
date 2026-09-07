@@ -937,6 +937,43 @@ line: the loader carries the kernel inside itself with `.incbin`, which is not
 a link-time input, so make would rebuild the kernel and cheerfully link a loader
 containing the one before it. Every fix looked like it had done nothing.
 
+### A keyboard and a disk and a network, all at once
+
+Enumeration stopped at the first port with something in it, so a machine could
+have a keyboard *or* a disk *or* an adapter — whichever happened to be plugged
+in first. That is not a machine anybody can work on.
+
+Every port is brought up now. Each device takes its own slot, its own device
+context and its own control ring, because a ring's position lives in the
+endpoint context and two devices sharing one would each consume the other's
+entries. What they share is the controller and the event ring — which is why a
+transfer event carries the endpoint it belongs to. A device with no driver here
+costs nothing: the loop goes on to the next port, because an unknown device must
+not cost the machine its keyboard.
+
+`kernel/arch/aarch64/usbmsc.S` is the disk, and it is what makes the machine
+something to work on rather than something to look at: without it everything
+typed is gone at the next boot. Bulk-only transport is three transfers and a
+convention — thirty-one bytes saying what SCSI command follows, the bytes
+themselves, thirteen bytes saying whether it worked — and four commands are
+enough to use a disk. The answer is checked against the question by signature
+*and* tag, since an answer to an earlier command would otherwise hand the caller
+somebody else's sector.
+
+    usb           0000000010000000 xhci 1.0, 8 ports, 3 attached, answers commands
+    keyboard      usb
+    disk          16384 blocks of 512
+    network       52:54:00:12:34:56
+
+Three register bugs, all the same family — a helper eating what its caller was
+holding. `w27` is the context size and had been borrowed as a spin counter,
+which laid every input context out at the wrong stride. The device index was put
+in the register holding the port's speed. And both slot-lookup helpers work in
+`x9` and `x10`, so a ring base held in `x10` across one of them left every
+device's producer pointing outside its own ring: entries were written, the
+controller read a ring that was still empty, and every control transfer timed
+out with nothing to suggest an offset was wrong.
+
 ### The translator in front of everything
 
 Every driver above hands a controller a physical address and expects it to be

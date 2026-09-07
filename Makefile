@@ -350,16 +350,23 @@ efi-boot: $(B)/esp.img
 # and nothing virtio about it. This is the closest thing to the real machine
 # that can be sat in front of.
 #
+# A disk to keep things on. Made once and kept - the point of it is that what
+# is on it survives, so it is not remade on every run.
+$(B)/armedit-disk.img:
+	@mkdir -p $(B)
+	@python3 -c "open('$@','wb').truncate(64*1024*1024)"
+	@echo "made $@, 64MB"
+
 # The firmware's variables are made fresh every time. They are stored, and a
 # boot entry recorded against an older disk image sends the firmware looking
 # for something that is not there - which presents as a machine that boots to
 # a shell for no reason anybody can see.
 .PHONY: efi-run
-efi-run: $(B)/esp.img
+efi-run: $(B)/esp.img $(B)/armedit-disk.img
 	@test -f $(EDK2) || (echo "no EFI firmware at $(EDK2)"; exit 1)
 	@cp $(EDK2) $(B)/code.fd
 	@python3 -c "open('$(B)/vars.fd','wb').truncate($$(stat -f%z $(EDK2)))"
-	$(QEMU) -M virt -cpu cortex-a72 -m 512 	  -drive if=pflash,format=raw,readonly=on,file=$(B)/code.fd 	  -drive if=pflash,format=raw,file=$(B)/vars.fd 	  -drive format=raw,file=$(B)/esp.img,if=virtio 	  -device ramfb -device qemu-xhci -device usb-kbd 	  -netdev user,id=u0 -device usb-net,netdev=u0 	  -display cocoa,zoom-to-fit=on,left-command-key=on
+	$(QEMU) -M virt -cpu cortex-a72 -m 512 	  -drive if=pflash,format=raw,readonly=on,file=$(B)/code.fd 	  -drive if=pflash,format=raw,file=$(B)/vars.fd 	  -drive format=raw,file=$(B)/esp.img,if=virtio 	  -device ramfb -device qemu-xhci -device usb-kbd 	  -drive id=disk0,if=none,file=$(B)/armedit-disk.img,format=raw 	  -device usb-storage,drive=disk0 	  -netdev user,id=u0 -device usb-net,netdev=u0 	  -display cocoa,zoom-to-fit=on,left-command-key=on
 
 .PHONY: vz-efi
 vz-efi: $(B)/vzgui $(B)/esp.img
