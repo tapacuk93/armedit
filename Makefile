@@ -79,7 +79,7 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 KEY       ?=
 QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/sue/key$(,)string=$(KEY),)
 
-.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network efi-boot efi-run clean
+.PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network efi-boot efi-run vm disk clean
 all: tty window kernel backend
 tty: $(B)/sue-tty
 window: $(B)/sue-window
@@ -337,6 +337,30 @@ EDK2 ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
 # executes different silicon: -cpu cortex-a72 is an ARM design, and the machine
 # this is aimed at is not.
 ACCEL ?= -accel hvf -cpu host
+
+# The machine, to work in. This is the one to run.
+#
+# Hypervisor.framework, so the instructions execute on this Mac's own cores at
+# EL1 - the same place they will run when it is the only thing on the machine.
+# A USB disk, so the document is still there next time: it is a file here and a
+# partition there, and sue cannot tell the difference.
+#
+# The disk is made once and then left alone. Deleting it is how you throw the
+# document away; nothing else does.
+SUE_DISK ?= $(B)/sue-disk.img
+
+$(SUE_DISK):
+	@mkdir -p $(B)
+	@python3 -c "open('$@','wb').truncate(64*1024*1024)"
+	@echo "  a new disk: $@"
+
+.PHONY: vm
+vm: $(B)/kernel.img $(SUE_DISK)
+	$(QEMU) -M virt $(ACCEL) -m 512 -kernel $(B)/kernel.img \
+	  -device ramfb -device qemu-xhci -device usb-kbd \
+	  -drive id=d0,if=none,file=$(SUE_DISK),format=raw,cache=writethrough \
+	  -device usb-storage,drive=d0 \
+	  $(QEMU_NET) $(QEMU_KEY)
 
 # The loader includes the generated tree's offsets and carries the kernel
 # inside itself, so it waits for both. The kernel is not a link-time input -
