@@ -288,7 +288,7 @@ boot-fault:
 .PHONY: disk
 disk:
 	@$(MAKE) --no-print-directory clean-kernel
-	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DSUE_DISK_TEST
+	@$(MAKE) --no-print-directory kernel-img KERNEL_DEFS=-DSUE_DISK_TEST
 	@python3 -c "open('$(B)/disktest.img','wb').truncate(64*1024*1024)"
 	@$(QEMU) -M virt -accel hvf -cpu host -m 512 -kernel $(B)/kernel.img \
 	   -device ramfb -device qemu-xhci -device usb-kbd \
@@ -345,18 +345,15 @@ ACCEL ?= -accel hvf -cpu host
 # A USB disk, so the document is still there next time: it is a file here and a
 # partition there, and sue cannot tell the difference.
 #
-# The disk is made once and then left alone. Deleting it is how you throw the
-# document away; nothing else does.
+# The disk is made once and then left alone - it is the same one the EFI runs
+# use, made by the rule further down. Deleting it is how you throw the document
+# away; nothing else does.
 SUE_DISK ?= $(B)/sue-disk.img
-
-$(SUE_DISK):
-	@mkdir -p $(B)
-	@python3 -c "open('$@','wb').truncate(64*1024*1024)"
-	@echo "  a new disk: $@"
 
 .PHONY: vm
 vm: $(B)/kernel.img $(SUE_DISK)
 	$(QEMU) -M virt $(ACCEL) -m 512 -kernel $(B)/kernel.img \
+	  -global virtio-mmio.force-legacy=false \
 	  -device ramfb -device qemu-xhci -device usb-kbd \
 	  -drive id=d0,if=none,file=$(SUE_DISK),format=raw,cache=writethrough \
 	  -device usb-storage,drive=d0 \

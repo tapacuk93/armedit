@@ -168,7 +168,7 @@ SYM(dhcp_configure):
 .Ldh_fail:
         mov     w0, #-1
 .Ldh_out:
-        ldr     x23, [sp, #48]
+        ldp     x23, x24, [sp, #48]
         ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #64
@@ -232,7 +232,7 @@ dh_parse:
         mov     x29, sp
         stp     x19, x20, [sp, #16]
         stp     x21, x22, [sp, #32]
-        str     x23, [sp, #48]
+        stp     x23, x24, [sp, #48]
         mov     x19, x0
         mov     w20, w1
 
@@ -288,8 +288,19 @@ dh_parse:
 
         mov     w22, #-1                        /* the message type, if it says */
         add     x23, x21, #D_OPTIONS
-        add     x10, x19, w20, uxtw             /* one past the frame */
-2:      cmp     x23, x10
+/*
+ * One past the frame, in a register the helpers do not touch.
+ *
+ * This was x10, and dh_get32 writes w9 to w12 - so the first option whose
+ * value is read through it left the bound as three bytes of an IP address,
+ * every following comparison said the frame was over, and the walk stopped.
+ * QEMU sends the server identifier before the router, so what was lost was the
+ * gateway and the nameserver: the machine came up with an address, announced
+ * that the network gave it one, and then ARPed for 0.0.0.0 the first time
+ * anybody asked it to reach anything.
+ */
+        add     x24, x19, w20, uxtw
+2:      cmp     x23, x24
         b.hs    8f
         ldrb    w9, [x23]
         cmp     w9, #OPT_END
@@ -297,12 +308,12 @@ dh_parse:
         cmp     w9, #0                          /* padding */
         b.eq    3f
         add     x11, x23, #1
-        cmp     x11, x10
+        cmp     x11, x24
         b.hs    8f
         ldrb    w12, [x23, #1]                  /* its length */
         add     x11, x23, #2
         add     x11, x11, w12, uxtw
-        cmp     x11, x10                        /* does it fit in the frame? */
+        cmp     x11, x24                        /* does it fit in the frame? */
         b.hi    8f
         add     x13, x23, #2                    /* its bytes */
 

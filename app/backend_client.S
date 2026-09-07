@@ -270,6 +270,20 @@ SYM(backend_reboot_wanted):
         str     wzr, [x9]
         ret
 
+/*
+ * backend_status - out w0 = how the last request ended, as one of the ST_
+ * numbers above.
+ *
+ * The answer already reaches the screen. This is for the wire: a machine being
+ * brought up is usually being watched on a serial line, and "it answered" -
+ * which is printed whether or not anything was reached - is not an outcome.
+ */
+        .globl  SYM(backend_status)
+SYM(backend_status):
+        LEA     x9, fetch_status
+        ldr     w0, [x9]
+        ret
+
         .globl  SYM(backend_fetch)
 SYM(backend_fetch):
         stp     x29, x30, [sp, #-64]!
@@ -635,6 +649,18 @@ SYM(backend_fetch):
         LEA     x0, respbuf
         bl      SYM(http_body)
         LEA     x1, s_key_text
+        bl      SYM(json_find)
+        cbnz    x0, 4f
+/*
+ * No text. Before calling that a bad reply, look for the reason - the backend
+ * says why it could not answer, and until now that sentence was thrown away
+ * and replaced with "the reply had no text field", which is true and useless.
+ * The difference between an unfunded wallet, an expired token and a provider
+ * that is down is the whole of what somebody needs to know here, and the
+ * server already knows it.
+ */
+        LEA     x0, respbuf
+        LEA     x1, s_key_error
         bl      SYM(json_find)
         cbnz    x0, 4f
         LEA     x9, fetch_status
@@ -1074,6 +1100,7 @@ s_json_base:        .asciz ",\"baseline\":\""
 s_json_ctx:         .asciz "\",\"context\":\""
 s_json_tail:        .asciz "\"}"
 s_key_text:         .asciz "\"text\""
+s_key_error:        .asciz "\"error\""
 s_nl:               .asciz "\n"
 m_reply_open:       .asciz "\n--- REPLY ---\n"
 /*

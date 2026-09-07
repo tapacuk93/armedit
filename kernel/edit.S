@@ -151,13 +151,64 @@ kedit_run:
         mov     w23, #1
         mov     w0, w25
         bl      SYM(backend_submit)
+        bl      SYM(backend_status)     /* and say which way it ended */
+        mov     w25, w0
         LEA     x0, m_answered
         bl      platform_puts
+        bl      ke_outcome
         mov     w0, #0
         bl      SYM(editor_busy)
         mov     w23, #1
         b       1b
 
+/*
+ * ke_outcome - w25 = an ST_ number; print what it means.
+ *
+ * Compared rather than indexed. A table of pointers would be shorter and it
+ * would be wrong: nothing in this kernel may hold an absolute address, because
+ * it does not run where it was linked - the EFI loader copies it to whatever
+ * the firmware allocated. Every other reference here goes through LEA, which
+ * is PC-relative, and a .quad full of link-time addresses is the one shape
+ * that assembles cleanly and then reads from nowhere.
+ */
+ke_outcome:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        cmp     w25, #0
+        b.ne    1f
+        LEA     x0, m_out_ok
+        b       9f
+1:      cmp     w25, #1
+        b.ne    2f
+        LEA     x0, m_out_nokey
+        b       9f
+2:      cmp     w25, #2
+        b.ne    3f
+        LEA     x0, m_out_badaddr
+        b       9f
+3:      cmp     w25, #3
+        b.ne    4f
+        LEA     x0, m_out_unreach
+        b       9f
+4:      cmp     w25, #4
+        b.ne    5f
+        LEA     x0, m_out_badreply
+        b       9f
+5:      LEA     x0, m_out_empty
+9:      bl      platform_puts
+        ldp     x29, x30, [sp], #16
+        ret
+
+        RODATA
+m_out_ok:       .asciz "answered\n"
+m_out_nokey:    .asciz "there is no key, so there was nobody to ask\n"
+m_out_badaddr:  .asciz "the key does not carry an address this understands\n"
+m_out_unreach:  .asciz "nothing at that address answered\n"
+m_out_badreply: .asciz "it answered with neither text nor a reason\n"
+m_out_empty:    .asciz "it answered with nothing at all\n"
+
+        CODE
+        .p2align 2
 .Lke_tick:
         bl      platform_ticks
         sub     x9, x0, x24
@@ -194,6 +245,6 @@ m_declined:   .asciz "sue: the machine declined to restart\n"
 s_unlabelled:
         .asciz ""
 m_asking:   .asciz "sue: asking the backend...\n"
-m_answered: .asciz "sue: ...answered\n"
+m_answered: .asciz "sue: "
 m_nolink:
         .asciz "sue: no link yet - the editor works, the far side does not\n"
