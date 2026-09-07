@@ -677,41 +677,31 @@ kmain:
  * machine with no disk, or a disk that is not a document, gets nothing and
  * says nothing: an empty editor is the ordinary state.
  */
-        bl      SYM(store_load)
-
 #ifdef SUE_DISK_TEST
 /*
- * Write on purpose, so that writing can be checked from outside.
+ * The disk, end to end, without anybody typing.
  *
- * The disk is the one device whose work is visible to the host afterwards -
- * the image file is right there - so a build that puts a known document on it
- * at boot needs no screen, no keyboard and no reading of pixels to say whether
- * the driver moved the bytes.
+ * Put a document on it, scribble over the buffers the document came from -
+ * because a read that never happened is indistinguishable from one that did
+ * when the buffer already holds the answer - and read it back. What this
+ * checks is the round trip, which is the only thing worth checking: writes
+ * that the device acknowledges and does not perform report success.
  */
         LEA     x0, m_disktest
         bl      SYM(editor_insert_str)
         bl      SYM(store_save)
-        mov     w19, w0
-        LEA     x0, m_savedmsg
-        bl      platform_puts
-        mov     w0, w19
-        bl      uart_puthex
-        LEA     x0, m_nl3
-        bl      platform_puts
-/*
- * And read it back, which is a different claim from having written it. A write
- * that the device acknowledged and did not perform reports success and leaves
- * the disk as it was; only reading says which happened.
- */
+        cmn     w0, #1
+        b.eq    1f
         bl      SYM(store_scribble)
         bl      SYM(store_load)
-        mov     w19, w0
-        LEA     x0, m_readback
+        cmp     w0, #30                 /* the length of the document above */
+        b.ne    1f
+        LEA     x0, m_diskok
         bl      platform_puts
-        mov     w0, w19
-        bl      uart_puthex
-        LEA     x0, m_nl3
+        b       2f
+1:      LEA     x0, m_diskbad
         bl      platform_puts
+2:
 #endif
 
         bl      kedit_run               /* the editor is the operating system */
@@ -829,8 +819,8 @@ m_nodhcp: .asciz "sue: nobody answered DHCP - using QEMU's fixed addresses\n"
 m_dot4:   .asciz "."
 #ifdef SUE_DISK_TEST
 m_disktest:  .asciz "a document that should survive"
-m_savedmsg:  .asciz "sue: store_save said "
-m_readback:  .asciz "sue: reading it back said "
+m_diskok:    .asciz "disk: a document written and read back\n"
+m_diskbad:   .asciz "disk: the round trip failed\n"
 #endif
 m_nl3:    .asciz "\n"
 #ifdef SUE_REBOOT_TEST

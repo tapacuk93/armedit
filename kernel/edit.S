@@ -56,6 +56,16 @@ kedit_run:
         bl      SYM(editor_init)
         bl      SYM(applet_clear)
 
+/*
+ * The document, after the editor exists and not before.
+ *
+ * editor_init starts an empty screen, so anything loaded ahead of this call is
+ * thrown away by it - and the autosave that follows then writes the emptiness
+ * back over the disk, which loses the work rather than merely failing to
+ * restore it.
+ */
+        bl      SYM(store_load)
+
         /*
          * The video widget is built and works - see gfx/video.S and the demo
          * clip - but it is scenery while the editor is the thing being used,

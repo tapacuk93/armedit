@@ -64,14 +64,6 @@ SYM(store_save):
         mov     w3, #TEXT_MAX
         bl      SYM(editor_range_text)
         mov     w19, w0
-#ifdef SUE_DISK_TEST
-        LEA     x0, m_gotlen
-        bl      platform_puts
-        mov     w0, w19
-        bl      uart_puthex
-        LEA     x0, m_nlq
-        bl      platform_puts
-#endif
 
 /* Whole sectors, and the tail of the last one cleared rather than left. */
         add     w20, w19, #(SECTOR - 1)
@@ -191,6 +183,38 @@ SYM(store_load):
         ret
 
 #ifdef SUE_DISK_TEST
+/*
+ * store_peek - out w0 = the first four bytes of sector zero, as they are.
+ *
+ * For deciding whether the disk the guest is talking to is the file the host
+ * is looking at. If the host writes a mark into the file and the guest reads
+ * it back, they are the same object and a disagreement afterwards is the
+ * guest's; if the guest sees something else, the argument was never about the
+ * driver.
+ */
+        .globl  SYM(store_peek)
+SYM(store_peek):
+        stp     x29, x30, [sp, #-32]!
+        mov     x29, sp
+        mov     w0, #0
+        mov     w1, #1
+        LEA     x2, st_sector
+        bl      SYM(usbmsc_read)
+        cmn     w0, #1
+        b.eq    9f
+        LEA     x9, st_sector
+        ldrb    w0, [x9]
+        ldrb    w10, [x9, #1]
+        ldrb    w11, [x9, #2]
+        ldrb    w12, [x9, #3]
+        orr     w0, w0, w10, lsl #8
+        orr     w0, w0, w11, lsl #16
+        orr     w0, w0, w12, lsl #24
+        b       8f
+9:      mov     w0, #-1
+8:      ldp     x29, x30, [sp], #32
+        ret
+
 /*
  * store_scribble - fill both buffers with a byte that is nobody's data.
  *
@@ -331,10 +355,6 @@ st_zero:
 2:      ret
 
         RODATA
-#ifdef SUE_DISK_TEST
-m_gotlen: .asciz "sue: the editor gave back "
-m_nlq:    .asciz " bytes\n"
-#endif
 /*
  * Eight bytes that say this disk is a document and which version of one. The
  * digit is there so that a later format can refuse an earlier one rather than
