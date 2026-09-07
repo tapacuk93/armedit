@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * under. Registration refuses anything less - issuing a key for half an
  * account would only fail later, further from the cause.
  *
- * The armedit key is the one credential that ever leaves this process, and the
+ * The sue key is the one credential that ever leaves this process, and the
  * only one a device holds. It is the map key here and is never logged.
  */
 final class Accounts {
@@ -192,9 +192,9 @@ final class Accounts {
                 long n = Long.parseLong(id.substring(id.lastIndexOf('-') + 1));
                 if (n > seq.get()) seq.set(n);
             }
-            System.out.printf("armedit: %d account(s) restored%n", byKey.size());
+            System.out.printf("sue: %d account(s) restored%n", byKey.size());
         } catch (Exception x) {
-            System.out.printf("armedit: could not read %s (%s) - starting empty rather than "
+            System.out.printf("sue: could not read %s (%s) - starting empty rather than "
                     + "overwriting it%n", path, x);
             this.store = null;
         }
@@ -233,7 +233,7 @@ final class Accounts {
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception x) {
-            System.out.printf("armedit: could not save accounts: %s%n", x);
+            System.out.printf("sue: could not save accounts: %s%n", x);
         }
     }
 

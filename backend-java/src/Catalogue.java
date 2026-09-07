@@ -75,7 +75,7 @@ final class Catalogue {
      */
     void start(java.util.function.Supplier<String> wallet) {
         var timer = Executors.newSingleThreadScheduledExecutor(r -> {
-            var t = new Thread(r, "armedit-catalogue");
+            var t = new Thread(r, "sue-catalogue");
             t.setDaemon(true);
             return t;
         });
@@ -107,7 +107,7 @@ final class Catalogue {
             refreshedAt = System.currentTimeMillis();
         }
         lastError = errors.toString();
-        System.out.printf("armedit: catalogue has %d models%s%n", models.size(),
+        System.out.printf("sue: catalogue has %d models%s%n", models.size(),
                 errors.length() == 0 ? "" : " (" + errors + ")");
     }
 

@@ -46,7 +46,7 @@ final class Journal {
     Journal(Path root) {
         this.root = root;
         this.writer = Executors.newSingleThreadExecutor(r -> {
-            var t = new Thread(r, "armedit-journal");
+            var t = new Thread(r, "sue-journal");
             t.setDaemon(true);
             return t;
         });
@@ -120,7 +120,7 @@ final class Journal {
                 Files.writeString(file, body, StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             } catch (Exception x) {
-                System.out.printf("armedit: journal write failed for %s: %s%n", key, x.getMessage());
+                System.out.printf("sue: journal write failed for %s: %s%n", key, x.getMessage());
             }
         });
     }

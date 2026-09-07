@@ -61,7 +61,7 @@ final class Fetch {
 
                 var req = HttpRequest.newBuilder(uri)
                         .timeout(Duration.ofSeconds(20))
-                        .header("User-Agent", "armedit/0.1")
+                        .header("User-Agent", "sue/0.1")
                         .header("Accept", "text/html,text/plain")
                         .GET()
                         .build();

@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>armedit</string>
+	<string>sue</string>
 	<key>CFBundleDisplayName</key>
-	<string>armedit</string>
+	<string>Software User Environment</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.oeaio.armedit</string>
+	<string>com.oeaio.sue</string>
 	<key>CFBundleExecutable</key>
-	<string>armedit</string>
+	<string>sue</string>
 	<key>CFBundleVersion</key>
 	<string>0.1</string>
 	<key>CFBundleShortVersionString</key>

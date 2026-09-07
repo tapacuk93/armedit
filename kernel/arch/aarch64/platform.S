@@ -372,7 +372,7 @@ platform_reboot:
         LEA     x0, s_psci
         bl      reboot_method
 1:      mov     w19, w0
-#ifdef ARMEDIT_REBOOT_TEST
+#ifdef SUE_REBOOT_TEST
 /*
  * Pretend nobody offered.
  *
@@ -402,7 +402,7 @@ platform_reboot:
         cbnz    w0, 3f                  /* armed: do not also fire an hvc into
                                            a machine that is already going down */
 4:
-#ifdef ARMEDIT_REBOOT_TEST
+#ifdef SUE_REBOOT_TEST
 /*
  * The test build says it got here instead of getting here.
  *
@@ -472,15 +472,15 @@ platform_idle:
         ret
 
         .section .rodata
-#ifdef ARMEDIT_REBOOT_TEST
-m_psci_reached: .asciz "armedit: reached the PSCI call\n"
+#ifdef SUE_REBOOT_TEST
+m_psci_reached: .asciz "sue: reached the PSCI call\n"
 #endif
 s_psci_02: .asciz "arm,psci-0.2"
 s_psci_10: .asciz "arm,psci-1.0"
 s_psci:    .asciz "arm,psci"
 s_method:  .asciz "method"
-m_kbd:    .asciz "armedit: keyboard found\n"
-m_nokbd:  .asciz "armedit: no keyboard device\n"
+m_kbd:    .asciz "sue: keyboard found\n"
+m_nokbd:  .asciz "sue: no keyboard device\n"
 
         .section .bss
         .p2align 3

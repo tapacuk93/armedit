@@ -4,13 +4,13 @@
  * backend_client.S - the editor's entire view of the outside world.
  *
  * The editor knows one server and one credential: its own backend, and the
- * armedit key issued by armedit.oeaio.com.  It does not know that Claude
+ * sue key issued by sue.oeaio.com.  It does not know that Claude
  * exists, does not know what an aicoin wallet is, and holds no AWS
  * credentials - the backend owns all of that.  What travels on this wire is
  * the screen's text out, and text back.
  *
  *   POST /api/agent
- *   X-Armedit-Key: <the one key>
+ *   X-Sue-Key: <the one key>
  *   {"mode":"agent"|"aify","screen":<n>,"scroll":<r>,"rows":<n>,"cursor":<i>,
  *    "baseline":"<the text at the last sync>",
  *    "context":"<the whole current screen>"}
@@ -29,8 +29,8 @@
  * looking at, and baseline is what the text was the last time the backend saw
  * it - so the far side can reason about the edit, not just the file.
  *
- * Configuration comes from the environment: ARMEDIT_BACKEND (address:port,
- * default 127.0.0.1:8080) and ARMEDIT_KEY.  Neither is ever written to disk
+ * Configuration comes from the environment: SUE_BACKEND (address:port,
+ * default 127.0.0.1:8080) and SUE_KEY.  Neither is ever written to disk
  * by us, and neither appears anywhere in this repository.
  */
 #define REQ_IP          0
@@ -66,10 +66,10 @@
  * resolve_backend - work out where to send things, and with what.
  *   out x0 = address string ("a.b.c.d:port"), x1 = key, or x1 = 0 if unset
  *
- * A device is configured with exactly one value: ARMEDIT_KEY.  The key the
+ * A device is configured with exactly one value: SUE_KEY.  The key the
  * backend issues carries the address to reach it at, as "<secret>@<addr>", so
  * there is no second setting to get wrong and no endpoint baked into the
- * binary.  A bare key falls back to the local default, and ARMEDIT_BACKEND
+ * binary.  A bare key falls back to the local default, and SUE_BACKEND
  * overrides everything - both of those are for development, not for users.
  */
 resolve_backend:
@@ -81,7 +81,20 @@ resolve_backend:
         LEA     x0, s_env_key
         bl      SYM(env_get)
         mov     x19, x0
-        cbz     x19, .Lrb_nokey
+        cbnz    x19, 4f
+/*
+ * The name this had before the project was renamed.
+ *
+ * A key is issued once and pasted into a shell profile, and renaming the
+ * variable it lives in would take the network away from every machine already
+ * carrying one - silently, since a missing key is exactly how a device with no
+ * backend behaves. The old name is still read, and it is second so that
+ * somebody who has set both gets the one they set today.
+ */
+        LEA     x0, s_env_key_was
+        bl      SYM(env_get)
+        mov     x19, x0
+4:      cbz     x19, .Lrb_nokey
 
         LEA     x20, keybuf             /* copy the key, stopping at '@' */
         mov     w9, #0
@@ -581,7 +594,7 @@ SYM(backend_fetch):
         bl      SYM(str_copy)
         mov     x22, x0
 
-/* ---- X-Armedit-Key: <key> ---------------------------------------------- */
+/* ---- X-Sue-Key: <key> ---------------------------------------------- */
         LEA     x0, hdrbuf
         LEA     x1, s_hdr_key
         bl      SYM(str_copy)
@@ -1027,8 +1040,9 @@ s_key_instance:     .asciz "\"instance\""
 s_empty_body:       .asciz ""
 m_instance:         .asciz "INSTANCE: "
 m_noinstance:       .asciz "NO INSTANCE. THE EDITOR WORKS; CMD+ENTER NEEDS THE BACKEND.\n"
-s_env_backend:      .asciz "ARMEDIT_BACKEND"
-s_env_key:          .asciz "ARMEDIT_KEY"
+s_env_backend:      .asciz "SUE_BACKEND"
+s_env_key:          .asciz "SUE_KEY"
+s_env_key_was:      .asciz "ARMEDIT_KEY"
 s_default_backend:  .asciz "127.0.0.1:8080"
 s_post:             .asciz "POST"
 s_path_agent:       .asciz "/api/agent"
@@ -1042,7 +1056,7 @@ s_nothing:          .asciz ""
 s_json_url:         .asciz "{\"url\":\""
 s_path_fetch:       .asciz "/api/fetch"
 s_open:             .asciz "open "
-s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Armedit-Key: "
+s_hdr_key:          .asciz "Content-Type: application/json\r\nX-Sue-Key: "
 s_hdr_tail:         .asciz "\r\n"
 s_json_mode:        .asciz "{\"mode\":\""
 s_mode_agent:       .asciz "agent"
@@ -1068,7 +1082,7 @@ m_reply_open:       .asciz "\n--- REPLY ---\n"
  * and there is no backend configured to ask about the rest.
  */
 m_nokey:            .asciz "\nNOTHING HERE ANSWERS THAT, AND THERE IS NO BACKEND TO ASK.\nBUILT IN: colours <name>\n"
-m_badaddr:          .asciz "\nARMEDIT_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
+m_badaddr:          .asciz "\nSUE_BACKEND MUST LOOK LIKE 127.0.0.1:8080\n"
 m_unreachable:      .asciz "\nBACKEND UNREACHABLE.\n"
 m_badreply:         .asciz "\nBACKEND REPLY HAD NO TEXT FIELD.\n"
 m_empty:            .asciz "\nEMPTY REPLY. NOTHING CHANGED.\n"

@@ -22,7 +22,7 @@ public class QrTest {
     }
 
     public static void main(String[] a) throws Exception {
-        String url = "https://armedit.oeaio.com/authorize/a1b2c3d4e5f60718a1b2c3d4e5f60718";
+        String url = "https://sue.oeaio.com/authorize/a1b2c3d4e5f60718a1b2c3d4e5f60718";
         String svg = Qr.svg(url, 232);
         ok(svg != null, "a URL with an identifier on the end fits in a code");
         ok(svg.startsWith("<svg") && svg.endsWith("</svg>"), "...which comes out as an image");

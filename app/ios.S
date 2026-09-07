@@ -1,7 +1,7 @@
 #include "asm.inc"
 #include "editor.inc"
 /*
- * ios.S - armedit on iPhone.
+ * ios.S - sue on iPhone.
  *
  * The same editor core, the same rasterizer, the same pixels.  UIKit appears
  * only to obtain a window and a touch stream; it draws no glyph and lays out
@@ -69,7 +69,7 @@ _main:
         mov     x20, x1                 /* argv */
 
         mov     x0, x2
-        bl      SYM(env_init)           /* ARMEDIT_KEY, when there is one */
+        bl      SYM(env_init)           /* SUE_KEY, when there is one */
         bl      SYM(editor_init)
         LEA     x0, seed_text
         bl      SYM(editor_insert_str)
@@ -104,7 +104,7 @@ _main:
         mov     x22, x0
 
         mov     w0, w19                 /* UIApplicationMain(argc, argv, nil,   */
-        mov     x1, x20                 /*                   ArmeditDelegate)   */
+        mov     x1, x20                 /*                   SueDelegate)   */
         mov     x2, #0
         mov     x3, x22
         bl      _UIApplicationMain
@@ -144,7 +144,7 @@ build_classes:
         ADDM    x20, s_touchesBegan, view_touches_began, t_void_id_id
         ADDM    x20, s_touchesMoved, view_touches_moved, t_void_id_id
         ADDM    x20, s_touchesEnded, view_touches_ended, t_void_id_id
-        ADDM    x20, s_armeditFinish, view_armedit_finish, t_void
+        ADDM    x20, s_sueFinish, view_sue_finish, t_void
         mov     x0, x20
         bl      _objc_registerClassPair
 
@@ -823,7 +823,7 @@ SYM(app_finish):
         LEA     x9, view_slot
         ldr     x19, [x9]
         cbz     x19, 1f
-        LEA     x0, s_armeditFinish
+        LEA     x0, s_sueFinish
         bl      _sel_registerName
         mov     x20, x0
         LEA     x0, s_performOnMain
@@ -838,9 +838,9 @@ SYM(app_finish):
         ldp     x29, x30, [sp], #48
         ret
 
-/* - (void)armeditFinish - the main-thread half, installed on the view class */
+/* - (void)sueFinish - the main-thread half, installed on the view class */
         .p2align 2
-view_armedit_finish:
+view_sue_finish:
         stp     x29, x30, [sp, #-32]!
         mov     x29, sp
         str     x19, [sp, #16]
@@ -869,11 +869,11 @@ SYM(app_redraw):
         ret
 
         CSTR
-seed_text:              .asciz "ARMEDIT ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nSWIPE OVER WORDS TO ASK ABOUT THEM\nTWO FINGERS TO PASTE\n\n"
-s_armeditFinish:        .asciz "armeditFinish"
+seed_text:              .asciz "SUE ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nSWIPE OVER WORDS TO ASK ABOUT THEM\nTWO FINGERS TO PASTE\n\n"
+s_sueFinish:        .asciz "sueFinish"
 s_performOnMain:        .asciz "performSelectorOnMainThread:withObject:waitUntilDone:"
-s_delegate_cls:         .asciz "ArmeditDelegate"
-s_view_cls:             .asciz "ArmeditView"
+s_delegate_cls:         .asciz "SueDelegate"
+s_view_cls:             .asciz "SueView"
 s_NSObject:             .asciz "NSObject"
 s_NSString:             .asciz "NSString"
 s_UIView:               .asciz "UIView"

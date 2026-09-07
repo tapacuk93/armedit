@@ -2,10 +2,10 @@
 /*
  * html.S - a page becomes text.
  *
- * armedit has one way of showing anything, which is text in a screen, so a
+ * sue has one way of showing anything, which is text in a screen, so a
  * web page has to arrive as text or it cannot arrive at all. That is not a
  * limitation worked around here - it is the whole design. A site opened in
- * armedit is a screen like any other: the caret goes into it, Cmd+P rewrites
+ * sue is a screen like any other: the caret goes into it, Cmd+P rewrites
  * a line of it, a swipe selects words of it. There is no browser mode to
  * leave, because there is no browser mode.
  *

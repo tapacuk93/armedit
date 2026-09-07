@@ -263,7 +263,7 @@ final class Behaviours {
                     "%s  %s%n".formatted(Instant.now(), line),
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception x) {
-            System.out.printf("armedit: could not record behaviour: %s%n", x.getMessage());
+            System.out.printf("sue: could not record behaviour: %s%n", x.getMessage());
         }
     }
 }

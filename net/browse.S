@@ -685,7 +685,7 @@ browse_remember:
         RODATA
 s_get:      .asciz "GET "
 s_http11:   .asciz " HTTP/1.0\r\nHost: "
-s_hdrtail:  .asciz "\r\nUser-Agent: armedit/0.1\r\nAccept: text/html\r\nConnection: close\r\n\r\n"
+s_hdrtail:  .asciz "\r\nUser-Agent: sue/0.1\r\nAccept: text/html\r\nConnection: close\r\n\r\n"
 s_http:     .asciz "http://"
 s_https:    .asciz "https://"
 s_dotcom:   .asciz ".com"

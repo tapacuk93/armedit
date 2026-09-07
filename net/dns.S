@@ -2,7 +2,7 @@
 /*
  * dns.S - turning a name into an address, without a resolver library.
  *
- * armedit needs this the moment it can open a site at all: net_parse_addr
+ * sue needs this the moment it can open a site at all: net_parse_addr
  * understands "93.184.216.34:80" and nothing else, and nobody types that.
  * So here is the smallest thing that answers "what address is this name" -
  * one A-record query over UDP, one answer parsed.
@@ -366,7 +366,7 @@ dns_literal:
 /*
  * dns_server - out w0 = the resolver to ask, network byte order, or -1.
  *
- * ARMEDIT_DNS first, so this is always overridable. Then the first IPv4
+ * SUE_DNS first, so this is always overridable. Then the first IPv4
  * nameserver in /etc/resolv.conf, which is the machine's own answer to this
  * question and the only one that is right on a private network.
  *
@@ -442,9 +442,9 @@ dns_server:
         ret
 
         CSTR
-s_env_dns:      .asciz "ARMEDIT_DNS"
+s_env_dns:      .asciz "SUE_DNS"
 s_resolv:       .asciz "/etc/resolv.conf"
-s_env_resolv:   .asciz "ARMEDIT_RESOLV"
+s_env_resolv:   .asciz "SUE_RESOLV"
 s_nameserver:   .asciz "nameserver "
 
         BSS

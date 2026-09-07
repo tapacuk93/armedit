@@ -1578,7 +1578,7 @@ SYM(editor_render):
         ret
 
         RODATA
-s_brand:        .asciz "ARMEDIT"
+s_brand:        .asciz "SUE"
 
         BSS
         .p2align 4

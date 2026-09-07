@@ -523,7 +523,7 @@ vcon_puts:
 
         .section .rodata
 s_probe_nl: .asciz "\n"
-s_hello:    .asciz "HELLO FROM ARMEDIT\n"
+s_hello:    .asciz "HELLO FROM SUE\n"
 
         .section .bss
         .p2align 12

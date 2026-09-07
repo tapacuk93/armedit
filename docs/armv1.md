@@ -1,6 +1,6 @@
-# ARMV1 — the video format armedit can decode by itself
+# ARMV1 — the video format sue can decode by itself
 
-armedit has no libraries. Everything it draws, it draws from bytes it
+sue has no libraries. Everything it draws, it draws from bytes it
 understands, and that has to stay true for video or the bootable mode stops
 being the same program as the window mode. So there is a format here, and it
 is small enough to decode in assembly without apology.
@@ -72,7 +72,7 @@ should look like rather than a crash.
 
 ## What this costs
 
-For the synthetic content armedit actually shows — a bouncing square, a plot,
+For the synthetic content sue actually shows — a bouncing square, a plot,
 a terminal recording, an animation somebody generated — a delta frame is
 typically under 2% of a raw frame, because most of the screen did not change
 and a skip run covers it in one byte. For camera footage it is bad, sometimes

@@ -34,7 +34,7 @@ public class WaitingTest {
     }
 
     public static void main(String[] a) throws Exception {
-        Path dir = Files.createTempDirectory("armedit-waiting");
+        Path dir = Files.createTempDirectory("sue-waiting");
         var scripts = new Scripts();
         var colour = op(scripts, "set-colour", "colours {name:colour}",
                 "if (name == \"blue\") { return \"#COLOUR 3\"; } return \"\";");
@@ -54,7 +54,7 @@ public class WaitingTest {
            "and the third reaches the threshold");
 
         // --- counting by what somebody asked for, not by who they told
-        var w2 = new Waiting(Files.createTempDirectory("armedit-waiting2"), 3, 86400);
+        var w2 = new Waiting(Files.createTempDirectory("sue-waiting2"), 3, 86400);
         w2.hold(List.of("alice"), colour, "unsettled", now);
         ok(w2.asked("bob", "colours blue", now).isEmpty(),
            "an instruction the pattern matches counts, without shipping yet");
@@ -70,7 +70,7 @@ public class WaitingTest {
            "the person who completes the threshold releases it");
 
         // --- expiry
-        var w3 = new Waiting(Files.createTempDirectory("armedit-waiting3"), 3, 100);
+        var w3 = new Waiting(Files.createTempDirectory("sue-waiting3"), 3, 100);
         w3.hold(List.of("alice"), colour, "unsettled", now);
         ok(w3.sweep(now + 50).isEmpty(), "a record inside its time is left alone");
         ok(w3.sweep(now + 200).size() == 1, "...and forgotten after it");
@@ -78,7 +78,7 @@ public class WaitingTest {
 
         // Asking keeps it alive: a thing gaining support should not expire on a
         // date set when nobody had heard of it yet.
-        var w4 = new Waiting(Files.createTempDirectory("armedit-waiting4"), 3, 100);
+        var w4 = new Waiting(Files.createTempDirectory("sue-waiting4"), 3, 100);
         w4.hold(List.of("alice"), colour, "unsettled", now);
         w4.asked("bob", "colours blue", now + 90);
         ok(w4.sweep(now + 150).isEmpty(),

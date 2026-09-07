@@ -3,7 +3,7 @@
 End to end, in a virtual machine, on the features as somebody would use them.
 
 Every other test here checks a piece: that an operation compiles, that a
-directive parses, that the emitted aarch64 runs. This one boots armedit as its
+directive parses, that the emitted aarch64 runs. This one boots sue as its
 own operating system, types at it, and looks at the screen - which is the only
 way to find out whether the pieces are still connected to each other.
 
@@ -34,7 +34,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")
-SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-e2e")
+SCRATCH = os.environ.get("E2E_DIR", "/tmp/sue-e2e")
 
 # The palette the editor draws with, straight out of editor.S. Only the two
 # this test can ask for; the caret's amber is deliberately absent, because it
@@ -57,7 +57,7 @@ def skip(what, why):
 
 
 class Machine:
-    """One booted armedit, driven through QEMU's monitor."""
+    """One booted sue, driven through QEMU's monitor."""
 
     def __init__(self, name, key=None, network=True, graphics=True):
         self.name = name
@@ -75,7 +75,7 @@ class Machine:
             argv += ["-netdev", "user,id=n0",
                      "-device", "virtio-net-device,netdev=n0"]
         if key:
-            argv += ["-fw_cfg", "name=opt/armedit/key,string=" + key]
+            argv += ["-fw_cfg", "name=opt/sue/key,string=" + key]
         argv += ["-device", "ramfb", "-display", "none"] if graphics else ["-display", "none"]
         self.argv = argv
         self.proc = None
@@ -91,7 +91,7 @@ class Machine:
         for _ in range(200):
             if os.path.exists(self.serial):
                 with open(self.serial, "rb") as f:
-                    if b"armedit:" in f.read():
+                    if b"sue:" in f.read():
                         break
             time.sleep(0.1)
         time.sleep(1.0)
@@ -128,7 +128,7 @@ class Machine:
 
         QEMU's sendkey delivers a press and a release as one event pair, and
         driving it faster than the guest drains its keyboard ring produces
-        transpositions - "armedit running as its own operating system" came out
+        transpositions - "sue running as its own operating system" came out
         as "Jsredt rucnniong las oitrs oswn". That is the harness outrunning the
         machine, not the machine dropping keys, and it makes every text
         assertion downstream meaningless.
@@ -161,7 +161,7 @@ class Machine:
         return self.log().count("KERNEL FAULT")
 
     def boots(self):
-        return self.log().count("armedit: boot")
+        return self.log().count("sue: boot")
 
 
 def read_ppm(path):
@@ -359,13 +359,13 @@ def test_typing_through_a_request(key):
 
 def main():
     os.makedirs(SCRATCH, exist_ok=True)
-    key = os.environ.get("ARMEDIT_KEY", "").strip()
+    key = os.environ.get("SUE_KEY", "").strip()
     if key and "@" not in key:
-        backend = os.environ.get("ARMEDIT_BACKEND", "10.0.2.2:8090")
+        backend = os.environ.get("SUE_BACKEND", "10.0.2.2:8090")
         key = key + "@" + backend
     daemon_log = os.environ.get("E2E_DAEMON_LOG", "")
 
-    print("armedit, end to end, in a virtual machine")
+    print("sue, end to end, in a virtual machine")
     test_offline_colour()
     test_reboot(key)
     test_browse(key, daemon_log)

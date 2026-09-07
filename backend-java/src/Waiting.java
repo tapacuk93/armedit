@@ -215,7 +215,7 @@ final class Waiting {
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING,
                     java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException x) {
-            System.out.printf("armedit: could not write the waiting record for %s: %s%n",
+            System.out.printf("sue: could not write the waiting record for %s: %s%n",
                     rec.name(), x);
         }
     }
@@ -228,7 +228,7 @@ final class Waiting {
                 if (rec != null) held.put(rec.name(), rec);
             }
         } catch (IOException x) {
-            System.out.printf("armedit: could not read the waiting list: %s%n", x);
+            System.out.printf("sue: could not read the waiting list: %s%n", x);
         }
     }
 

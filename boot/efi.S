@@ -1,5 +1,5 @@
 /*
- * efi.S - armedit as an EFI application.
+ * efi.S - sue as an EFI application.
  *
  * The Virtualization framework's virtio console has never carried a byte for
  * this kernel, and several rounds of narrowing established that the device
@@ -397,9 +397,19 @@ efi_handover:
         adrp    x0, m_bus
         add     x0, x0, :lo12:m_bus
         bl      efi_say
+/*
+ * The address is computed rather than used as a load offset.
+ *
+ * These offsets come from the generated tree, and they move whenever anything
+ * in it changes length - a string in the root did, when the project was
+ * renamed. A scaled load needs its offset to be a multiple of eight and this
+ * one stopped being one, which is an assembler error rather than a bug, but
+ * only because it happened to be caught. Adding first depends on nothing.
+ */
         adrp    x9, efi_dtb
         add     x9, x9, :lo12:efi_dtb
-        ldr     x0, [x9, #EFI_DTB_ECAM]
+        add     x9, x9, #EFI_DTB_ECAM
+        ldr     x0, [x9]
         rev     x0, x0
         bl      efi_hex
         adrp    x0, m_nl
@@ -658,28 +668,28 @@ kernel_end:
         .section .rdata,"dr"
         .p2align 1
 hello:
-        .short  'a', 'r', 'm', 'e', 'd', 'i', 't', ':', ' '
+        .short  's', 'u', 'e', ':', ' '
         .short  'E', 'F', 'I', ' ', 'c', 'o', 'n', 's', 'o', 'l', 'e', ' '
         .short  'i', 's', ' ', 'a', 'l', 'i', 'v', 'e'
         .short  13, 10, 0
 m_screen:
-        .short  'a', 'r', 'm', 'e', 'd', 'i', 't', ':', ' '
+        .short  's', 'u', 'e', ':', ' '
         .short  's', 'c', 'r', 'e', 'e', 'n', ' ', 'a', 't', ' ', 0
 m_space:  .short ' ', 0
 m_by:     .short 'x', 0
 m_stride: .short ',', ' ', 's', 't', 'r', 'i', 'd', 'e', ' ', 0
 m_format: .short ',', ' ', 'f', 'o', 'r', 'm', 'a', 't', ' ', 0
-m_bus: .short 'a','r','m','e','d','i','t',':',' ','b','u','s',' ','a','t',' ',0
+m_bus: .short 's','u','e',':',' ','b','u','s',' ','a','t',' ',0
 m_nl:     .short 13, 10, 0
 m_blt:
-        .short  'a', 'r', 'm', 'e', 'd', 'i', 't', ':', ' '
+        .short  's', 'u', 'e', ':', ' '
         .short  'd', 'i', 's', 'p', 'l', 'a', 'y', ' ', 'i', 's'
         .short  ' ', 'b', 'l', 't', ' ', 'o', 'n', 'l', 'y', 13, 10, 0
 m_drawn:
-        .short  'a', 'r', 'm', 'e', 'd', 'i', 't', ':', ' '
+        .short  's', 'u', 'e', ':', ' '
         .short  'd', 'r', 'a', 'w', 'n', 13, 10, 0
 m_nogop:
-        .short  'a', 'r', 'm', 'e', 'd', 'i', 't', ':', ' '
+        .short  's', 'u', 'e', ':', ' '
         .short  'n', 'o', ' ', 'd', 'i', 's', 'p', 'l', 'a', 'y', 13, 10, 0
 
 /*

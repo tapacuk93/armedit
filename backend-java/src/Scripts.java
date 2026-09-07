@@ -462,7 +462,7 @@ final class Scripts {
                 try {
                     text = Js.run(s.js(), s.arguments(), s.argumentsFor(bound, ctx));
                 } catch (RuntimeException x) {
-                    System.out.printf("armedit: script \"%s\" failed: %s%n", s.name(), x);
+                    System.out.printf("sue: script \"%s\" failed: %s%n", s.name(), x);
                     continue;
                 }
                 if (text == null || text.isBlank()) continue;
@@ -482,7 +482,7 @@ final class Scripts {
                     if (vm.spent(s.code())) {
                         scripts.remove(normalise(s.pattern()), s);
                         evicted.incrementAndGet();
-                        System.out.printf("armedit: script \"%s\" dropped - it stopped coming back%n",
+                        System.out.printf("sue: script \"%s\" dropped - it stopped coming back%n",
                                 s.name());
                     }
                     continue;
@@ -553,7 +553,7 @@ final class Scripts {
             for (var t : tokens) if (t.isVar()) params.add(t.var().name());
             for (var a : AMBIENT) {
                 if (!params.contains(a)) continue;
-                System.out.printf("armedit: script \"%s\" refused: \"%s\" is given to every "
+                System.out.printf("sue: script \"%s\" refused: \"%s\" is given to every "
                         + "operation already%n", name, a);
                 refused.incrementAndGet();
                 params = null;
@@ -567,7 +567,7 @@ final class Scripts {
                 try {
                     blob = Js.compile(name, script, params);
                 } catch (RuntimeException x) {
-                    System.out.printf("armedit: script \"%s\" rejected: %s%n", name, x.getMessage());
+                    System.out.printf("sue: script \"%s\" rejected: %s%n", name, x.getMessage());
                     refused.incrementAndGet();
                     continue;
                 }
@@ -580,7 +580,7 @@ final class Scripts {
                 if (code == null) {
                     // The code was refused, but a template may have come with
                     // it, and half a script is better than none.
-                    System.out.printf("armedit: script \"%s\" not compiled: %s%n", name, why);
+                    System.out.printf("sue: script \"%s\" not compiled: %s%n", name, why);
                     if (body.isEmpty()) { refused.incrementAndGet(); continue; }
                 }
             }

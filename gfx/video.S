@@ -2,7 +2,7 @@
 /*
  * video.S - the ARMV1 decoder (see docs/armv1.md).
  *
- * This is the whole of video playback in armedit: a palette, a run-length
+ * This is the whole of video playback in sue: a palette, a run-length
  * decoder for key frames, a skip/copy decoder for deltas, and an expansion
  * into the one pixel format the rest of the program uses. There is no library
  * underneath it and there is no second implementation for the bootable mode -

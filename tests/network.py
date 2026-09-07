@@ -31,7 +31,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")
-SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-network")
+SCRATCH = os.environ.get("E2E_DIR", "/tmp/sue-network")
 
 DISCOVER, OFFER, REQUEST, ACK = 1, 2, 3, 5
 NAMES = {DISCOVER: "DISCOVER", OFFER: "OFFER", REQUEST: "REQUEST", ACK: "ACK"}
@@ -173,7 +173,7 @@ def main():
     ok("nobody answered DHCP" in log2,
        "a network with no server is reported, not waited on forever")
     ok("KERNEL FAULT" not in log2, "...without faulting either")
-    ok("armedit: network device found" in log2, "...and the boot carries on")
+    ok("sue: network device found" in log2, "...and the boot carries on")
 
     # --- and the same thing over USB, which is how the target will do it
     #

@@ -33,7 +33,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")
-SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-machine")
+SCRATCH = os.environ.get("E2E_DIR", "/tmp/sue-machine")
 
 FB_AT = 0x50000000
 FG = 0x8AE2B8           # console.S and the editor draw text in this
@@ -95,7 +95,7 @@ class Machine:
         self.proc = subprocess.Popen(self.argv, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL)
         for _ in range(200):
-            if os.path.exists(self.serial) and b"armedit:" in open(self.serial, "rb").read():
+            if os.path.exists(self.serial) and b"sue:" in open(self.serial, "rb").read():
                 break
             time.sleep(0.1)
         time.sleep(1.5)
@@ -215,7 +215,7 @@ def main():
         # Before the network, because the network is a likelier thing to hang on
         # than anything above it, and a report that waits for it is a report
         # about the boot that did not need one.
-        ok(log.index("this machine") < log.index("armedit: no network device"),
+        ok(log.index("this machine") < log.index("sue: no network device"),
            "the report comes before the network is tried")
 
         # A keyboard means the editor: the page is not the end of the machine.
@@ -252,7 +252,7 @@ def main():
         time.sleep(4.0)
         after = m.pixels(FB_AT, 1280 * 4 * 64)
         ok(before == after, "the page is still there four seconds later")
-        ok("armedit: type in the display window" not in log,
+        ok("sue: type in the display window" not in log,
            "...and the editor never started over it")
         ok("KERNEL FAULT" not in log, "and nothing faulted doing that either")
 

@@ -1,5 +1,5 @@
 services:
-  armeditd:
+  sue-server:
     build: .
     restart: unless-stopped
     ports:
@@ -7,19 +7,19 @@ services:
     volumes:
       # Everything typed lives here. Without this, a container restart loses
       # every screen the disk tier was holding.
-      - armedit-workspaces:/opt/armedit/workspaces
+      - sue-workspaces:/opt/sue/workspaces
     environment:
       # Every one of these is optional; none of them has a credential in it.
       # Credentials arrive at registration and stay in the process.
-      ARMEDIT_PORT: "8080"
-      ARMEDIT_PUBLIC_ADDR: "${ARMEDIT_PUBLIC_ADDR:-}"
-      ARMEDIT_AICOIN: "${ARMEDIT_AICOIN:-http://host.docker.internal:8080}"
-      ARMEDIT_PROVIDER: "${ARMEDIT_PROVIDER:-anthropic}"
-      ARMEDIT_MODEL: "${ARMEDIT_MODEL:-}"
-      ARMEDIT_AMI: "${ARMEDIT_AMI:-}"
-      ARMEDIT_INSTANCE_TYPE: "${ARMEDIT_INSTANCE_TYPE:-t4g.small}"
-      ARMEDIT_S3_BUCKET: "${ARMEDIT_S3_BUCKET:-}"
-      ARMEDIT_IDLE_MINUTES: "${ARMEDIT_IDLE_MINUTES:-30}"
+      SUE_PORT: "8080"
+      SUE_PUBLIC_ADDR: "${SUE_PUBLIC_ADDR:-}"
+      SUE_AICOIN: "${SUE_AICOIN:-http://host.docker.internal:8080}"
+      SUE_PROVIDER: "${SUE_PROVIDER:-anthropic}"
+      SUE_MODEL: "${SUE_MODEL:-}"
+      SUE_AMI: "${SUE_AMI:-}"
+      SUE_INSTANCE_TYPE: "${SUE_INSTANCE_TYPE:-t4g.small}"
+      SUE_S3_BUCKET: "${SUE_S3_BUCKET:-}"
+      SUE_IDLE_MINUTES: "${SUE_IDLE_MINUTES:-30}"
 
 volumes:
-  armedit-workspaces:
+  sue-workspaces:

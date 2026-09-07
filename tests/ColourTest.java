@@ -20,22 +20,22 @@ public class ColourTest {
         // --- recognised, in the shapes a model actually writes.
         // A slot, not a name: the mapping from "blue" to 3 is the model's to
         // make, and there is no table here that could disagree with it.
-        ok(Armeditd.colourIn("#COLOUR 3") == 3, "\"#COLOUR 3\" is palette slot 3");
-        ok(Armeditd.colourIn("#COLOR 3") == 3, "the American spelling too");
-        ok(Armeditd.colourIn("#colour 4") == 4, "case does not matter");
-        ok(Armeditd.colourIn("#COLOUR 0") == 0, "slot zero is a slot, not an absence");
-        ok(Armeditd.colourIn("#COLOUR 9") == 9, "and nine is the last one");
+        ok(SueServer.colourIn("#COLOUR 3") == 3, "\"#COLOUR 3\" is palette slot 3");
+        ok(SueServer.colourIn("#COLOR 3") == 3, "the American spelling too");
+        ok(SueServer.colourIn("#colour 4") == 4, "case does not matter");
+        ok(SueServer.colourIn("#COLOUR 0") == 0, "slot zero is a slot, not an absence");
+        ok(SueServer.colourIn("#COLOUR 9") == 9, "and nine is the last one");
 
         // --- and not recognised when it should not be
-        ok(Armeditd.colourIn("#COLOUR blue") == -1, "a name is not a slot");
-        ok(Armeditd.colourIn("the sky is blue") == -1, "prose about blue is not a directive");
-        ok(Armeditd.colourIn("") == -1, "nothing asks for nothing");
-        ok(Armeditd.colourIn(null) == -1, "and neither does null");
+        ok(SueServer.colourIn("#COLOUR blue") == -1, "a name is not a slot");
+        ok(SueServer.colourIn("the sky is blue") == -1, "prose about blue is not a directive");
+        ok(SueServer.colourIn("") == -1, "nothing asks for nothing");
+        ok(SueServer.colourIn(null) == -1, "and neither does null");
 
         // --- the directive never reaches the document
-        ok(Armeditd.withoutDirectives("#COLOUR 3").isEmpty(),
+        ok(SueServer.withoutDirectives("#COLOUR 3").isEmpty(),
            "the directive is stripped from what the user sees");
-        ok(Armeditd.withoutDirectives("keep me\n#COLOUR 3\n").equals("keep me"),
+        ok(SueServer.withoutDirectives("keep me\n#COLOUR 3\n").equals("keep me"),
            "...leaving anything that was really text");
 
         // --- scripted: the model teaches it, the server answers without a model
@@ -53,9 +53,9 @@ public class ColourTest {
         ok(scripts.learn(taught, "sonnet", true).size() == 1, "the operation is learned");
         var hit = scripts.lookup(new Scripts.Ctx("aify", "colours red", "", "", ""));
         ok(hit != null, "a later \"colours red\" is answered without a model");
-        ok(hit != null && Armeditd.colourIn(hit.text()) == 4,
+        ok(hit != null && SueServer.colourIn(hit.text()) == 4,
            "...and the colour survives the scripted path");
-        ok(hit != null && Armeditd.withoutDirectives(hit.text()).isEmpty(),
+        ok(hit != null && SueServer.withoutDirectives(hit.text()).isEmpty(),
            "...with nothing left over to land on screen");
         ok(scripts.lookup(new Scripts.Ctx("aify", "colours chartreuse", "", "", "")) == null,
            "a colour it does not know declines, so the model still gets asked");

@@ -1,15 +1,15 @@
 /*
- * account.inc - one registered armedit user.
+ * account.inc - one registered sue user.
  *
  * An account is only valid with BOTH accesses bound: the aicoin wallet token
  * that pays for its Claude calls, and the AWS credentials its instances are
  * provisioned under.  Registration refuses anything less.
  *
- * The armedit key is the only one of these that ever leaves the server, and
+ * The sue key is the only one of these that ever leaves the server, and
  * the only credential a device ever holds.
  */
-#ifndef ARMEDIT_ACCOUNT_INC
-#define ARMEDIT_ACCOUNT_INC
+#ifndef SUE_ACCOUNT_INC
+#define SUE_ACCOUNT_INC
 
 #define ACCT_KEY        0       /* the issued key, hex                  */
 #define ACCT_WALLET     72      /* aicoin API token                     */

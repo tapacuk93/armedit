@@ -7,7 +7,7 @@
  *
  * m1n1 passes its own boot_args when it starts a raw payload, and that carries
  * the framebuffer directly - see bootargs.S. But m1n1 also boots Linux-style
- * images, and armedit is one of those now: it has the arm64 image header, so
+ * images, and sue is one of those now: it has the arm64 image header, so
  * the loader hands it a flattened device tree instead. In that tree is a
  * `simple-framebuffer` node, which is the same information in the form the
  * rest of the world uses.

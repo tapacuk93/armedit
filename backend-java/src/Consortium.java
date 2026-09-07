@@ -143,7 +143,7 @@ final class Consortium {
     private final Aicoin aicoin;
     private final Catalogue catalogue;
     private final ExecutorService pool = Executors.newFixedThreadPool(SEATS, r -> {
-        var t = new Thread(r, "armedit-consortium");
+        var t = new Thread(r, "sue-consortium");
         t.setDaemon(true);
         return t;
     });
@@ -200,7 +200,7 @@ final class Consortium {
         }
         int eligible = byFamily.size();
         if (eligible > seated.size()) {
-            System.out.printf("armedit: consortium seats %d of %d eligible models, "
+            System.out.printf("sue: consortium seats %d of %d eligible models, "
                     + "across %d provider(s)%n", seated.size(), eligible, queues.size());
         }
         return seated;
@@ -263,7 +263,7 @@ final class Consortium {
         } catch (Aicoin.NoPoll absent) {
             /* an older proxy, or the endpoint turned off; ask the old way */
         } catch (Exception x) {
-            System.out.printf("armedit: the consortium endpoint did not answer (%s); "
+            System.out.printf("sue: the consortium endpoint did not answer (%s); "
                     + "asking each model instead%n", x);
         }
 
@@ -341,7 +341,7 @@ final class Consortium {
                 if (appeal(wallet, question, v, votes)) {
                     sustained.add(v.member() + ": " + v.why());
                 } else {
-                    System.out.printf("armedit: objection from %s overruled by the rest%n",
+                    System.out.printf("sue: objection from %s overruled by the rest%n",
                             v.member());
                 }
             }
@@ -403,7 +403,7 @@ final class Consortium {
         var jury = new ArrayList<String>();
         for (var v : votes) if (v.counted() && v.commit()) jury.add(v.member());
         if (jury.isEmpty()) {
-            System.out.printf("armedit: objection from %s stands unopposed - "
+            System.out.printf("sue: objection from %s stands unopposed - "
                     + "nobody else voted to commit%n", objection.member());
             return true;
         }

@@ -71,31 +71,24 @@ _main:
 
         mov     x27, x0                 /* argc/argv are unused; envp is not */
         mov     x0, x2
-        bl      SYM(env_init)           /* ARMEDIT_BACKEND / ARMEDIT_KEY */
+        bl      SYM(env_init)           /* SUE_BACKEND / SUE_KEY */
         mov     x0, x27
         bl      SYM(editor_init)
         bl      SYM(applet_clear)
 
-        /* One video widget, so there is something to double-click. In a real
-           session these arrive with the content; here it is a fixed clip so
-           the drag path can be exercised at all. */
-        LEA     x0, SYM(demo_clip)
-        LEA     x9, SYM(demo_clip_end)
-        sub     x9, x9, x0
-        mov     w1, w9
-        bl      SYM(video_open)
-        cmn     w0, #1
-        b.eq    1f
-        bl      SYM(video_next)
-        mov     w0, #AP_KIND_VIDEO
-        mov     w1, #6200               /* right of centre, upper half */
-        mov     w2, #1200
-        mov     w3, #3200
-        mov     w4, #3200
-        mov     w5, #0
-        LEA     x6, s_no_label
-        bl      SYM(applet_add)
-1:
+/*
+ * Nothing is placed on the screen at startup.
+ *
+ * A clip used to be, so that the drag and double-click paths had something to
+ * act on before anything had arrived - which is a reasonable thing during the
+ * week those paths are being written and a strange thing to open an editor
+ * with. Widgets belong to content: they arrive when something puts them there,
+ * and until then the screen is what the person typed and nothing else.
+ *
+ * The player and the format stay. They are what a widget is made of, and the
+ * only thing removed is the decision to show one to somebody who did not ask.
+ */
+
         /* What everyone else decided about objects like these. */
         bl      SYM(behaviour_sync)
         LEA     x0, seed_text
@@ -125,8 +118,8 @@ _main:
         ADDM    x27, s_keyDown, view_key_down, t_void_id
         ADDM    x27, s_performKeyEquivalent, view_perform_key_equiv, t_bool_id
         ADDM    x27, s_acceptsFirstResponder, view_accepts_first, t_bool
-        ADDM    x27, s_armeditFinish, view_armedit_finish, t_void
-        ADDM    x27, s_armeditBlink, view_armedit_blink, t_void_id
+        ADDM    x27, s_sueFinish, view_sue_finish, t_void
+        ADDM    x27, s_sueBlink, view_sue_blink, t_void_id
         ADDM    x27, s_mouseDown, view_mouse_down, t_void_id
         ADDM    x27, s_mouseDragged, view_mouse_dragged, t_void_id
         ADDM    x27, s_mouseUp, view_mouse_up, t_void_id
@@ -176,14 +169,14 @@ _main:
 
         CLS     s_NSTimer               /* half a second, forever: the caret */
         mov     x27, x0
-        LEA     x0, s_armeditBlink
+        LEA     x0, s_sueBlink
         bl      _sel_registerName
         mov     x28, x0
         LEA     x0, s_scheduledTimer
         bl      _sel_registerName
         mov     x1, x0
         mov     x2, x26                 /* target: the view */
-        mov     x3, x28                 /* selector: armeditBlink: */
+        mov     x3, x28                 /* selector: sueBlink: */
         mov     x4, #0                  /* no userInfo */
         mov     x5, #1                  /* repeats */
         fmov    d0, #0.5
@@ -502,7 +495,7 @@ SYM(app_finish):
         LEA     x9, view_slot
         ldr     x19, [x9]
         cbz     x19, 1f
-        LEA     x0, s_armeditFinish     /* the selector to run over there */
+        LEA     x0, s_sueFinish     /* the selector to run over there */
         bl      _sel_registerName
         mov     x20, x0
         LEA     x0, s_performOnMain
@@ -517,20 +510,20 @@ SYM(app_finish):
         ldp     x29, x30, [sp], #48
         ret
 
-/* - (void)armeditFinish - the main-thread half, installed on the view class */
+/* - (void)sueFinish - the main-thread half, installed on the view class */
         .p2align 2
-view_armedit_finish:
+view_sue_finish:
         b       SYM(async_finish)
 
 /*
- * - (void)armeditBlink - the caret's phase, twice a second.
+ * - (void)sueBlink - the caret's phase, twice a second.
  *
  * The editor decides whether anything changed: while a request is out there is
  * no caret to blink, so it says no and the screen is left alone.  A blink
  * during a wait would say "ready for you" at exactly the wrong moment.
  */
         .p2align 2
-view_armedit_blink:
+view_sue_blink:
         stp     x29, x30, [sp, #-48]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
@@ -642,17 +635,17 @@ handle_event:
         ret
 
         CSTR
-s_title:                .asciz "armedit"
-seed_text:              .asciz "ARMEDIT SCREEN 1\nCMD+T NEW SCREEN   CMD+LEFT/RIGHT SWITCH\nCMD+DELETE CLOSE   CLICK TO PLACE THE CARET\nCMD+ENTER ASK       CMD+P REWRITE\n\nTYPE HERE.\n"
-s_view_cls:             .asciz "ArmeditView"
-s_delegate_cls:         .asciz "ArmeditDelegate"
+s_title:                .asciz "sue"
+seed_text:              .asciz "SUE SCREEN 1\nCMD+T NEW SCREEN   CMD+LEFT/RIGHT SWITCH\nCMD+DELETE CLOSE   CLICK TO PLACE THE CARET\nCMD+ENTER ASK       CMD+P REWRITE\n\nTYPE HERE.\n"
+s_view_cls:             .asciz "SueView"
+s_delegate_cls:         .asciz "SueDelegate"
 t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
 t_void_id:              .asciz "v@:@"
 t_bool_id:              .asciz "c@:@"
 t_bool:                 .asciz "c@:"
 t_void:                 .asciz "v@:"
-s_armeditFinish:        .asciz "armeditFinish"
-s_armeditBlink:         .asciz "armeditBlink:"
+s_sueFinish:        .asciz "sueFinish"
+s_sueBlink:         .asciz "sueBlink:"
 s_NSTimer:              .asciz "NSTimer"
 s_scheduledTimer:       .asciz "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"
 s_performOnMain:        .asciz "performSelectorOnMainThread:withObject:waitUntilDone:"

@@ -26,7 +26,7 @@ import java.util.concurrent.Executors;
 import java.util.function.Function;
 
 /**
- * armeditd - the armedit backend, on Netty.
+ * sue-server - the sue backend, on Netty.
  *
  * The only process in the system that holds credentials. It serves the
  * registration page, issues the one key a device carries, spends the account's
@@ -43,15 +43,15 @@ import java.util.function.Function;
  *   GET  /                 registration page
  *   GET  /api/health
  *   POST /api/register     {wallet, aws_key, aws_secret, region, password} -> {key}
- *   POST /api/agent        X-Armedit-Key; {mode, context, baseline, cursor} -> {text}
- *   POST /api/session      X-Armedit-Key -> {instance}
- *   POST /api/teardown     X-Armedit-Key -> {instance:""}
- *   POST /api/journal      X-Armedit-Key; one edit or one gesture
- *   GET/POST /api/clouds   X-Armedit-Key; bind or list cloud credentials
- *   GET  /api/otp          X-Armedit-Key -> pad accounting for this account
- *   POST /api/otp/reserve  X-Armedit-Key -> {pad, bits, window}
+ *   POST /api/agent        X-Sue-Key; {mode, context, baseline, cursor} -> {text}
+ *   POST /api/session      X-Sue-Key -> {instance}
+ *   POST /api/teardown     X-Sue-Key -> {instance:""}
+ *   POST /api/journal      X-Sue-Key; one edit or one gesture
+ *   GET/POST /api/clouds   X-Sue-Key; bind or list cloud credentials
+ *   GET  /api/otp          X-Sue-Key -> pad accounting for this account
+ *   POST /api/otp/reserve  X-Sue-Key -> {pad, bits, window}
  */
-public final class Armeditd {
+public final class SueServer {
 
     private static final int MAX_BODY = 1 << 20;
 
@@ -79,28 +79,28 @@ public final class Armeditd {
     /** Promotion is slow and nobody is waiting for it. */
     private final ExecutorService promoter = Executors.newVirtualThreadPerTaskExecutor();
 
-    private Armeditd() {
+    private SueServer() {
         this.aicoin = new Aicoin(
-                env("ARMEDIT_AICOIN", "http://127.0.0.1:8081"),
-                env("ARMEDIT_PROVIDER", "anthropic"),
-                env("ARMEDIT_MODEL", ""));
+                env("SUE_AICOIN", "http://127.0.0.1:8081"),
+                env("SUE_PROVIDER", "anthropic"),
+                env("SUE_MODEL", ""));
         this.aws = new Aws(
-                env("ARMEDIT_AWS_ADDR", ""),
-                env("ARMEDIT_AMI", ""),
-                env("ARMEDIT_INSTANCE_TYPE", ""));
-        var root = java.nio.file.Path.of(env("ARMEDIT_WORKSPACE", "workspaces"));
+                env("SUE_AWS_ADDR", ""),
+                env("SUE_AMI", ""),
+                env("SUE_INSTANCE_TYPE", ""));
+        var root = java.nio.file.Path.of(env("SUE_WORKSPACE", "workspaces"));
         // Keys outlive the process now: a redeploy should not re-provision
         // every device that was working a moment ago.
         accounts.openStore(root.resolve("accounts.tsv"));
-        this.workspace = new Workspace(root, aws, env("ARMEDIT_S3_BUCKET", ""));
+        this.workspace = new Workspace(root, aws, env("SUE_S3_BUCKET", ""));
         this.agent = new AwsAgent(aws, root);
         this.journal = new Journal(root);
         this.agents = new Agents(root);
         this.behaviours = new Behaviours(root);
-        this.catalogue = new Catalogue(env("ARMEDIT_AICOIN", "http://127.0.0.1:8081"),
+        this.catalogue = new Catalogue(env("SUE_AICOIN", "http://127.0.0.1:8081"),
                 java.util.List.of("anthropic", "openai", "google", "mistral", "cohere"));
         this.consortium = new Consortium(aicoin, catalogue);
-        this.distro = new Distro(env("ARMEDIT_OPS_DIR", "../ops"));
+        this.distro = new Distro(env("SUE_OPS_DIR", "../ops"));
         this.triage = new Triage(aicoin);
         /*
          * The waiting list: what the panel could not settle, kept until enough
@@ -110,15 +110,15 @@ public final class Armeditd {
          * merely early.
          */
         this.waiting = new Waiting(
-                java.nio.file.Path.of(env("ARMEDIT_WAITING_DIR", "waiting")),
-                Integer.parseInt(env("ARMEDIT_WAIT_PEOPLE", "3")),
-                Long.parseLong(env("ARMEDIT_WAIT_DAYS", "30")) * 86400L);
-        this.publicAddr = env("ARMEDIT_PUBLIC_ADDR", "");
+                java.nio.file.Path.of(env("SUE_WAITING_DIR", "waiting")),
+                Integer.parseInt(env("SUE_WAIT_PEOPLE", "3")),
+                Long.parseLong(env("SUE_WAIT_DAYS", "30")) * 86400L);
+        this.publicAddr = env("SUE_PUBLIC_ADDR", "");
         // Machines post their output back here, so they need an address that
         // works from outside this host.
         this.runner = new Runner(aws, root,
-                env("ARMEDIT_CALLBACK", publicAddr.isBlank()
-                        ? "http://127.0.0.1:" + env("ARMEDIT_PORT", "8080")
+                env("SUE_CALLBACK", publicAddr.isBlank()
+                        ? "http://127.0.0.1:" + env("SUE_PORT", "8080")
                         : "https://" + publicAddr));
     }
 
@@ -148,8 +148,8 @@ public final class Armeditd {
     }
 
     public static void main(String[] args) throws Exception {
-        int port = Integer.parseInt(env("ARMEDIT_PORT", "8080"));
-        var app = new Armeditd();
+        int port = Integer.parseInt(env("SUE_PORT", "8080"));
+        var app = new SueServer();
         app.startReaper();
         app.startRefresher();
         // Ask the proxy what it can reach rather than assuming: a hardcoded
@@ -179,7 +179,7 @@ public final class Armeditd {
                     });
 
             var channel = b.bind(port).sync().channel();
-            System.out.printf("armedit backend on :%d - register at / to bind a wallet and cloud access%n",
+            System.out.printf("sue backend on :%d - register at / to bind a wallet and cloud access%n",
                     port);
             channel.closeFuture().sync();
         } finally {
@@ -195,10 +195,10 @@ public final class Armeditd {
      */
     private static final class Gate extends SimpleChannelInboundHandler<FullHttpRequest> {
 
-        private final Armeditd app;
+        private final SueServer app;
         private final ExecutorService jobs;
 
-        Gate(Armeditd app, ExecutorService jobs) {
+        Gate(SueServer app, ExecutorService jobs) {
             this.app = app;
             this.jobs = jobs;
         }
@@ -223,7 +223,7 @@ public final class Armeditd {
                     res = app.dispatch(req);
                 } catch (Exception x) {
                     // Never let a handler's failure become a hung connection.
-                    System.out.printf("armedit: %s %s failed: %s%n", req.method(), req.path(), x);
+                    System.out.printf("sue: %s %s failed: %s%n", req.method(), req.path(), x);
                     res = Res.json(500, Json.obj("error", "internal error"));
                 }
                 write(ctx, res);
@@ -320,7 +320,7 @@ public final class Armeditd {
     private void promote(Consensus.Agreed settled, Router.Tier tier) {
         promoter.submit(() -> {
             try {
-                System.out.printf("armedit: %d people agree on \"%s\" - asking for the operation%n",
+                System.out.printf("sue: %d people agree on \"%s\" - asking for the operation%n",
                         settled.people(), settled.instruction());
                 String wallet = accounts.anyWallet();
                 if (wallet == null || wallet.isBlank()) return;
@@ -328,11 +328,11 @@ public final class Armeditd {
                         Consensus.promotionPrompt(settled) + scripts.briefing(), 4000);
                 var learned = scripts.learn(reply, tier.name(), true);
                 if (learned.isEmpty()) {
-                    System.out.printf("armedit: nothing general in it, left as it was%n");
+                    System.out.printf("sue: nothing general in it, left as it was%n");
                     return;
                 }
                 for (var op : learned) {
-                    System.out.printf("armedit: promoted \"%s\" -> %s%s%n",
+                    System.out.printf("sue: promoted \"%s\" -> %s%s%n",
                             op.pattern(), op.name(),
                             op.blob() != null
                                 ? " (" + op.blob().code().length + " bytes of machine code)"
@@ -340,7 +340,7 @@ public final class Armeditd {
                     if (op.blob() != null) ship(wallet, op, settled.people(), settled.who());
                 }
             } catch (Exception x) {
-                System.out.printf("armedit: promotion skipped: %s%n", x);
+                System.out.printf("sue: promotion skipped: %s%n", x);
             }
         });
     }
@@ -377,7 +377,7 @@ public final class Armeditd {
                     Triage.about(op.name(), op.pattern(),
                             op.js() == null ? "(template only)" : op.js(), observed,
                             people, registered, waiting.threshold(), canWait));
-            System.out.printf("armedit: first pass on \"%s\": %s - %s%n",
+            System.out.printf("sue: first pass on \"%s\": %s - %s%n",
                     op.name(), first.say(), first.why());
             if (first.rejected()) return;
 
@@ -388,9 +388,9 @@ public final class Armeditd {
                 asked += "\nThe first pass was unsure: " + first.why() + "\n";
             }
             var verdict = consortium.decide(wallet, op.name(), asked);
-            System.out.printf("armedit: consortium on \"%s\": %s - %s%n",
+            System.out.printf("sue: consortium on \"%s\": %s - %s%n",
                     op.name(), verdict.commit() ? "COMMIT" : "HOLD", verdict.why());
-            for (var c : verdict.changes()) System.out.printf("armedit:   %s%n", c);
+            for (var c : verdict.changes()) System.out.printf("sue:   %s%n", c);
 
             if (!verdict.commit()) {
                 park(op, verdict, registered, canWait, who);
@@ -398,7 +398,7 @@ public final class Armeditd {
             }
             waiting.drop(op.name());
             var written = distro.commit(op, verdict, observed, people);
-            System.out.printf("armedit: %s is in the tree: %s%n", op.name(),
+            System.out.printf("sue: %s is in the tree: %s%n", op.name(),
                     written.stream().map(java.nio.file.Path::toString)
                             .collect(java.util.stream.Collectors.joining(", ")));
 
@@ -417,11 +417,11 @@ public final class Armeditd {
              * the cycle is worth having at all. Boot code is the other case,
              * and Release.needsReboot is where that is decided.
              */
-            System.out.printf("armedit: %s - %s%n", op.name(),
+            System.out.printf("sue: %s - %s%n", op.name(),
                     distro.publish(written, op, verdict));
             release.record(op.name(), written);
         } catch (Exception x) {
-            System.out.printf("armedit: not shipping \"%s\": %s%n", op.name(), x);
+            System.out.printf("sue: not shipping \"%s\": %s%n", op.name(), x);
         }
     }
 
@@ -442,13 +442,13 @@ public final class Armeditd {
     private void park(Scripts.Script op, Consortium.Verdict verdict,
                       int registered, boolean canWait, java.util.Set<String> who) {
         if (!verdict.divided()) {
-            System.out.printf("armedit: \"%s\" was refused, not doubted - not kept%n",
+            System.out.printf("sue: \"%s\" was refused, not doubted - not kept%n",
                     op.name());
             waiting.drop(op.name());
             return;
         }
         if (!canWait) {
-            System.out.printf("armedit: \"%s\" is doubted, but %d account%s cannot make "
+            System.out.printf("sue: \"%s\" is doubted, but %d account%s cannot make "
                             + "%d askers - not kept%n",
                     op.name(), registered, registered == 1 ? "" : "s", waiting.threshold());
             return;
@@ -458,12 +458,12 @@ public final class Armeditd {
         var rec = waiting.get(op.name());
         int so_far = rec == null ? who.size() : rec.who().size();
         if (outcome == Waiting.Outcome.READY) {
-            System.out.printf("armedit: \"%s\" was doubted but %d people had already "
+            System.out.printf("sue: \"%s\" was doubted but %d people had already "
                             + "asked - releasing it%n", op.name(), so_far);
             promoter.submit(() -> release(rec));
             return;
         }
-        System.out.printf("armedit: \"%s\" is doubted and kept - %d of %d people so far%n",
+        System.out.printf("sue: \"%s\" is doubted and kept - %d of %d people so far%n",
                 op.name(), so_far, waiting.threshold());
     }
 
@@ -515,7 +515,7 @@ public final class Armeditd {
         try {
             var learned = scripts.learn(rec.source(), "waiting-list", true);
             if (learned.isEmpty() || learned.get(0).blob() == null) {
-                System.out.printf("armedit: \"%s\" reached %d people but no longer compiles%n",
+                System.out.printf("sue: \"%s\" reached %d people but no longer compiles%n",
                         rec.name(), rec.who().size());
                 waiting.drop(rec.name());
                 return;
@@ -530,25 +530,25 @@ public final class Armeditd {
                     Consortium.aboutBlob(op.name(), op.pattern(), op.arguments(),
                             op.js(), op.blob().code(), op.blob().sha(), observed, people,
                             Consortium.settled(people, rec.why())));
-            System.out.printf("armedit: consortium on \"%s\", asked again with %d people "
+            System.out.printf("sue: consortium on \"%s\", asked again with %d people "
                             + "behind it: %s - %s%n",
                     op.name(), people, verdict.commit() ? "COMMIT" : "HOLD", verdict.why());
             if (!verdict.commit()) {
-                System.out.printf("armedit: \"%s\" held again with the evidence in hand "
+                System.out.printf("sue: \"%s\" held again with the evidence in hand "
                                 + "- dropped%n", op.name());
                 waiting.drop(rec.name());
                 return;
             }
             var written = distro.commit(op, verdict, observed, people);
-            System.out.printf("armedit: %s comes off the waiting list: %s%n", op.name(),
+            System.out.printf("sue: %s comes off the waiting list: %s%n", op.name(),
                     written.stream().map(java.nio.file.Path::toString)
                             .collect(java.util.stream.Collectors.joining(", ")));
-            System.out.printf("armedit: %s - %s%n", op.name(),
+            System.out.printf("sue: %s - %s%n", op.name(),
                     distro.publish(written, op, verdict));
             release.record(op.name(), written);
             waiting.drop(rec.name());
         } catch (Exception x) {
-            System.out.printf("armedit: could not release \"%s\": %s%n", rec.name(), x);
+            System.out.printf("sue: could not release \"%s\": %s%n", rec.name(), x);
         }
     }
 
@@ -577,19 +577,19 @@ public final class Armeditd {
     }
 
     private void startRefresher() {
-        long everyMinutes = Long.parseLong(env("ARMEDIT_REFRESH_MINUTES", "360"));
+        long everyMinutes = Long.parseLong(env("SUE_REFRESH_MINUTES", "360"));
         if (everyMinutes <= 0) {
-            System.out.println("armedit: script refreshing disabled");
+            System.out.println("sue: script refreshing disabled");
             return;
         }
         var timer = Executors.newSingleThreadScheduledExecutor(r -> {
-            var t = new Thread(r, "armedit-refresher");
+            var t = new Thread(r, "sue-refresher");
             t.setDaemon(true);
             return t;
         });
         timer.scheduleWithFixedDelay(this::refresh, everyMinutes, everyMinutes,
                 java.util.concurrent.TimeUnit.MINUTES);
-        System.out.printf("armedit: the model revisits its scripts every %d minutes%n",
+        System.out.printf("sue: the model revisits its scripts every %d minutes%n",
                 everyMinutes);
     }
 
@@ -627,33 +627,33 @@ public final class Armeditd {
                     .compile("(?m)^#RETIRE\\s+([A-Za-z0-9_-]{1,40})\\s*$").matcher(reply);
             while (retire.find()) {
                 if (scripts.forget(retire.group(1))) {
-                    System.out.printf("armedit: retired script \"%s\"%n", retire.group(1));
+                    System.out.printf("sue: retired script \"%s\"%n", retire.group(1));
                 }
             }
             for (var taught : scripts.learn(reply, tier.name(), true)) {
-                System.out.printf("armedit: refreshed \"%s\" -> %s%n",
+                System.out.printf("sue: refreshed \"%s\" -> %s%n",
                         taught.pattern(), taught.name());
             }
         } catch (Exception x) {
-            System.out.printf("armedit: refresh skipped: %s%n", x);
+            System.out.printf("sue: refresh skipped: %s%n", x);
         }
     }
 
     private void startReaper() {
-        long idleMinutes = Long.parseLong(env("ARMEDIT_IDLE_MINUTES", "30"));
-        long everySeconds = Long.parseLong(env("ARMEDIT_REAP_SECONDS", "60"));
+        long idleMinutes = Long.parseLong(env("SUE_IDLE_MINUTES", "30"));
+        long everySeconds = Long.parseLong(env("SUE_REAP_SECONDS", "60"));
         if (idleMinutes <= 0) {
-            System.out.println("armedit: idle reaping disabled");
+            System.out.println("sue: idle reaping disabled");
             return;
         }
         var reaper = Executors.newSingleThreadScheduledExecutor(r -> {
-            var t = new Thread(r, "armedit-reaper");
+            var t = new Thread(r, "sue-reaper");
             t.setDaemon(true);
             return t;
         });
         reaper.scheduleWithFixedDelay(() -> sweep(idleMinutes), everySeconds, everySeconds,
                 java.util.concurrent.TimeUnit.SECONDS);
-        System.out.printf("armedit: reaping instances idle for %d minutes%n", idleMinutes);
+        System.out.printf("sue: reaping instances idle for %d minutes%n", idleMinutes);
     }
 
     private void sweep(long idleMinutes) {
@@ -665,13 +665,13 @@ public final class Armeditd {
          * agreement the threshold was meant to represent.
          */
         for (var gone : waiting.sweep(System.currentTimeMillis() / 1000)) {
-            System.out.printf("armedit: \"%s\" expired off the waiting list unasked%n", gone);
+            System.out.printf("sue: \"%s\" expired off the waiting list unasked%n", gone);
         }
         // Health is checked on the same schedule as the instance reaping, so
         // the model's picture of what is reachable is never older than a
         // sweep: an agent that stopped calling in is reported gone.
         for (var a : agents.stale()) {
-            System.out.printf("armedit: agent %s has not called in for %ds%n",
+            System.out.printf("sue: agent %s has not called in for %ds%n",
                     a.name, a.idleMillis() / 1000);
         }
         // A run finishing is news, and a laptop-hosted backend has no way to be
@@ -679,7 +679,7 @@ public final class Armeditd {
         for (var account : accounts.all()) {
             try {
                 if (runner.collect(account, aws)) {
-                    System.out.printf("armedit: %s - a run finished, output collected%n",
+                    System.out.printf("sue: %s - a run finished, output collected%n",
                             account.id());
                 }
                 runner.expire(account, aws);
@@ -694,12 +694,12 @@ public final class Armeditd {
             try {
                 String was = account.instance();
                 aws.deprovision(account);
-                System.out.printf("armedit: %s idle %d min, terminated %s%n",
+                System.out.printf("sue: %s idle %d min, terminated %s%n",
                         account.id(), account.idleMillis() / 60_000L, was);
             } catch (Exception x) {
                 // Leave it for the next sweep rather than forgetting an
                 // instance that is still running and still costing money.
-                System.out.printf("armedit: %s could not be reaped: %s%n", account.id(), x.getMessage());
+                System.out.printf("sue: %s could not be reaped: %s%n", account.id(), x.getMessage());
             }
         }
     }
@@ -873,7 +873,7 @@ public final class Armeditd {
             and answering it by restarting the machine somebody asked it on is
             the worst available outcome.
 
-            Only the OS build can act on it. On macOS and iOS armedit is a
+            Only the OS build can act on it. On macOS and iOS sue is a
             program inside somebody else's operating system, and the directive
             is recognised and ignored there - so it is never wrong to answer,
             only sometimes ineffective.
@@ -989,7 +989,7 @@ public final class Armeditd {
 
         prompt.append(switch (mode) {
             case "swipe" -> """
-                    You are inside armedit, a text editor. The user swiped across some words \
+                    You are inside sue, a text editor. The user swiped across some words \
                     and wants something done with them - they did not say what, and the gesture \
                     is the whole request. Work out from the words themselves, the surrounding \
                     screen and what they have been doing what would actually help: explain it, \
@@ -997,7 +997,7 @@ public final class Armeditd {
                     answer is that it is not clear, say so in one line rather than guessing at \
                     length.""";
             case "aify" -> """
-                    You are inside armedit, a text editor. The user wrote an instruction and it \
+                    You are inside sue, a text editor. The user wrote an instruction and it \
                     is about to be REPLACED by your reply, in place, where it stands. Produce \
                     exactly what should be there instead of it and nothing else - no preamble, no \
                     explanation, no fences, no restating the instruction. If they wrote \
@@ -1005,7 +1005,7 @@ public final class Armeditd {
                     shorter" over some text, reply with the shorter text. Whatever you send is \
                     what they will be looking at.""";
             default -> """
-                    You are inside armedit, a text editor. The user asked about this screen. \
+                    You are inside sue, a text editor. The user asked about this screen. \
                     Answer plainly.""";
         });
         prompt.append("""
@@ -1072,7 +1072,7 @@ public final class Armeditd {
         if (shareable) {
             cacheKey = Cache.key(mode, instruction, context, baseline, selection, subject);
             if (unhappy && cache.forget(cacheKey)) {
-                System.out.printf("armedit: asked again - forgetting the cached answer for \"%s\"%n",
+                System.out.printf("sue: asked again - forgetting the cached answer for \"%s\"%n",
                         instruction.length() > 60 ? instruction.substring(0, 60) + "..." : instruction);
             }
             var hit = cache.get(cacheKey);
@@ -1163,7 +1163,7 @@ public final class Armeditd {
                 if (handoff == null || hop == Router.MAX_HANDOFFS) break;
                 stats.handedAway(tier.name(), category);
                 stats.handedTo(handoff.to().name(), category);
-                System.out.printf("armedit: %s handing %s -> %s (%s)%n",
+                System.out.printf("sue: %s handing %s -> %s (%s)%n",
                         account.id(), tier.name(), handoff.to().name(), handoff.reason());
                 base = base + "\n\n" + "%s looked at this and handed it to you: %s"
                         .formatted(tier.name(), handoff.reason());
@@ -1185,7 +1185,7 @@ public final class Armeditd {
             // the teaching back out, because the user asked for an answer and
             // not for a transcript of the model talking to the server.
             for (var taught : scripts.learn(text, tier.name(), shareable)) {
-                System.out.printf("armedit: %s taught \"%s\" -> %s (%s)%n",
+                System.out.printf("sue: %s taught \"%s\" -> %s (%s)%n",
                         tier.name(), taught.pattern(), taught.name(),
                         taught.code() != null ? "compiled" : taught.body().length() + "-byte template");
             }
@@ -1348,7 +1348,7 @@ public final class Armeditd {
                 in.getOrDefault("os", "?"),
                 in.getOrDefault("arch", "?"),
                 Agents.Access.of(in.get("access")));
-        System.out.printf("armedit: %s registered agent %s (%s %s, %s)%n",
+        System.out.printf("sue: %s registered agent %s (%s %s, %s)%n",
                 account.id(), agent.name, agent.os, agent.arch, agent.access.id);
         return Res.json(200, Json.obj("agent", agent.id, "token", agent.token,
                 "access", agent.access.id));
@@ -1444,8 +1444,8 @@ public final class Armeditd {
         if (account == null) return unauthorised();
 
         String want = r.path().contains("?") ? "" : "";
-        var q = new QueryStringDecoder("/?" + (r.header().apply("X-Armedit-Op") == null
-                ? "" : "name=" + r.header().apply("X-Armedit-Op")));
+        var q = new QueryStringDecoder("/?" + (r.header().apply("X-Sue-Op") == null
+                ? "" : "name=" + r.header().apply("X-Sue-Op")));
         var names = q.parameters().get("name");
         if (names != null && !names.isEmpty()) {
             var op = scripts.byName(names.get(0));
@@ -1491,7 +1491,7 @@ public final class Armeditd {
     private Res routeBehaviours(Req r) {
         var account = authorise(r);
         if (account == null) return unauthorised();
-        if ("json".equals(r.header().apply("X-Armedit-Format"))) {
+        if ("json".equals(r.header().apply("X-Sue-Format"))) {
             return new Res(200, "application/json",
                     behaviours.asJson().getBytes(StandardCharsets.UTF_8));
         }
@@ -1559,7 +1559,7 @@ public final class Armeditd {
                     "could not open " + (url == null ? "that" : url) + ": " + page.error(),
                     "fetched", false));
         }
-        System.out.printf("armedit: %s fetched %s (%d chars)%n",
+        System.out.printf("sue: %s fetched %s (%d chars)%n",
                 account.id(), page.url(), page.text().length());
         return Res.json(200, Json.obj("text", page.text(), "fetched", true,
                 "url", page.url()));
@@ -1635,7 +1635,7 @@ public final class Armeditd {
         }
         account.wallet(wallet);
         accounts.persist();
-        System.out.printf("armedit: %s bound a wallet%n", account.id());
+        System.out.printf("sue: %s bound a wallet%n", account.id());
         return Res.json(200, Json.obj("bound", true,
                 "complete", !account.awsKey().isBlank()));
     }
@@ -1663,7 +1663,7 @@ public final class Armeditd {
         String secret = in.getOrDefault("secret", "").trim();
         try {
             if (id.isEmpty() || secret.isEmpty()) {
-                var request = aicoin.authorize("armedit",
+                var request = aicoin.authorize("sue",
                         "an editor that writes its own operations");
                 return Res.json(200, Json.obj("id", request.id(), "secret", request.secret()));
             }
@@ -1673,7 +1673,7 @@ public final class Armeditd {
             }
             account.wallet(token);
             accounts.persist();
-            System.out.printf("armedit: %s bound a wallet by scan%n", account.id());
+            System.out.printf("sue: %s bound a wallet by scan%n", account.id());
             return Res.json(200, Json.obj("bound", true,
                     "complete", !account.awsKey().isBlank()));
         } catch (Exception x) {
@@ -1729,7 +1729,7 @@ public final class Armeditd {
         fields.put("region", region);
         account.clouds().bind(Clouds.Provider.AWS, fields);
         accounts.persist();
-        System.out.printf("armedit: %s bound AWS access in %s%n", account.id(), region);
+        System.out.printf("sue: %s bound AWS access in %s%n", account.id(), region);
         return Res.json(200, Json.obj("bound", true,
                 "complete", !account.wallet().isBlank()));
     }
@@ -1772,7 +1772,7 @@ public final class Armeditd {
      * a device carry one property - so match on the part before the '@'.
      */
     private Accounts.Account authorise(Req r) {
-        String key = r.header().apply("X-Armedit-Key");
+        String key = r.header().apply("X-Sue-Key");
         if (key != null) {
             int at = key.indexOf('@');
             if (at >= 0) key = key.substring(0, at);
@@ -1783,7 +1783,7 @@ public final class Armeditd {
     }
 
     private static Res unauthorised() {
-        return Res.json(401, Json.obj("error", "unknown or missing armedit key"));
+        return Res.json(401, Json.obj("error", "unknown or missing sue key"));
     }
 
     /** Widgets take behaviour; content takes instructions. */
@@ -1803,8 +1803,21 @@ public final class Armeditd {
         }
     }
 
+    /**
+     * A setting, under its name today or the one it had before the rename.
+     *
+     * Every SUE_ variable was an ARMEDIT_ one, and they live in shell
+     * profiles, systemd units and compose files that nobody edits because the
+     * server is running. Dropping the old names would take a deployment's
+     * configuration away without failing - it would start, with defaults, and
+     * behave like a fresh install. So the old name is read when the new one is
+     * unset, and the new one wins when both are there.
+     */
     private static String env(String name, String fallback) {
         String v = System.getenv(name);
+        if (v == null || v.isBlank()) {
+            v = System.getenv(name.startsWith("SUE_") ? "ARMEDIT_" + name.substring(4) : name);
+        }
         return (v == null || v.isBlank()) ? fallback : v.trim();
     }
 }

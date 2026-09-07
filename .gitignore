@@ -6,7 +6,7 @@
 build/
 app/tty
 app/window
-backend/armeditd
+backend/sue-server
 
 # secrets - never commit credentials of any kind
 *.token

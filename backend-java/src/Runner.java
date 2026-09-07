@@ -93,7 +93,7 @@ final class Runner {
             }
 
             String token = UUID.randomUUID().toString().replace("-", "");
-            String name = "armedit-" + token.substring(0, 8);
+            String name = "sue-" + token.substring(0, 8);
             try {
                 var machine = impl.create(cred, spec, name, cloudInit(command, token));
                 var run = new Run(token, account.id(), provider, size, command,
@@ -165,8 +165,8 @@ final class Runner {
     }
 
     /** Marks this run's output in a console full of everything else. */
-    static final String BEGIN = "---armedit-begin:";
-    static final String END = "---armedit-end:";
+    static final String BEGIN = "---sue-begin:";
+    static final String END = "---sue-end:";
 
     /**
      * How long a machine waits after finishing, so its console can be read.
@@ -305,7 +305,7 @@ final class Runner {
                     "%s  %s%n".formatted(Instant.now(), line),
                     StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Exception x) {
-            System.out.printf("armedit: could not record run for %s: %s%n", accountId, x.getMessage());
+            System.out.printf("sue: could not record run for %s: %s%n", accountId, x.getMessage());
         }
     }
 }

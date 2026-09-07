@@ -59,7 +59,7 @@ def main(out, inc):
     begin("")
     prop("#address-cells", struct.pack(">I", 2))
     prop("#size-cells", struct.pack(">I", 2))
-    prop("compatible", b"armedit,efi\0")
+    prop("compatible", b"sue,efi\0")
 
     # Where memory begins and how much there is comes from the firmware's own
     # map, so this too is left blank. A kernel handed a tree with no memory

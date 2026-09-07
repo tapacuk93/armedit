@@ -1,4 +1,4 @@
-# armedit - every line of this project is assembled from .S sources.
+# sue - every line of this project is assembled from .S sources.
 #
 #   make            build everything buildable on this host
 #   make tty        hosted mode, terminal
@@ -71,14 +71,14 @@ QEMU_NET  := -netdev user,id=n0 -device virtio-net-device,netdev=n0
 # A kernel has no environment, so the one thing it must be told arrives through
 # fw_cfg:  make boot KEY=<key>@10.0.2.2:8090
 KEY       ?=
-QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/armedit/key$(,)string=$(KEY),)
+QEMU_KEY  := $(if $(KEY),-fw_cfg name=opt/sue/key$(,)string=$(KEY),)
 
 .PHONY: all tty window kernel kernel-img backend app ios ios-run ios-device agent run win boot boot-tty serve test treefb reboot-path machine network efi-boot efi-run clean
 all: tty window kernel backend
-tty: $(B)/armedit-tty
-window: $(B)/armedit-window
+tty: $(B)/sue-tty
+window: $(B)/sue-window
 kernel: $(B)/kernel.elf
-backend: $(B)/armeditd
+backend: $(B)/sue-server
 
 $(B)/macho/%.o: %.S
 	@mkdir -p $(dir $@)
@@ -96,13 +96,13 @@ $(B)/elf/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(AS_ELF) $< -o $@
 
-$(B)/armedit-tty: $(TTY_OBJ)
+$(B)/sue-tty: $(TTY_OBJ)
 	$(LD_MACHO) -o $@ $^
 
-$(B)/armedit-window: $(WIN_OBJ)
+$(B)/sue-window: $(WIN_OBJ)
 	$(LD_MACHO) -framework AppKit -framework CoreGraphics -o $@ $^
 
-$(B)/armeditd: $(BACKEND_OBJ)
+$(B)/sue-server: $(BACKEND_OBJ)
 	$(LD_MACHO) -o $@ $^
 
 # The flat image every real loader wants. See tools/mkimg.py.
@@ -135,23 +135,23 @@ $(B)/ios/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(CC) $(INC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) -c $< -o $@
 
-ios: $(B)/armedit-ios.app
+ios: $(B)/sue-ios.app
 
-$(B)/armedit-ios.app: $(IOS_OBJ) app/ios/Info.plist
+$(B)/sue-ios.app: $(IOS_OBJ) app/ios/Info.plist
 	@rm -rf $@ && mkdir -p $@
 	$(CC) -target $(IOS_ARCH) -isysroot $(IOS_SDK) \
 	  -framework UIKit -framework CoreGraphics -framework Foundation \
-	  -o $@/armedit $(IOS_OBJ)
+	  -o $@/sue $(IOS_OBJ)
 	@cp app/ios/Info.plist $@/Info.plist
 	@codesign --force --sign - $@ 2>/dev/null || true
 	@echo "built $@"
 
 # Boot a simulator, install, launch.  SIM overrides the device.
 SIM ?= iPhone 17 Pro
-ios-run: $(B)/armedit-ios.app
+ios-run: $(B)/sue-ios.app
 	@xcrun simctl boot "$(SIM)" 2>/dev/null || true
-	@xcrun simctl install "$(SIM)" $(B)/armedit-ios.app
-	@xcrun simctl launch "$(SIM)" com.oeaio.armedit
+	@xcrun simctl install "$(SIM)" $(B)/sue-ios.app
+	@xcrun simctl launch "$(SIM)" com.oeaio.sue
 	@open -a Simulator
 
 # --- iOS, on a real phone ----------------------------------------------
@@ -170,17 +170,17 @@ $(B)/iosdev/%.o: %.S
 	$(CC) $(INC) -target $(IOSDEV_ARCH) -isysroot $(IOSDEV_SDK) -c $< -o $@
 
 ios-device: $(IOSDEV_OBJ) app/ios/Info.plist
-	@rm -rf $(B)/armedit-device.app && mkdir -p $(B)/armedit-device.app
+	@rm -rf $(B)/sue-device.app && mkdir -p $(B)/sue-device.app
 	$(CC) -target $(IOSDEV_ARCH) -isysroot $(IOSDEV_SDK) \
 	  -framework UIKit -framework CoreGraphics -framework Foundation \
-	  -o $(B)/armedit-device.app/armedit $(IOSDEV_OBJ)
-	@cp app/ios/Info.plist $(B)/armedit-device.app/Info.plist
-	@cp "$(PROFILE)" $(B)/armedit-device.app/embedded.mobileprovision
+	  -o $(B)/sue-device.app/sue $(IOSDEV_OBJ)
+	@cp app/ios/Info.plist $(B)/sue-device.app/Info.plist
+	@cp "$(PROFILE)" $(B)/sue-device.app/embedded.mobileprovision
 	@security cms -D -i "$(PROFILE)" | plutil -extract Entitlements xml1 -o $(B)/ent.plist -
-	@plutil -replace application-identifier -string "HTS38ZPRVH.com.oeaio.armedit" $(B)/ent.plist
-	@codesign --force --sign "$(SIGN_ID)" --entitlements $(B)/ent.plist --timestamp=none $(B)/armedit-device.app
-	@xcrun devicectl device install app --device $(DEVICE) $(B)/armedit-device.app
-	@echo "installed on $(DEVICE) - unlock the phone, then tap armedit"
+	@plutil -replace application-identifier -string "HTS38ZPRVH.com.oeaio.sue" $(B)/ent.plist
+	@codesign --force --sign "$(SIGN_ID)" --entitlements $(B)/ent.plist --timestamp=none $(B)/sue-device.app
+	@xcrun devicectl device install app --device $(DEVICE) $(B)/sue-device.app
+	@echo "installed on $(DEVICE) - unlock the phone, then tap sue"
 
 # --- the agent ----------------------------------------------------------
 # A machine volunteering itself to an account.  Access is a ceiling, not a
@@ -189,29 +189,29 @@ ACCESS ?= confirmed
 agent:
 	@mkdir -p $(B)/agent
 	javac -d $(B)/agent agent/src/*.java
-	@echo "run: java -cp $(B)/agent ArmeditAgent --key <key> --access $(ACCESS)"
+	@echo "run: java -cp $(B)/agent SueAgent --key <key> --access $(ACCESS)"
 
 # A double-clickable Mac app: the same binary, in the bundle layout Finder
 # and the Dock expect.
-app: $(B)/armedit.app
+app: $(B)/sue.app
 
-$(B)/armedit.app: $(B)/armedit-window app/macos/Info.plist
+$(B)/sue.app: $(B)/sue-window app/macos/Info.plist
 	@rm -rf $@
 	@mkdir -p $@/Contents/MacOS
 	@cp app/macos/Info.plist $@/Contents/Info.plist
-	@cp $(B)/armedit-window $@/Contents/MacOS/armedit
+	@cp $(B)/sue-window $@/Contents/MacOS/sue
 	@printf 'APPL????' > $@/Contents/PkgInfo
 	@codesign --force --sign - $@ 2>/dev/null || true
 	@echo "built $@"
 
-run: $(B)/armedit-tty
-	@$(B)/armedit-tty $(TEXT)
+run: $(B)/sue-tty
+	@$(B)/sue-tty $(TEXT)
 
-win: $(B)/armedit-window
-	@$(B)/armedit-window $(TEXT)
+win: $(B)/sue-window
+	@$(B)/sue-window $(TEXT)
 
-serve: $(B)/armeditd
-	@$(B)/armeditd
+serve: $(B)/sue-server
+	@$(B)/sue-server
 
 # zoom-to-fit lets the window be dragged to any size: ramfb has one fixed
 # resolution, so the alternative is a window you cannot resize at all.
@@ -265,7 +265,7 @@ reboot-path:
 .PHONY: boot-fault
 boot-fault:
 	@$(MAKE) --no-print-directory clean-kernel
-	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DARMEDIT_FAULT_TEST
+	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DSUE_FAULT_TEST
 	@echo "--- booting a kernel that faults on purpose:"
 	@$(QEMU) $(QEMU_ARGS) -nographic > $(B)/fault.log 2>&1 & \
 	 P=$$!; sleep 5; kill $$P 2>/dev/null; true
@@ -278,7 +278,7 @@ boot-fault:
 # What the machine says about itself. The first question on any unfamiliar
 # board is whether the addresses came out right, and this is how a kernel with
 # no debugger answers it.
-# armedit under macOS's Virtualization framework: a real Apple CPU at EL1,
+# sue under macOS's Virtualization framework: a real Apple CPU at EL1,
 # which is the closest test bed to the eventual bare-metal target. Needs the
 # virtualization entitlement, so it is ad-hoc signed with one.
 $(B)/vzrun: tools/vzrun.swift tools/vz.plist
@@ -292,7 +292,7 @@ vz: $(B)/vzrun $(B)/kernel.img
 # A reference: boot somebody else's kernel under the same host and see whether
 # the framework's console carries anything. It does - which is how we know the
 # silence is ours. Needs a distribution vmlinuz; see tools/refkernel.py.
-# armedit as an EFI application, and a disk for the firmware to find it on.
+# sue as an EFI application, and a disk for the firmware to find it on.
 #
 # This is the way into the Virtualization framework: EFI firmware brings up a
 # console and a framebuffer itself and hands them to an application, so a guest
@@ -302,6 +302,14 @@ EFI_OBJ := $(B)/efi/efi.obj
 
 # QEMU's own EFI firmware, which is where the handover can be run.
 EDK2 ?= /opt/homebrew/share/qemu/edk2-aarch64-code.fd
+
+# How the guest's instructions get executed. Hypervisor.framework runs them on
+# this machine's own cores at EL1, which is the same place the kernel will run
+# on the target - as close to bare metal as anything here gets without being
+# it. Emulation is the fallback for a host that has no such thing, and it
+# executes different silicon: -cpu cortex-a72 is an ARM design, and the machine
+# this is aimed at is not.
+ACCEL ?= -accel hvf -cpu host
 
 # The loader includes the generated tree's offsets and carries the kernel
 # inside itself, so it waits for both. The kernel is not a link-time input -
@@ -345,14 +353,14 @@ $(B)/vzgui: tools/vzgui.swift tools/vz.plist
 efi-boot: $(B)/esp.img
 	@python3 tests/efiboot.py
 
-# armedit the way the target will run it: booted from a disk by firmware that
+# sue the way the target will run it: booted from a disk by firmware that
 # owns the machine first, with a keyboard and a network on the USB controller
 # and nothing virtio about it. This is the closest thing to the real machine
 # that can be sat in front of.
 #
 # A disk to keep things on. Made once and kept - the point of it is that what
 # is on it survives, so it is not remade on every run.
-$(B)/armedit-disk.img:
+$(B)/sue-disk.img:
 	@mkdir -p $(B)
 	@python3 -c "open('$@','wb').truncate(64*1024*1024)"
 	@echo "made $@, 64MB"
@@ -362,11 +370,11 @@ $(B)/armedit-disk.img:
 # for something that is not there - which presents as a machine that boots to
 # a shell for no reason anybody can see.
 .PHONY: efi-run
-efi-run: $(B)/esp.img $(B)/armedit-disk.img
+efi-run: $(B)/esp.img $(B)/sue-disk.img
 	@test -f $(EDK2) || (echo "no EFI firmware at $(EDK2)"; exit 1)
 	@cp $(EDK2) $(B)/code.fd
 	@python3 -c "open('$(B)/vars.fd','wb').truncate($$(stat -f%z $(EDK2)))"
-	$(QEMU) -M virt -cpu cortex-a72 -m 512 	  -drive if=pflash,format=raw,readonly=on,file=$(B)/code.fd 	  -drive if=pflash,format=raw,file=$(B)/vars.fd 	  -drive format=raw,file=$(B)/esp.img,if=virtio 	  -device ramfb -device qemu-xhci -device usb-kbd 	  -drive id=disk0,if=none,file=$(B)/armedit-disk.img,format=raw 	  -device usb-storage,drive=disk0 	  -netdev user,id=u0 -device usb-net,netdev=u0 	  -display cocoa,zoom-to-fit=on,left-command-key=on
+	$(QEMU) -M virt $(ACCEL) -m 512 	  -drive if=pflash,format=raw,readonly=on,file=$(B)/code.fd 	  -drive if=pflash,format=raw,file=$(B)/vars.fd 	  -drive format=raw,file=$(B)/esp.img,if=virtio 	  -device ramfb -device qemu-xhci -device usb-kbd 	  -drive id=disk0,if=none,file=$(B)/sue-disk.img,format=raw 	  -device usb-storage,drive=disk0 	  -netdev user,id=u0 -device usb-net,netdev=u0 	  -display cocoa,zoom-to-fit=on,left-command-key=on
 
 .PHONY: vz-efi
 vz-efi: $(B)/vzgui $(B)/esp.img
@@ -383,7 +391,7 @@ vz-reference: $(B)/vzrun
 .PHONY: boot-dtb
 boot-dtb:
 	@$(MAKE) --no-print-directory clean-kernel
-	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DARMEDIT_DTB_DUMP
+	@$(MAKE) --no-print-directory kernel KERNEL_DEFS=-DSUE_DTB_DUMP
 	@$(QEMU) $(QEMU_ARGS) $(QEMU_KBD) $(QEMU_NET) -nographic > $(B)/dtb.log 2>&1 & \
 	 P=$$!; sleep 5; kill $$P 2>/dev/null; true
 	@sed -n '1,10p' $(B)/dtb.log
@@ -462,11 +470,11 @@ test: $(B)/optest $(B)/localtest $(B)/bootargstest
 	@cd backend-java && ./gradlew -q installDist
 	@javac -cp backend-java/build/classes/java/main -d $(B)/tests \
 	   tests/ColourTest.java tests/ConsortiumTest.java tests/WaitingTest.java tests/QrTest.java
-	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
+	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/sue-server/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   ColourTest $(B)/tests/colour.bin $(B)/tests/shout.bin
-	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
+	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/sue-server/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   ConsortiumTest
-	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/armeditd/lib/*.jar | tr '\n' ':')$(B)/tests" \
+	@java -cp "backend-java/build/classes/java/main:$(shell ls backend-java/build/install/sue-server/lib/*.jar | tr '\n' ':')$(B)/tests" \
 	   WaitingTest
 	@java -cp "backend-java/build/classes/java/main:$(B)/tests" QrTest $(B)/qrgrid.txt
 	@echo "  --- and the code, read back by the framework a camera uses:"
@@ -477,10 +485,10 @@ test: $(B)/optest $(B)/localtest $(B)/bootargstest
 	@echo "  --- and the aarch64 it emitted, executed:"
 	@for c in blue red green chartreuse; do \
 	   printf "    set-colour %-11s -> [%s]\n" "$$c" \
-	     "$$(ARMEDIT_TAG=1 $(B)/optest $(B)/tests/colour.bin "$$c" "a document" "" "")"; \
+	     "$$(SUE_TAG=1 $(B)/optest $(B)/tests/colour.bin "$$c" "a document" "" "")"; \
 	 done
 	@printf "    shout %-17s -> [%s]\n" "(screen only)" \
-	   "$$(ARMEDIT_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"
+	   "$$(SUE_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"
 	@echo "  --- and what m1n1 would hand over on a real machine:"
 	@$(B)/bootargstest
 	@echo "  --- and the operations this build ships with, answering offline:"

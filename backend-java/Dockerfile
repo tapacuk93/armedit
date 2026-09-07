@@ -1,4 +1,4 @@
-## armeditd, ahead-of-time compiled.
+## sue-server, ahead-of-time compiled.
 ##
 ## Two stages: GraalVM's native-image toolchain runs the Gradle build and
 ## produces a real executable, then only that executable is copied onto a
@@ -32,15 +32,15 @@ RUN ./gradlew nativeCompile --no-daemon
 ## the image for anything else to use. The JDK truststore is compiled into the
 ## binary, so outbound TLS to aicoin and AWS needs nothing from the OS.
 FROM gcr.io/distroless/base-debian12 AS runtime
-WORKDIR /opt/armedit
+WORKDIR /opt/sue
 
-COPY --from=build /workspace/build/native/nativeCompile/armeditd /usr/local/bin/armeditd
+COPY --from=build /workspace/build/native/nativeCompile/sue-server /usr/local/bin/sue-server
 
 # Where accounts' folders live. Mount a volume here or everything typed is
 # lost with the container.
-VOLUME ["/opt/armedit/workspaces"]
-ENV ARMEDIT_WORKSPACE=/opt/armedit/workspaces
+VOLUME ["/opt/sue/workspaces"]
+ENV SUE_WORKSPACE=/opt/sue/workspaces
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/armeditd"]
+ENTRYPOINT ["/usr/local/bin/sue-server"]

@@ -14,7 +14,7 @@ whatever tree it is handed and puts its own psci node back, so the guest
 receives one regardless. That cost an afternoon; it is written here so it is
 not paid twice.
 
-So ARMEDIT_REBOOT_TEST forces the condition rather than describing it - the
+So SUE_REBOOT_TEST forces the condition rather than describing it - the
 kernel behaves as though nothing offered PSCI - and everything past that point
 is the real path: QEMU's own tree, a real search through it for a watchdog,
 real stores to the address it gives back. tools/loadertree.py adds the watchdog
@@ -52,7 +52,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")
-SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-reboot")
+SCRATCH = os.environ.get("E2E_DIR", "/tmp/sue-reboot")
 
 WDT_AT = 0x50000000             # RAM, well clear of the kernel and of the tree
 POISON = 0xAAAAAAAA
@@ -118,7 +118,7 @@ def run(name, dtb, wdt):
     try:
         import socket
         for _ in range(200):
-            if os.path.exists(serial) and b"armedit:" in open(serial, "rb").read():
+            if os.path.exists(serial) and b"sue:" in open(serial, "rb").read():
                 break
             time.sleep(0.1)
         time.sleep(1.5)
@@ -155,7 +155,7 @@ def main():
 
     sh(["make", "-C", ROOT, "clean-kernel"])
     built = subprocess.run(["make", "-C", ROOT, "kernel-img",
-                            "KERNEL_DEFS=-DARMEDIT_REBOOT_TEST"],
+                            "KERNEL_DEFS=-DSUE_REBOOT_TEST"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     if built.returncode:
         print(built.stderr.decode()[-2000:])
@@ -183,9 +183,9 @@ def main():
            "having armed a watchdog, it stops rather than calling PSCI")
         ok("reboot returned" in log,
            "...and says it came back, which on real hardware it would not")
-        ok(log.count("armedit: boot") == 1,
+        ok(log.count("sue: boot") == 1,
            "...and the machine is still the one that booted",
-           "%d boots" % log.count("armedit: boot"))
+           "%d boots" % log.count("sue: boot"))
 
         # And a machine with no watchdog. Here falling through is right: there
         # is genuinely nothing else left to try, and a kernel that gave up

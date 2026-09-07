@@ -1,4 +1,4 @@
-# armedit
+# sue
 
 A text editor written in aarch64 assembly, that runs two ways:
 
@@ -18,16 +18,16 @@ an AWS credential.
 
 ```
    ┌──────────────────────┐        ┌──────────────────────┐
-   │ armedit (hosted)     │        │ armedit (bare metal) │
+   │ sue (hosted)     │        │ sue (bare metal) │
    │  macOS window / tty  │        │  own kernel, ramfb   │
    └──────────┬───────────┘        └──────────┬───────────┘
-              │      one armedit key,         │
+              │      one sue key,         │
               │      one protocol             │
               └───────────────┬───────────────┘
                               ▼
                    ┌──────────────────────┐
-                   │ armeditd (Java 25)   │  the only holder of secrets
-                   │ armedit.oeaio.com    │
+                   │ sue-server (Java 25)   │  the only holder of secrets
+                   │ sue.oeaio.com    │
                    └───────┬──────────┬───┘
                            ▼          ▼
                  aicoin proxy       EC2
@@ -39,7 +39,7 @@ an AWS credential.
 
 ## One property
 
-A device is configured with exactly one value: **`ARMEDIT_KEY`**.
+A device is configured with exactly one value: **`SUE_KEY`**.
 
 The key issued at registration carries the address to reach the backend at —
 `<secret>@<host:port>` — so there is no second setting to get wrong and no
@@ -64,8 +64,8 @@ linker ship with Xcode.
 
 ```
 make                             # both hosted modes and the kernel
-java backend-java/src/Armeditd.java   # the backend, straight from source
-ARMEDIT_KEY=<key> make win       # the editor, bound to that account
+java backend-java/src/SueServer.java   # the backend, straight from source
+SUE_KEY=<key> make win       # the editor, bound to that account
 make run                         # terminal mode: make run TEXT="HELLO WORLD"
 make boot                        # boot the kernel in QEMU, with a framebuffer
 make boot-tty                    # boot it headless, serial on your terminal
@@ -200,7 +200,7 @@ is not the model that wrote the operation. It is every model the wallet can
 reach, asked separately:
 
 ```
-armedit: consortium seats 6 of 40 eligible models, across 2 provider(s)
+sue: consortium seats 6 of 40 eligible models, across 2 provider(s)
 bench: [openai:o4-mini, anthropic:claude-sonnet-5, openai:o3-mini,
         anthropic:claude-opus-5, openai:o3, anthropic:claude-haiku-4-5]
 VERDICT COMMIT - 4 of 6 members, unanimous
@@ -262,7 +262,7 @@ proxy, not a failure, and the provider-shaped path is still there for it.
 answer returned attributed and unmerged. That mode was added to aicoin for this;
 the endpoint's other two shapes both end in a single merged answer, which is
 right for prose and fatal for a vote, because a paragraph an editor wrote has
-nobody in it to count. armedit used to fan out to each model itself and keep its
+nobody in it to count. sue used to fan out to each model itself and keep its
 own list of which ones were reachable — a copy of something the proxy already
 knows, going quietly out of date. What stayed on this side is what the answers
 *mean*: the quorum, the appeal, whether a hold was agreed or split. If the proxy
@@ -345,7 +345,7 @@ screenshot. Worse, a pasted token could only be withdrawn by revoking *every*
 token that wallet had issued — a token is self-verifying, so nothing about the
 token itself can be taken away.
 
-So the page shows a code instead. armedit asks the proxy for an authorisation
+So the page shows a code instead. sue asks the proxy for an authorisation
 and gets back two things that are not interchangeable: the **id**, which goes in
 the code, and the **secret**, which stays here and is what the token is collected
 with. Both in the code would mean anyone who photographed the screen could
@@ -386,36 +386,36 @@ Server-side settings, all environment, none committed.
 
 | variable | meaning |
 |---|---|
-| `ARMEDIT_PORT` | listen port (default 8080) |
-| `ARMEDIT_PUBLIC_ADDR` | the address to bake into issued keys |
-| `ARMEDIT_AICOIN` | aicoin proxy base URL |
-| `ARMEDIT_PROVIDER` | which provider aicoin should route to (default `anthropic`) |
-| `ARMEDIT_MODEL` | model override (default `claude-opus-5`) |
-| `ARMEDIT_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
-| `ARMEDIT_AMI` | image the account's instance runs |
-| `ARMEDIT_WAITING_DIR` | where doubted operations wait (default `waiting`) |
-| `ARMEDIT_WAIT_PEOPLE` | distinct people needed to release one (default 3) |
-| `ARMEDIT_WAIT_DAYS` | how long one waits before being forgotten (default 30) |
-| `ARMEDIT_INSTANCE_TYPE` | default `t4g.small` |
-| `ARMEDIT_WORKSPACE` | where accounts' folders live (default `workspaces`) |
-| `ARMEDIT_S3_BUCKET` | third tier of persistence; unset means disk only |
-| `ARMEDIT_IDLE_MINUTES` | terminate an idle account's instance (default 30, 0 disables) |
-| `ARMEDIT_REAP_SECONDS` | how often to sweep for idle accounts (default 60) |
+| `SUE_PORT` | listen port (default 8080) |
+| `SUE_PUBLIC_ADDR` | the address to bake into issued keys |
+| `SUE_AICOIN` | aicoin proxy base URL |
+| `SUE_PROVIDER` | which provider aicoin should route to (default `anthropic`) |
+| `SUE_MODEL` | model override (default `claude-opus-5`) |
+| `SUE_AWS_ADDR` | EC2 endpoint override, for a local or proxied endpoint |
+| `SUE_AMI` | image the account's instance runs |
+| `SUE_WAITING_DIR` | where doubted operations wait (default `waiting`) |
+| `SUE_WAIT_PEOPLE` | distinct people needed to release one (default 3) |
+| `SUE_WAIT_DAYS` | how long one waits before being forgotten (default 30) |
+| `SUE_INSTANCE_TYPE` | default `t4g.small` |
+| `SUE_WORKSPACE` | where accounts' folders live (default `workspaces`) |
+| `SUE_S3_BUCKET` | third tier of persistence; unset means disk only |
+| `SUE_IDLE_MINUTES` | terminate an idle account's instance (default 30, 0 disables) |
+| `SUE_REAP_SECONDS` | how often to sweep for idle accounts (default 60) |
 
 ### Protocol
 
 What a device may say, and all it may say:
 
 ```
-POST /api/agent      X-Armedit-Key
+POST /api/agent      X-Sue-Key
      {mode:"agent"|"aify", screen, scroll, rows, cursor, baseline, context} -> {text}
-POST /api/session    X-Armedit-Key -> {instance}
-POST /api/teardown   X-Armedit-Key -> {instance:""}
-POST /api/journal    X-Armedit-Key; {screen, op|kind, at, text|word, dx, dy} -> {ok}
-GET  /api/clouds     X-Armedit-Key -> {bound}
-POST /api/clouds     X-Armedit-Key; {provider, ...fields} -> {provider, complete}
-GET  /api/otp        X-Armedit-Key -> the pad ledger for this account
-POST /api/otp/reserve X-Armedit-Key -> {pad, bits, window}
+POST /api/session    X-Sue-Key -> {instance}
+POST /api/teardown   X-Sue-Key -> {instance:""}
+POST /api/journal    X-Sue-Key; {screen, op|kind, at, text|word, dx, dy} -> {ok}
+GET  /api/clouds     X-Sue-Key -> {bound}
+POST /api/clouds     X-Sue-Key; {provider, ...fields} -> {provider, complete}
+GET  /api/otp        X-Sue-Key -> the pad ledger for this account
+POST /api/otp/reserve X-Sue-Key -> {pad, bits, window}
 ```
 
 and, from a browser rather than a device:
@@ -598,7 +598,7 @@ have to, and that is the whole of first light on that machine.
 
 There are two ways that arrives. m1n1 passes its own `boot_args` to a raw
 payload, and `kernel/arch/aarch64/bootargs.S` reads those. But m1n1 also boots
-**Linux-style images**, and armedit is one now — it has the arm64 image header
+**Linux-style images**, and sue is one now — it has the arm64 image header
 — so the loader hands it a device tree with a `simple-framebuffer` node
 instead. `kernel/screen.S` reads either, and the second is both the more likely
 path on a real Mac and the one that works on every other arm64 board whose
@@ -940,9 +940,9 @@ it describes it in ACPI. So the loader walks four hops of the firmware's own
 tables (configuration table → root pointer → extended table list → the table
 signed `MCFG`) and writes the address into the tree it is building:
 
-    armedit: bus at 0000004010000000
+    sue: bus at 0000004010000000
 
-Which is what makes `make efi-run` worth having. It boots armedit the way the
+Which is what makes `make efi-run` worth having. It boots sue the way the
 target will boot it — from a disk, by firmware that owns the machine first,
 with a keyboard and a network on the USB controller and nothing virtio about
 it — in a window you can type into. That is the closest thing to the real
@@ -1099,7 +1099,7 @@ server hands out a lease against it. Then `net_send`/`net_recv` dispatch to
 whichever device the machine has, so ARP, IP, TCP and DHCP are unchanged and
 have no business knowing which wire they are on:
 
-    armedit: the network gave us 10.0.2.15
+    sue: the network gave us 10.0.2.15
 
 `make network` boots a machine with **no virtio device at all** and requires a
 lease, the four packets on the wire over bulk endpoints, and the frames carrying

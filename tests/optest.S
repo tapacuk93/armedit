@@ -127,7 +127,7 @@ say:    stp     x29, x30, [sp, #-32]!
 
         CSTR
 s_arrow:    .asciz " -> "
-s_tagenv:   .asciz "ARMEDIT_TAG"
+s_tagenv:   .asciz "SUE_TAG"
 s_declined: .asciz "(declined - ask the server)"
 s_nl:       .asciz "\n"
         BSS

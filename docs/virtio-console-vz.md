@@ -1,6 +1,6 @@
 # The console that receives and will not transmit
 
-armedit boots under macOS's Virtualization framework, discovers its hardware,
+sue boots under macOS's Virtualization framework, discovers its hardware,
 brings up the virtio console, and prints nothing. This is everything known
 about why, written down because the investigation is longer than anyone will
 want to repeat and most of its value is in what has been ruled out.
@@ -23,7 +23,7 @@ So the bug is in `kernel/arch/aarch64/virtio_console.S`, not in the framework.
 
 Found by asking, one bit at a time, through a probe that powers the machine off
 to mean "yes" — the framework offers no console until this driver works, so
-that was the only channel available. See `ARMEDIT_PROBE_CONSOLE` in
+that was the only channel available. See `SUE_PROBE_CONSOLE` in
 `kernel/main.S`.
 
 | | |
@@ -119,7 +119,7 @@ a console and a framebuffer itself and hands them to an application - so a
 guest can print before it knows what it is running on, and before it needs a
 virtio driver at all.
 
-`make vz-efi` does it, and it works: "armedit: EFI console is alive" on the
+`make vz-efi` does it, and it works: "sue: EFI console is alive" on the
 screen of a machine that had never carried a byte.
 
 That does not solve the virtio console, and the notes above stand for whoever

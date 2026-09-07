@@ -1,4 +1,4 @@
-// vzrun - boot an armedit image under macOS's Virtualization framework.
+// vzrun - boot an sue image under macOS's Virtualization framework.
 //
 // The target is bare metal on this Mac. This is the closest test bed available
 // before that: a real Apple CPU at EL1, with the same timer, the same cache
@@ -32,7 +32,7 @@ guard FileManager.default.fileExists(atPath: kernel.path) else {
 }
 
 let boot = VZLinuxBootLoader(kernelURL: kernel)
-// The framework insists on a command line and a Linux-shaped boot. armedit
+// The framework insists on a command line and a Linux-shaped boot. sue
 // ignores it, but a loader that is told nothing may decline to boot at all.
 boot.commandLine = args.count > 2 ? args[2] : "console=hvc0"
 

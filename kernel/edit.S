@@ -1,7 +1,7 @@
 #include "asm.inc"
 #include "editor.inc"
 /*
- * edit.S - armedit as the machine, rather than as a program on one.
+ * edit.S - sue as the machine, rather than as a program on one.
  *
  * This is the OS mode: the same editor core the window and the phone run,
  * driven by a keyboard that is a serial line and drawing into a framebuffer
@@ -172,12 +172,12 @@ kedit_run:
         ret
 
         .section .rodata
-m_restarting: .asciz "armedit: restarting\n"
-m_declined:   .asciz "armedit: the machine declined to restart\n"
+m_restarting: .asciz "sue: restarting\n"
+m_declined:   .asciz "sue: the machine declined to restart\n"
 /* A video answers to its kind, which is what a shared rule is written against. */
 s_unlabelled:
         .asciz ""
-m_asking:   .asciz "armedit: asking the backend...\n"
-m_answered: .asciz "armedit: ...answered\n"
+m_asking:   .asciz "sue: asking the backend...\n"
+m_answered: .asciz "sue: ...answered\n"
 m_nolink:
-        .asciz "armedit: no link yet - the editor works, the far side does not\n"
+        .asciz "sue: no link yet - the editor works, the far side does not\n"

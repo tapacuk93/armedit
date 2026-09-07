@@ -40,7 +40,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")
-SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-efi")
+SCRATCH = os.environ.get("E2E_DIR", "/tmp/sue-efi")
 
 FIRMWARE = "/opt/homebrew/share/qemu/edk2-aarch64-code.fd"
 BG = (0x14, 0x16, 0x18)         # what the kernel clears its screen to
@@ -180,7 +180,7 @@ def main():
     ok("EFI console is alive" in log, "the firmware starts the loader")
     m = re.search(r"screen at ([0-9a-f]+) (\d+)x(\d+), stride (\d+), format (\d+)", log)
     ok(m is not None, "...which is given a display it can address",
-       (re.search(r"armedit: screen.*", log) or [""])[0] if "screen at" in log else "nothing")
+       (re.search(r"sue: screen.*", log) or [""])[0] if "screen at" in log else "nothing")
     ok("blt only" not in log, "...a real one, not a draw-for-me one")
     ok("drawn" in log, "...and can write to it")
 

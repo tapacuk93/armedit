@@ -51,7 +51,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 BUILD = os.path.join(ROOT, "build")
-SCRATCH = os.environ.get("E2E_DIR", "/tmp/armedit-treefb")
+SCRATCH = os.environ.get("E2E_DIR", "/tmp/sue-treefb")
 
 # Out of include/editor.inc. The bar is the top strip and the dim is the gutter
 # beside the text, and between them they are most of what is on screen before
@@ -95,7 +95,7 @@ def dumpdtb(path):
 
 
 class Machine:
-    """One armedit booted with a loader-shaped framebuffer and no ramfb."""
+    """One sue booted with a loader-shaped framebuffer and no ramfb."""
 
     def __init__(self, name, dtb, port):
         self.name = name
@@ -120,7 +120,7 @@ class Machine:
         for _ in range(200):
             if os.path.exists(self.serial):
                 with open(self.serial, "rb") as f:
-                    if b"armedit:" in f.read():
+                    if b"sue:" in f.read():
                         break
             time.sleep(0.1)
         time.sleep(1.5)

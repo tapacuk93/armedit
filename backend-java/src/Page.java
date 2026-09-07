@@ -1,5 +1,5 @@
 /**
- * The registration page served at armedit.oeaio.com.
+ * The registration page served at sue.oeaio.com.
  *
  * One page, no build step, no framework: it collects the two accesses an
  * account requires plus the password that seeds its pad, and shows the single
@@ -13,7 +13,7 @@ final class Page {
             <!doctype html>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1">
-            <title>armedit</title>
+            <title>sue</title>
             <style>
             :root{color-scheme:dark}
             body{background:#141618;color:#8ae2b8;font:15px/1.6 ui-monospace,Menlo,monospace;margin:0;padding:48px 20px;display:flex;justify-content:center}
@@ -34,14 +34,14 @@ final class Page {
             small{color:#4a5a52;display:block;margin-top:10px;line-height:1.7}
             </style>
             <main>
-            <h1>ARMEDIT</h1>
-            <p class="sub">A text editor in assembly. Bind your accesses once; the editor carries a single key.</p>
+            <h1>SOFTWARE USER ENVIRONMENT</h1>
+            <p class="sub">sue &mdash; a text editor in assembly. Bind your accesses once; the editor carries a single key.</p>
             <form id="f">
             <fieldset>
             <legend>AICOIN WALLET</legend>
             <label for="w">API token from your aicoin wallet page</label>
             <input id="w" autocomplete="off" spellcheck="false" placeholder="eyJhZGRyIjoi...">
-            <small>Pays for this account's model calls. aicoin fronts Claude and the other providers, so this one token covers all of them, and armedit never holds a provider key. If you would rather not paste a secret through a text field, leave this empty and scan a code with your wallet after the key is issued.</small>
+            <small>Pays for this account's model calls. aicoin fronts Claude and the other providers, so this one token covers all of them, and sue never holds a provider key. If you would rather not paste a secret through a text field, leave this empty and scan a code with your wallet after the key is issued.</small>
             </fieldset>
             <fieldset>
             <legend>AWS ACCESS</legend>
@@ -66,7 +66,7 @@ final class Page {
             <div id="more" style="display:none">
             <fieldset>
             <legend>WALLET</legend>
-            <small>Scan this with the aicoin wallet on your phone and it authorises armedit to spend from it - the token is minted on the phone, by the key that never leaves it, and never passes through a clipboard or a text field. Revoke it in the wallet at any time and this account stops being able to spend, without touching anything else that wallet has authorised.</small>
+            <small>Scan this with the aicoin wallet on your phone and it authorises sue to spend from it - the token is minted on the phone, by the key that never leaves it, and never passes through a clipboard or a text field. Revoke it in the wallet at any time and this account stops being able to spend, without touching anything else that wallet has authorised.</small>
             <button id="qb" type="button">SHOW A CODE TO SCAN</button>
             <div id="qr"></div>
             <div id="wout"></div>
@@ -102,7 +102,7 @@ final class Page {
             </fieldset>
             </div>
 
-            <small>Nothing here is stored in the armedit repository, and the key below is the only credential that ever reaches a device. No cloud credential ever appears in a prompt: the model picks a provider by name and the backend does the signing.</small>
+            <small>Nothing here is stored in the sue repository, and the key below is the only credential that ever reaches a device. No cloud credential ever appears in a prompt: the model picks a provider by name and the backend does the signing.</small>
             </main>
             <script>
             const $=i=>document.getElementById(i),out=$("out");
@@ -116,7 +116,7 @@ final class Page {
               const j=await r.json();
               if(j.key){issuedKey=j.key;$("more").style.display="block";
                out.innerHTML='<span class="key">'+j.key+'</span>'+
-               "\\n\\nRun the editor with:\\n  export ARMEDIT_KEY="+j.key+"\\n  make win\\n\\nThis key is shown once, and it is the only setting the editor needs.";}
+               "\\n\\nRun the editor with:\\n  export SUE_KEY="+j.key+"\\n  make win\\n\\nThis key is shown once, and it is the only setting the editor needs.";}
               else{out.innerHTML='<span class="err">'+(j.error||"registration failed")+"</span>";}
              }catch(x){out.innerHTML='<span class="err">'+x+"</span>";}
              $("b").disabled=false;
@@ -126,7 +126,7 @@ final class Page {
              el.textContent="binding...";
              try{
               const r=await fetch(path,{method:"POST",
-               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               headers:{"Content-Type":"application/json","X-Sue-Key":issuedKey},
                body:JSON.stringify(body)});
               const j=await r.json();
               el.innerHTML=j.error?'<span class="err">'+j.error+"</span>"
@@ -151,7 +151,7 @@ final class Page {
              if(polling)clearInterval(polling);
              try{
               const r=await fetch("/api/wallet/scan",{method:"POST",
-               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               headers:{"Content-Type":"application/json","X-Sue-Key":issuedKey},
                body:"{}"});
               const j=await r.json();
               if(j.error){wout.innerHTML='<span class="err">'+j.error+"</span>";return;}
@@ -169,7 +169,7 @@ final class Page {
              if(!pending)return;
              try{
               const r=await fetch("/api/wallet/scan",{method:"POST",
-               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               headers:{"Content-Type":"application/json","X-Sue-Key":issuedKey},
                body:JSON.stringify(pending)});
               const j=await r.json();
               if(j.bound){
@@ -201,7 +201,7 @@ final class Page {
              cout.textContent="binding...";
              try{
               const r=await fetch("/api/clouds",{method:"POST",
-               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               headers:{"Content-Type":"application/json","X-Sue-Key":issuedKey},
                body:JSON.stringify(body)});
               const j=await r.json();
               cout.innerHTML=j.error?'<span class="err">'+j.error+"</span>"

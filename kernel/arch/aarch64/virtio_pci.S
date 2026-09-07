@@ -531,7 +531,7 @@ SYM(vpci_kick_queue):
         ldr     x9, [x9, w0, uxtw #3]
         cbz     x9, 9f
         dsb     sy                      /* the ring must be visible first */
-#ifdef ARMEDIT_NOTIFY32
+#ifdef SUE_NOTIFY32
         str     w0, [x9]
 #else
         strh    w0, [x9]

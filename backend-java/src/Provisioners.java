@@ -76,7 +76,7 @@ final class Provisioners {
             /*
              * The image is asked for, not configured.
              *
-             * This used to throw when ARMEDIT_AMI was unset, and that string
+             * This used to throw when SUE_AMI was unset, and that string
              * did not stop here: it went into the run transcript, into the
              * follow-up prompt, and a model read "no image is available", told
              * the user so, and then printed the output the run would have had.
