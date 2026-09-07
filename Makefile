@@ -36,7 +36,7 @@ KERNEL_SRC := kernel/main.S kernel/console.S kernel/edit.S app/ops.S \
               editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S \
               net/str.S app/localops.S net/html.S net/browse.S kernel/dns.S \
               kernel/dtb.S kernel/pci.S kernel/screen.S kernel/report.S kernel/dhcp.S \
-              kernel/store.S \
+              kernel/store.S kernel/storedev_usb.S \
               $(wildcard kernel/arch/$(KERNEL_ARCH)/*.S)
 
 # The approved operations, turned into a table the linker can place. Generated
@@ -55,7 +55,7 @@ BACKEND_OBJ := $(patsubst %.S,$(B)/macho/%.o,$(BACKEND_SRC))
 
 TTY_OBJ    := $(patsubst %.S,$(B)/macho/%.o,app/tty.S $(FONT_SRC))
 NET_SRC    := net/str.S net/http.S net/sock.S
-WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S app/reboot.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S net/html.S net/browse.S $(FONT_SRC))
+WIN_OBJ    := $(B)/macho/ops_table.o $(patsubst %.S,$(B)/macho/%.o,app/window.S kernel/store.S app/storedev_file.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S app/reboot.S editor/editor.S editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S $(NET_SRC) net/dns.S net/html.S net/browse.S $(FONT_SRC))
 KERNEL_OBJ := $(patsubst %.S,$(B)/elf/%.o,$(KERNEL_SRC) $(FONT_SRC)) $(B)/elf/ops_table.o
 
 QEMU      := qemu-system-aarch64
@@ -120,7 +120,7 @@ $(B)/kernel.elf: $(KERNEL_OBJ) kernel/arch/$(KERNEL_ARCH)/link.ld
 # business knowing about.
 IOS_SDK   := $(shell xcrun --sdk iphonesimulator --show-sdk-path)
 IOS_ARCH  := arm64-apple-ios16.0-simulator
-IOS_SRC   := app/ios.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S app/reboot.S editor/editor.S \
+IOS_SRC   := app/ios.S kernel/store.S app/storedev_file.S app/env.S app/clock.S app/async.S app/backend_client.S app/ops.S app/localops.S app/reboot.S editor/editor.S \
              editor/applet.S gfx/image.S gfx/video.S gfx/demo_clip.S net/str.S net/http.S \
              net/sock.S \
              net/dns.S net/html.S net/browse.S $(FONT_SRC)
@@ -482,6 +482,16 @@ BOOTARGS_OBJ := $(B)/macho/tests/bootargstest.o \
                 $(B)/macho/kernel/arch/aarch64/wdt.o \
                 $(B)/macho/kernel/arch/aarch64/dart.o
 
+STORE_OBJ := $(B)/macho/tests/storetest.o $(B)/macho/kernel/store.o \
+             $(B)/macho/app/storedev_file.o $(B)/macho/app/env.o \
+             $(B)/macho/app/clock.o $(B)/macho/editor/editor.o \
+             $(B)/macho/editor/applet.o $(B)/macho/gfx/image.o \
+             $(B)/macho/gfx/video.o $(B)/macho/net/str.o $(B)/macho/font/font.o \
+             $(B)/macho/font/render.o
+
+$(B)/storetest: $(STORE_OBJ)
+	$(LD_MACHO) -o $@ $(STORE_OBJ)
+
 $(B)/bootargstest: $(BOOTARGS_OBJ)
 	$(LD_MACHO) -o $@ $(BOOTARGS_OBJ)
 
@@ -489,7 +499,7 @@ $(B)/browsetest: $(BROWSE_OBJ)
 	$(LD_MACHO) -o $@ $(BROWSE_OBJ)
 
 .PHONY: test
-test: $(B)/optest $(B)/localtest $(B)/bootargstest
+test: $(B)/optest $(B)/localtest $(B)/bootargstest $(B)/storetest
 	@cd backend-java && ./gradlew -q installDist
 	@javac -cp backend-java/build/classes/java/main -d $(B)/tests \
 	   tests/ColourTest.java tests/ConsortiumTest.java tests/WaitingTest.java tests/QrTest.java
@@ -514,6 +524,17 @@ test: $(B)/optest $(B)/localtest $(B)/bootargstest
 	   "$$(SUE_TAG=1 $(B)/optest $(B)/tests/shout.bin "hello" "" "")"
 	@echo "  --- and what m1n1 would hand over on a real machine:"
 	@$(B)/bootargstest
+	@echo "  --- the document, kept and found again:"
+	@mkdir -p $(B)/storehome $(B)/storehome-stranger
+	@rm -f $(B)/storehome/.sue-document
+	@printf 'somebody else, photographs and notes' > $(B)/storehome-stranger/.sue-document
+	@HOME=$(B)/storehome $(B)/storetest
+	@HOME=$(B)/storehome-stranger $(B)/storetest stranger
+	@python3 -c "import sys; d=open('$(B)/storehome/.sue-document','rb').read(); \
+	  ok = d[:8]==b'SUEDISK1' and int.from_bytes(d[8:12],'little')==43 \
+	       and d[512:555]==b'the same document, whichever way it started'; \
+	  print('  the file the app wrote is the disk the machine reads    ' + ('ok' if ok else 'FAIL')); \
+	  sys.exit(0 if ok else 1)"
 	@echo "  --- and the operations this build ships with, answering offline:"
 	@$(B)/localtest "colours blue" "colours red" "COLOURS Blue" \
 	   "$$(printf 'colours blue\n')" "  colours   blue  " \

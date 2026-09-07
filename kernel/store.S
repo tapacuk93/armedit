@@ -45,13 +45,8 @@ SYM(store_save):
         mov     x29, sp
         stp     x19, x20, [sp, #16]
 
-        LEA     x9, SYM(usbmsc_slot)
-        ldr     w9, [x9]
-        cbz     w9, 9f
-        LEA     x9, SYM(usbmsc_bsize)
-        ldr     w9, [x9]
-        cmp     w9, #SECTOR             /* every disk this can use is 512 */
-        b.ne    9f
+        bl      SYM(store_dev_ready)
+        cbz     w0, 9f
 
         bl      SYM(editor_length)
         mov     w19, w0
@@ -82,7 +77,7 @@ SYM(store_save):
         mov     w0, #TEXT_LBA
         mov     w1, w20
         LEA     x2, st_text
-        bl      SYM(usbmsc_write)
+        bl      SYM(store_dev_write)
         cmn     w0, #1
         b.eq    9f
 
@@ -102,7 +97,7 @@ SYM(store_save):
         mov     w0, #0
         mov     w1, #1
         LEA     x2, st_sector
-        bl      SYM(usbmsc_write)
+        bl      SYM(store_dev_write)
         cmn     w0, #1
         b.eq    9f
         mov     w0, #0
@@ -126,18 +121,13 @@ SYM(store_load):
         mov     x29, sp
         stp     x19, x20, [sp, #16]
 
-        LEA     x9, SYM(usbmsc_slot)
-        ldr     w9, [x9]
-        cbz     w9, 9f
-        LEA     x9, SYM(usbmsc_bsize)
-        ldr     w9, [x9]
-        cmp     w9, #SECTOR
-        b.ne    9f
+        bl      SYM(store_dev_ready)
+        cbz     w0, 9f
 
         mov     w0, #0
         mov     w1, #1
         LEA     x2, st_sector
-        bl      SYM(usbmsc_read)
+        bl      SYM(store_dev_read)
         cmn     w0, #1
         b.eq    9f
 
@@ -167,7 +157,7 @@ SYM(store_load):
         mov     w0, #TEXT_LBA
         mov     w1, w20
         LEA     x2, st_text
-        bl      SYM(usbmsc_read)
+        bl      SYM(store_dev_read)
         cmn     w0, #1
         b.eq    9f
 
@@ -199,7 +189,7 @@ SYM(store_peek):
         mov     w0, #0
         mov     w1, #1
         LEA     x2, st_sector
-        bl      SYM(usbmsc_read)
+        bl      SYM(store_dev_read)
         cmn     w0, #1
         b.eq    9f
         LEA     x9, st_sector
@@ -264,9 +254,8 @@ SYM(store_tick):
         mov     x29, sp
         stp     x19, x20, [sp, #16]
 
-        LEA     x9, SYM(usbmsc_slot)
-        ldr     w9, [x9]
-        cbz     w9, 8f
+        bl      SYM(store_dev_ready)
+        cbz     w0, 8f
 
         bl      st_sum
         mov     w19, w0
@@ -275,7 +264,7 @@ SYM(store_tick):
         cmp     w19, w10
         b.eq    8f                      /* what is on screen is what is on disk */
 
-        bl      SYM(platform_ticks)
+        bl      SYM(store_dev_now)
         mov     x20, x0
         LEA     x9, st_changed
         ldr     w11, [x9]

@@ -91,8 +91,15 @@ _main:
 
         /* What everyone else decided about objects like these. */
         bl      SYM(behaviour_sync)
-        LEA     x0, seed_text
-        bl      SYM(editor_insert_str)
+/*
+ * Whatever was last written, and nothing else.
+ *
+ * A help screen used to be here, and a different one is on the phone, and the
+ * booted machine had neither - so the same program opened with three different
+ * documents depending on what was underneath it. It is one editor: it opens
+ * with what is in it.
+ */
+        bl      SYM(store_load)
         bl      SYM(backend_session)    /* open with an instance attached */
 
         CLS     s_NSApplication
@@ -530,6 +537,7 @@ view_sue_blink:
         mov     x19, x0
         bl      SYM(editor_caret_blink)
         mov     w20, w0
+        bl      SYM(store_tick)         /* and write it, if it has settled */
 
         /* The same timer advances the clip. It is slower than the clip's own
            frame rate, which makes playback slow rather than jerky - the right
@@ -636,7 +644,6 @@ handle_event:
 
         CSTR
 s_title:                .asciz "sue"
-seed_text:              .asciz "SUE SCREEN 1\nCMD+T NEW SCREEN   CMD+LEFT/RIGHT SWITCH\nCMD+DELETE CLOSE   CLICK TO PLACE THE CARET\nCMD+ENTER ASK       CMD+P REWRITE\n\nTYPE HERE.\n"
 s_view_cls:             .asciz "SueView"
 s_delegate_cls:         .asciz "SueDelegate"
 t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"

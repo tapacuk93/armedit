@@ -71,17 +71,17 @@ _main:
         mov     x0, x2
         bl      SYM(env_init)           /* SUE_KEY, when there is one */
         bl      SYM(editor_init)
-        LEA     x0, seed_text
-        bl      SYM(editor_insert_str)
-
-        /* Say out loud whether this device can run an operation the server
-           sent, because the answer decides which form to ask for. */
-        bl      SYM(op_available)
-        cbz     w0, 1f
-        LEA     x0, s_ops_yes
-        b       2f
-1:      LEA     x0, s_ops_no
-2:      bl      SYM(editor_insert_str)
+/*
+ * Whatever was last written, and nothing else.
+ *
+ * A greeting used to be here, a different one on the Mac, and none at all when
+ * this boots as the machine - so the same program opened with three different
+ * documents depending on what was underneath it. Whether the device can run an
+ * operation the server sends is a real thing to know and it was being said by
+ * typing it into the user's document, which is not where a program answers
+ * questions about itself.
+ */
+        bl      SYM(store_load)
 
         mov     w0, #0                  /* our keyboard, not the system's */
         bl      SYM(keyboard_build)
@@ -145,6 +145,7 @@ build_classes:
         ADDM    x20, s_touchesMoved, view_touches_moved, t_void_id_id
         ADDM    x20, s_touchesEnded, view_touches_ended, t_void_id_id
         ADDM    x20, s_sueFinish, view_sue_finish, t_void
+        ADDM    x20, s_sueTick, view_sue_tick, t_void_id
         mov     x0, x20
         bl      _objc_registerClassPair
 
@@ -225,6 +226,30 @@ app_did_finish:
         str     x20, [x9]
         LEA     x9, view_slot
         str     x21, [x9]
+
+/*
+ * A timer, only so that the document gets written.
+ *
+ * The Mac has one already for the caret and the autosave rides on it. Nothing
+ * blinks here - the phone has no caret to flash - so the tick exists for this
+ * alone, which is worth one timer: without it the last thing typed before the
+ * app is closed is the one thing that would not be saved.
+ */
+        CLS     s_NSTimer
+        mov     x22, x0
+        LEA     x0, s_sueTick
+        bl      _sel_registerName
+        mov     x23, x0
+        LEA     x0, s_scheduledTimer
+        bl      _sel_registerName
+        mov     x1, x0
+        mov     x2, x21                 /* target: the view */
+        mov     x3, x23                 /* selector: sueTick: */
+        mov     x4, #0                  /* no userInfo */
+        mov     x5, #1                  /* repeats */
+        fmov    d0, #0.5
+        mov     x0, x22
+        bl      _objc_msgSend
 
         mov     w0, #1
         ldp     x23, x24, [sp, #48]
@@ -838,6 +863,15 @@ SYM(app_finish):
         ldp     x29, x30, [sp], #48
         ret
 
+/* - (void)sueTick: - the timer, which is here to write the document. */
+        .p2align 2
+view_sue_tick:
+        stp     x29, x30, [sp, #-16]!
+        mov     x29, sp
+        bl      SYM(store_tick)
+        ldp     x29, x30, [sp], #16
+        ret
+
 /* - (void)sueFinish - the main-thread half, installed on the view class */
         .p2align 2
 view_sue_finish:
@@ -869,8 +903,10 @@ SYM(app_redraw):
         ret
 
         CSTR
-seed_text:              .asciz "SUE ON IPHONE\nOUR KEYBOARD, NOT THE SYSTEM ONE\nTAP TEXT TO PLACE THE CARET\nSWIPE OVER WORDS TO ASK ABOUT THEM\nTWO FINGERS TO PASTE\n\n"
 s_sueFinish:        .asciz "sueFinish"
+s_sueTick:          .asciz "sueTick:"
+s_NSTimer:          .asciz "NSTimer"
+s_scheduledTimer:   .asciz "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"
 s_performOnMain:        .asciz "performSelectorOnMainThread:withObject:waitUntilDone:"
 s_delegate_cls:         .asciz "SueDelegate"
 s_view_cls:             .asciz "SueView"
@@ -912,8 +948,6 @@ s_subj_word:            .asciz "word:"
 s_subj_keyboard:        .asciz "keyboard"
 s_seed_word:            .asciz "ABOUT: "
 s_seed_word2:           .asciz "\n\nSAY WHAT TO DO WITH IT, THEN ASK.\n"
-s_ops_yes:              .asciz "native ops: this device CAN run code from the server\n"
-s_ops_no:               .asciz "native ops: this device CANNOT - ask for the spec instead\n"
 s_seed_kb:              .asciz "ABOUT THE KEYBOARD\n\nSAY HOW IT SHOULD LOOK OR BEHAVE,\nTHEN ASK. FOR EXAMPLE:\nMAKE THE KEYS RED\nHIGHLIGHT A KEY WHILE IT IS TOUCHED\n\n"
 s_stringWithUTF8String: .asciz "stringWithUTF8String:"
 t_drawRect:             .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
