@@ -185,9 +185,9 @@ def main():
     upcap = os.path.join(SCRATCH, "usb.pcap")
     ulog = boot("usb", "user,id=n0", 16, upcap, usb=True)
 
-    ok("a network at" in ulog, "the adapter comes up and says its own address",
-       (re.search(r"a network at [0-9a-f:]+", ulog) or [""])[0] if "a network at" in ulog
-       else (re.search(r"stopped at step \d+", ulog) or ["nothing"])[0])
+    brought = (re.search(r"^  network\s+(.*)$", ulog, re.M) or [None, ""])[1].strip()
+    ok(":" in brought and "absent" not in brought,
+       "the adapter comes up and says its own address", brought or "nothing")
     ok("the network gave us 10.0.2.15" in ulog,
        "...and DHCP runs over it, with no virtio device on the machine")
     ok("nobody answered DHCP" not in ulog, "...without falling back")
@@ -201,12 +201,10 @@ def main():
     # The address in the frames has to be the adapter's own, which this kernel
     # asked it for rather than invented: a lease is handed out against it, and
     # one made up here would be a lease for a machine that does not exist.
-    mac = re.search(r"a network at ([0-9a-f:]+)", ulog)
     first = next((p for p in useen if p[0] == DISCOVER), None)
-    ok(mac is not None and first is not None
-       and ":".join("%02x" % b for b in first[3]) == mac.group(1),
-       "the frames carry the address the adapter reported",
-       mac.group(1) if mac else "")
+    ok(first is not None and brought
+       and ":".join("%02x" % b for b in first[3]) == brought,
+       "the frames carry the address the adapter reported", brought)
 
     print()
     if failures:

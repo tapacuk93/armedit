@@ -386,52 +386,99 @@ SYM(report_show):
  * the line that answers the question the machine actually has: can anybody
  * use it.
  */
+/*
+ * What it turned out to be, in the order the drivers are tried. Each branch
+ * goes to the next kind rather than past all of them - which is what this did,
+ * and the disk was reported by code no path reached.
+ */
+        bl      report_nl
+
+/*
+ * And then one line per kind, rather than one line about "the device".
+ *
+ * A machine worth using has several at once - a keyboard, a disk, an adapter -
+ * and a report that described whichever was enumerated last was a report that
+ * changed its mind depending on which port things were plugged into. Each
+ * driver says whether it came up, and absent is an answer.
+ */
+25:     bl      report_nl
+20:
+        LEA     x0, m_kbdline
+        bl      report_puts
         LEA     x9, SYM(xhci_kbdslot)
         ldr     w9, [x9]
-        cbz     w9, 27f
-        LEA     x0, m_iskbd
+        cbz     w9, 40f
+        LEA     x0, m_overusb
+        b       41f
+40:     bl      platform_haskbd
+        cbz     w0, 42f
+        LEA     x0, m_virtio
+        b       41f
+42:     LEA     x0, m_absent
+41:     bl      report_puts
+        bl      report_nl
+
+        LEA     x0, m_diskline
         bl      report_puts
-        b       25f
-27:     LEA     x9, SYM(usbnet_slot)
+        LEA     x9, SYM(usbmsc_slot)
         ldr     w9, [x9]
-        cbnz    w9, 29f
+        cbnz    w9, 43f
+        LEA     x9, SYM(usbmsc_stage)
+        ldr     w9, [x9]
+        cbz     w9, 44f
+        LEA     x0, m_stopped
+        bl      report_puts
+        LEA     x9, SYM(usbmsc_stage)
+        ldr     w0, [x9]
+        bl      report_dec
+        b       45f
+44:     LEA     x0, m_absent
+        bl      report_puts
+        b       45f
+43:     LEA     x9, SYM(usbmsc_blocks)
+        ldr     w0, [x9]
+        bl      report_dec
+        LEA     x0, m_blocks
+        bl      report_puts
+        LEA     x9, SYM(usbmsc_bsize)
+        ldr     w0, [x9]
+        bl      report_dec
+45:     bl      report_nl
+
+        LEA     x0, m_netline
+        bl      report_puts
+        LEA     x9, SYM(usbnet_slot)
+        ldr     w9, [x9]
+        cbnz    w9, 46f
         LEA     x9, SYM(usbnet_stage)
         ldr     w9, [x9]
-        LEA     x0, m_netstop
+        cbz     w9, 47f
+        LEA     x0, m_stopped
         bl      report_puts
         LEA     x9, SYM(usbnet_stage)
         ldr     w0, [x9]
         bl      report_dec
-        b       25f
-29:
-        LEA     x0, m_isnet
+        b       26f
+47:     LEA     x0, m_absent
         bl      report_puts
-        LEA     x19, SYM(usbnet_mac)
+        b       26f
+46:     LEA     x19, SYM(usbnet_mac)
         mov     w20, #0
-28:     cmp     w20, #6
-        b.hs    25f
+48:     cmp     w20, #6
+        b.hs    26f
         ldrb    w0, [x19, w20, uxtw]
         bl      report_hex8
         add     w20, w20, #1
         cmp     w20, #6
-        b.hs    25f
+        b.hs    26f
         LEA     x0, m_dash
         bl      report_puts
-        b       28b
-25:     bl      report_nl
-20:
+        b       48b
+
+26:     bl      report_nl
+
 
 /* And whether anybody can type at it, which decides what happens next. */
-        LEA     x0, m_keyboard
-        bl      report_puts
-        bl      platform_haskbd
-        cbz     w0, 15f
-        LEA     x0, m_yes
-        b       16f
-15:     LEA     x0, m_no
-16:     bl      report_puts
-        bl      report_nl
-
         bl      platform_present
 
         ldp     x23, x24, [sp, #48]
@@ -638,8 +685,16 @@ m_stopped:  .asciz "stopped at step "
 m_class:    .asciz " class "
 m_iskbd:    .asciz ", a keyboard"
 m_isnet:    .asciz ", a network at "
+m_isdisk:   .asciz ", a disk of "
+m_diskstop: .asciz ", a disk that stopped at step "
+m_blocks:   .asciz " blocks of "
 m_netstop:  .asciz ", a network that stopped at step "
 m_dash:     .asciz ":"
+m_kbdline:  .asciz "  keyboard      "
+m_diskline: .asciz "  disk          "
+m_netline:  .asciz "  network       "
+m_overusb:  .asciz "usb"
+m_virtio:   .asciz "virtio"
 m_keyboard: .asciz "  keyboard      "
 m_wdt:      .asciz "watchdog at "
 m_hvc:      .asciz "psci, hvc"

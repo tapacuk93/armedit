@@ -200,7 +200,8 @@ def main():
            "...which serial port, and of which kind", field(log, "serial"))
         ok(field(log, "restart") == "psci, hvc",
            "...how it would restart", field(log, "restart"))
-        ok(field(log, "keyboard") == "yes", "...and whether anybody can type at it")
+        ok(field(log, "keyboard") == "virtio",
+           "...and what there is to type on, by kind", field(log, "keyboard"))
         # A machine with no address translator says so, which is the answer
         # that matters on the machine that has one: a USB controller that finds
         # itself and then answers nothing is a driver bug where this line reads
@@ -233,7 +234,8 @@ def main():
            field(log, "screen"))
         ok("stride" in (field(log, "screen") or "") and "depth" in (field(log, "screen") or ""),
            "...with the stride and depth it was given")
-        ok(field(log, "keyboard") == "no", "...and no keyboard, said plainly")
+        ok(field(log, "keyboard") == "absent",
+           "...and no keyboard, said plainly", field(log, "keyboard"))
 
         # The part serial cannot show: that it is on the glass.
         rows = m.pixels(FB_AT, 1280 * 4 * 400)
@@ -326,13 +328,43 @@ def main():
     # class - and class 2 is CDC, which is the road to a network on bare metal.
     with Machine("usbnet", 4636, ramfb=True, usb=(),
                  extra=["-netdev", "user,id=u0", "-device", "usb-net,netdev=u0"]) as m:
-        net = field(m.log(), "usb device") or ""
+        lg = m.log()
+        net = field(lg, "usb device") or ""
+        brought = field(lg, "network") or ""
     ok(net.startswith("0525:a4a2"),
        "an Ethernet adapter says something else entirely", net)
     ok("class 2" in net,
        "...and calls itself a communications device, which is what it is", net)
-    ok("a network at" in net,
-       "...and is brought up as a network, with the address it reports", net)
+    ok(":" in brought and "absent" not in brought,
+       "...and is brought up as a network, with the address it reports", brought)
+
+    # --- and all three at once, which is what a usable machine is
+    #
+    # Enumeration used to stop at the first occupied port, so a machine could
+    # have a keyboard or a disk or an adapter - whichever happened to be
+    # plugged in first. Each device has its own slot, its own context and its
+    # own control ring now; what they share is the controller and the event
+    # ring, and that is why a transfer event carries the endpoint it belongs to.
+    disk = os.path.join(SCRATCH, "disk.img")
+    with open(disk, "wb") as f:
+        f.truncate(8 * 1024 * 1024)
+    with Machine("three", 4639, ramfb=True, usb=("usb-kbd",),
+                 extra=["-drive", "id=d0,if=none,file=%s,format=raw" % disk,
+                        "-device", "usb-storage,drive=d0",
+                        "-netdev", "user,id=u0", "-device", "usb-net,netdev=u0"]) as m:
+        lg = m.log()
+        ok("3 attached" in (field(lg, "usb") or ""),
+           "three devices on one controller are all seen",
+           field(lg, "usb"))
+        ok(field(lg, "keyboard") == "usb", "...the keyboard comes up",
+           field(lg, "keyboard"))
+        ok("blocks of 512" in (field(lg, "disk") or ""),
+           "...the disk says how big it is", field(lg, "disk"))
+        ok(":" in (field(lg, "network") or ""),
+           "...and the adapter says its address", field(lg, "network"))
+        ok("the network gave us 10.0.2.15" in lg,
+           "...and DHCP runs over it with all three attached")
+        ok("KERNEL FAULT" not in lg, "...and nothing faulted with three at once")
 
     # --- and finally: can it be typed at?
     #

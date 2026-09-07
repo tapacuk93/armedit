@@ -85,6 +85,9 @@
  * of the idle loop has somewhere to land, and small enough to sit in a ring of
  * sixteen with room for the link entry that closes it.
  */
+/* How many devices can be on at once, and how a slot finds its own things. */
+#define MAX_DEVS        3
+
 #define REPORTS_N       8
 #define REPORTS_OUT     6
 
@@ -784,21 +787,47 @@ SYM(xhci_enumerate):
         bl      SYM(xhci_caplength)
         add     x20, x19, w0, uxtw              /* operational */
 
-/* Which port has something in it. The first is enough; there is one device. */
+/*
+ * Every port with something in it, not the first.
+ *
+ * A machine worth using has a keyboard and a disk and a network on it at once,
+ * and stopping at the first port meant it could have exactly one of them - the
+ * one that happened to be plugged in first. Each device gets its own slot, its
+ * own device context and its own control ring; what they share is the
+ * controller and the event ring, and the event ring is why transfer events
+ * carry the endpoint they belong to.
+ *
+ * Failing on one port does not stop the others. A device this kernel has no
+ * driver for is the ordinary case, and it must not cost the machine its
+ * keyboard.
+ */
         mov     w0, #2                          /* finding an occupied port */
         bl      xhci_step
         bl      SYM(xhci_ports)
         mov     w21, w0
         cbz     w21, .Lxe_fail
         mov     w22, #0
-1:      cmp     w22, w21
-        b.hs    .Lxe_fail
+        mov     w24, #0                         /* how many were brought up */
+.Lxe_port:
+        cmp     w22, w21
+        b.hs    .Lxe_done
+        LEA     x9, xhci_ndev
+        ldr     w9, [x9]
+        cmp     w9, #MAX_DEVS
+        b.hs    .Lxe_done
         add     x23, x20, #XHCI_PORTSC
         add     x23, x23, x22, lsl #4
         ldr     w9, [x23]
         tbnz    w9, #0, 2f                      /* CCS */
+.Lxe_next:
         add     w22, w22, #1
-        b       1b
+        b       .Lxe_port
+.Lxe_done:
+        cbz     w24, .Lxe_fail
+        mov     w0, #0
+        bl      xhci_step
+        mov     w0, #0
+        b       .Lxe_out
 
 /*
  * Reset it, and take care what is written back.
@@ -812,6 +841,11 @@ SYM(xhci_enumerate):
  */
 2:      mov     w0, #3                          /* resetting the port */
         bl      xhci_step
+        mov     w10, #0                         /* a spin count, and only that:
+                                                   w27 is the context size and
+                                                   borrowing it laid every
+                                                   input context out at the
+                                                   wrong stride */
         ldr     w9, [x23]
         movz    w10, #0x00FE, lsl #16           /* the change bits, 17..23 */
         orr     w10, w10, #(1 << 1)             /* and Port Enabled */
@@ -823,14 +857,14 @@ SYM(xhci_enumerate):
         mov     w24, #0
 3:      ldr     w9, [x23]
         tbnz    w9, #21, 4f                     /* PRC: the reset finished */
-        add     w24, w24, #1
-        cmp     w24, #0x400000
-        b.hs    .Lxe_fail
+        add     w10, w10, #1
+        cmp     w10, #0x400000
+        b.hs    .Lxe_next
         b       3b
 4:      mov     w0, #4                          /* waiting for it to enable */
         bl      xhci_step
         ldr     w9, [x23]
-        tbz     w9, #1, .Lxe_fail               /* PED: it did not come up */
+        tbz     w9, #1, .Lxe_next               /* PED: it did not come up */
         lsr     w25, w9, #10
         and     w25, w25, #0xF                  /* the speed it came up at */
 
@@ -842,11 +876,31 @@ SYM(xhci_enumerate):
         mov     w2, #0
         bl      xhci_command
         cmn     w0, #1
-        b.eq    .Lxe_fail
+        b.eq    .Lxe_next
         LEA     x9, xhci_last
         ldr     w9, [x9, #12]
         lsr     w26, w9, #24                    /* the slot id */
-        cbz     w26, .Lxe_fail
+        cbz     w26, .Lxe_next
+        cmp     w26, #32
+        b.hs    .Lxe_next
+
+/*
+ * Take one of the three sets of per-device state, and remember which, so that
+ * everything afterwards can find this device's context and control ring from
+ * nothing but its slot number.
+ */
+/*
+ * Which set of per-device state this one took. Kept in the table rather than
+ * in a register: every lookup afterwards goes through the slot anyway, and the
+ * register it was using is the port's speed, which is needed later and was
+ * being destroyed here.
+ */
+        LEA     x9, xhci_ndev
+        ldr     w10, [x9]
+        add     w11, w10, #1
+        str     w11, [x9]
+        LEA     x9, xhci_slotdev
+        strb    w10, [x9, w26, uxtw]
 
 /*
  * Describe it to the controller.
@@ -860,10 +914,12 @@ SYM(xhci_enumerate):
         LEA     x0, xhci_input
         mov     x1, #(33 * 64)
         bl      xhci_zero
-        LEA     x0, xhci_devctx
+        mov     w0, w26
+        bl      SYM(xhci_devctxof)
         mov     x1, #(32 * 64)
         bl      xhci_zero
-        LEA     x0, xhci_ep0
+        mov     w0, w26
+        bl      SYM(xhci_ep0of)
         mov     x1, #(RING_TRBS * TRB_SZ)
         bl      xhci_zero
 
@@ -905,28 +961,46 @@ SYM(xhci_enumerate):
         mov     w12, #512                       /* super and above */
 6:      orr     w10, w10, w12, lsl #16
         str     w10, [x9, #4]
-        LEA     x10, xhci_ep0
-        orr     x10, x10, #1                    /* the ring's cycle state */
+        mov     w0, w26
+        bl      SYM(xhci_ep0of)
+        orr     x10, x0, #1                     /* the ring's cycle state */
+        LEA     x9, xhci_input
+        add     x9, x9, w27, uxtw
+        add     x9, x9, w27, uxtw
         str     x10, [x9, #8]
         mov     w11, #8                         /* average transfer length */
         str     w11, [x9, #16]
 
+        mov     w0, w26
+        bl      SYM(xhci_devctxof)
         LEA     x9, xhci_dcbaa
-        LEA     x10, xhci_devctx
-        str     x10, [x9, w26, uxtw #3]
+        str     x0, [x9, w26, uxtw #3]
 
-/* Close the control ring, so that using it for ever stays inside it. */
-        LEA     x9, xhci_ep0
+/* Close this device's control ring, so using it for ever stays inside it. */
+        mov     w0, w26
+        bl      SYM(xhci_ep0of)
+        mov     x9, x0
         add     x10, x9, #((RING_TRBS - 1) * TRB_SZ)
         str     x9, [x10]
         str     wzr, [x10, #8]
         mov     w11, #(TRB_LINK | TRB_TC)
         str     w11, [x10, #12]
-        LEA     x10, xhci_ep0put
-        str     x9, [x10]
-        LEA     x10, xhci_ep0cycle
-        mov     w11, #1
-        str     w11, [x10]
+/*
+ * The ring first, then where to record it - and the ring kept in a register
+ * neither helper touches. Both work in x9 and x10, so holding the ring base in
+ * x10 across the second call left every device's producer pointing at
+ * whatever the helper had put there: the entries were written outside the
+ * ring, the controller read a ring that was still empty, and every control
+ * transfer timed out.
+ */
+        mov     w0, w26
+        bl      SYM(xhci_ep0of)
+        mov     x12, x0
+        mov     w0, w26
+        bl      xhci_ep0state                   /* x0 = its producer, x1 = cycle */
+        str     x12, [x0]
+        mov     w13, #1
+        str     w13, [x1]
 
         mov     w0, #6                          /* addressing the device */
         bl      xhci_step
@@ -975,11 +1049,25 @@ SYM(xhci_enumerate):
  * declared itself something else, and failing is ordinary - a mouse gets this
  * far and then has no boot keyboard interface in it.
  */
+/*
+ * A class of zero means "the interfaces say what this is", which is what a
+ * keyboard reports and what a disk reports. So both are tried, cheapest first,
+ * and failing is ordinary: a mouse gets this far and is neither.
+ */
         LEA     x9, SYM(xhci_class)
         ldr     w9, [x9]
         cbnz    w9, 2f
         mov     w0, w26
         bl      SYM(xhci_keyboard)
+        cmn     w0, #1
+        b.ne    1f
+        mov     w0, w26
+        LEA     x1, xhci_cfg
+        bl      SYM(xhci_cfglen)
+        mov     w2, w0
+        mov     w0, w26
+        LEA     x1, xhci_cfg
+        bl      SYM(usbmsc_start)
         b       1f
 /*
  * A communications device is an adapter, and the class says so at the device
@@ -1004,17 +1092,24 @@ SYM(xhci_enumerate):
         LEA     x10, SYM(usbnet_stage)
         mov     w11, #93
         str     w11, [x10]
+/*
+ * How many bytes the configuration is, kept where a call cannot lose it. This
+ * used x20, which is the operational registers - so bringing up a network
+ * device left the loop unable to find the next port.
+ */
         LEA     x9, xhci_cfg
         ldrb    w10, [x9, #2]
         ldrb    w11, [x9, #3]
-        orr     w20, w10, w11, lsl #8
-        cmp     w20, #256
+        orr     w10, w10, w11, lsl #8
+        cmp     w10, #256
         b.ls    3f
-        mov     w20, #256
-3:      mov     w0, w26
+        mov     w10, #256
+3:      LEA     x9, xhci_cfgbytes
+        str     w10, [x9]
+        mov     w0, w26
         movz    w1, #0x0200
         LEA     x2, xhci_cfg
-        mov     w3, w20
+        mov     w3, w10
         bl      xhci_ask
         cmn     w0, #1
         b.eq    1f
@@ -1023,13 +1118,19 @@ SYM(xhci_enumerate):
         str     w11, [x10]
         mov     w0, w26
         LEA     x1, xhci_cfg
-        mov     w2, w20
+        bl      SYM(xhci_cfglen)
+        mov     w2, w0
+        mov     w0, w26
+        LEA     x1, xhci_cfg
         bl      SYM(usbnet_start)
 1:
-        mov     w0, #0
-        bl      xhci_step
-        mov     w0, #0
-        b       .Lxe_out
+/*
+ * One device is up, whatever it turned out to be - even nothing this kernel
+ * has a driver for. On to the next port: a device nobody can drive must not
+ * cost the machine its keyboard.
+ */
+        add     w24, w24, #1
+        b       .Lxe_next
 .Lxe_fail:
         mov     w0, #-1
 .Lxe_out:
@@ -1068,6 +1169,12 @@ SYM(xhci_enumerate):
  * work on a machine with nothing else working, and a report-descriptor parser
  * is a lot of surface to be wrong on the day the screen is the only output.
  */
+        .globl  SYM(xhci_cfglen)
+SYM(xhci_cfglen):
+        LEA     x9, xhci_cfgbytes
+        ldr     w0, [x9]
+        ret
+
         .globl  SYM(xhci_keyboard)
 SYM(xhci_keyboard):
         stp     x29, x30, [sp, #-96]!
@@ -1108,6 +1215,10 @@ SYM(xhci_keyboard):
         bl      xhci_ask
         cmn     w0, #1
         b.eq    .Lxk_fail
+        LEA     x9, xhci_cfgbytes       /* kept: a disk driver reads the same
+                                           bytes and should not fetch them
+                                           again to learn how many there are */
+        str     w20, [x9]
 
         LEA     x9, xhci_cfg
         ldrb    w21, [x9, #5]                   /* which configuration this is */
@@ -1329,6 +1440,43 @@ SYM(xhci_keyboard):
         ret
 
 /*
+ * A slot's own device context and control ring.
+ *
+ * Everything below is written in terms of "the device", and with more than one
+ * attached "the device" has to be resolved from something. The slot number is
+ * that something: the controller gives it, every command and doorbell carries
+ * it, and a small table maps it to which of the three sets of state this
+ * device took when it was addressed.
+ */
+        .globl  SYM(xhci_devctxof)
+SYM(xhci_devctxof):
+        LEA     x9, xhci_slotdev
+        ldrb    w9, [x9, w0, uxtw]
+        mov     x10, #(32 * 64)
+        LEA     x11, xhci_devctx
+        madd    x0, x9, x10, x11
+        ret
+
+        .globl  SYM(xhci_ep0of)
+SYM(xhci_ep0of):
+        LEA     x9, xhci_slotdev
+        ldrb    w9, [x9, w0, uxtw]
+        mov     x10, #(RING_TRBS * TRB_SZ)
+        LEA     x11, xhci_ep0
+        madd    x0, x9, x10, x11
+        ret
+
+/* Where that ring's producer and cycle bit are kept. */
+xhci_ep0state:
+        LEA     x9, xhci_slotdev
+        ldrb    w9, [x9, w0, uxtw]
+        LEA     x10, xhci_ep0put
+        add     x0, x10, w9, uxtw #3
+        LEA     x10, xhci_ep0cycle
+        add     x1, x10, w9, uxtw #2
+        ret
+
+/*
  * xhci_addep - describe one endpoint to the controller.
  *   w0 = slot, w1 = the endpoint's USB address, w2 = its type,
  *   w3 = its maximum packet size, x4 = the ring it is to use.
@@ -1400,22 +1548,27 @@ SYM(xhci_addep):
  */
         .globl  SYM(xhci_slotctx)
 SYM(xhci_slotctx):
-        stp     x29, x30, [sp, #-32]!
+        stp     x29, x30, [sp, #-48]!
         mov     x29, sp
-        str     x19, [sp, #16]
-        mov     w19, w1
+        stp     x19, x20, [sp, #16]
+        str     x21, [sp, #32]
+        mov     w19, w1                         /* the highest endpoint in use */
+        mov     w20, w0                         /* and whose */
+        mov     w0, w20
+        bl      SYM(xhci_devctxof)
+        mov     x21, x0                         /* this device's own context */
         bl      xhci_ctxsize
         LEA     x10, xhci_input
         add     x10, x10, w0, uxtw
-        LEA     x12, xhci_devctx
-        ldr     w13, [x12]                      /* as the controller left it */
+        ldr     w13, [x21]                      /* as the controller left it */
         bic     w13, w13, #(0x1F << 27)
         orr     w13, w13, w19, lsl #27
         str     w13, [x10]
-        ldr     w13, [x12, #4]
+        ldr     w13, [x21, #4]
         str     w13, [x10, #4]
-        ldr     x19, [sp, #16]
-        ldp     x29, x30, [sp], #32
+        ldr     x21, [sp, #32]
+        ldp     x19, x20, [sp, #16]
+        ldp     x29, x30, [sp], #48
         ret
 
 /* xhci_beginctx - start a fresh description of what a slot has. */
@@ -1868,6 +2021,8 @@ SYM(xhci_control):
         mov     w19, w0
         mov     x20, x1
         mov     w21, w2
+        LEA     x9, xhci_cur                    /* who this transfer is with */
+        str     w19, [x9]
 
         bl      SYM(xhci_find)
         cbz     x0, 9f
@@ -1965,15 +2120,28 @@ SYM(xhci_control):
  * follows has not been written yet.
  */
 xhci_ep0put3:
-        stp     x29, x30, [sp, #-48]!
+        stp     x29, x30, [sp, #-64]!
         mov     x29, sp
         stp     x19, x20, [sp, #16]
+        stp     x21, x22, [sp, #32]
         mov     x19, x0
         mov     w20, w1
+        mov     w21, w2
 
-        LEA     x9, xhci_ep0put
+/*
+ * Whose ring. With more than one device attached there is more than one
+ * control ring, and the slot being spoken to says which - kept in a variable
+ * rather than passed, because this is called three times for one transfer and
+ * threading it through each would be three chances to pass the wrong one.
+ */
+        LEA     x9, xhci_cur
+        ldr     w22, [x9]
+        mov     w0, w22
+        bl      xhci_ep0state
+        mov     x9, x0
+        mov     x11, x1
+        mov     w2, w21
         ldr     x10, [x9]
-        LEA     x11, xhci_ep0cycle
         ldr     w12, [x11]
 
         str     x19, [x10]
@@ -1982,7 +2150,13 @@ xhci_ep0put3:
         str     w2, [x10, #12]
         add     x10, x10, #TRB_SZ
 
-        LEA     x13, xhci_ep0
+        stp     x9, x10, [sp, #-16]!
+        stp     x11, x12, [sp, #-16]!
+        mov     w0, w22
+        bl      SYM(xhci_ep0of)
+        mov     x13, x0
+        ldp     x11, x12, [sp], #16
+        ldp     x9, x10, [sp], #16
         add     x14, x13, #((RING_TRBS - 1) * TRB_SZ)
         cmp     x10, x14
         b.lo    1f
@@ -1995,8 +2169,9 @@ xhci_ep0put3:
         str     w12, [x11]
 1:      str     x10, [x9]
 
+        ldp     x21, x22, [sp, #32]
         ldp     x19, x20, [sp, #16]
-        ldp     x29, x30, [sp], #48
+        ldp     x29, x30, [sp], #64
         ret
 
 /*
@@ -2223,10 +2398,21 @@ xhci_evt:    .space (RING_TRBS * TRB_SZ)
 xhci_erst:   .space 64
         .p2align 6
 xhci_input:  .space (33 * 64)           /* what we tell the controller */
+/*
+ * One of these per device, not one in total.
+ *
+ * A machine worth using has a keyboard and a disk and a network on it at once.
+ * Each needs its own device context - that is what the slot array points at -
+ * and its own control ring, because the ring's position lives in the endpoint
+ * context and two devices sharing one would each consume the other's entries.
+ *
+ * Three, because that is a keyboard, a disk and an adapter, and a fourth would
+ * be a hub, which is a different piece of work.
+ */
         .p2align 6
-xhci_devctx: .space (32 * 64)           /* what it tells us back */
+xhci_devctx: .space (MAX_DEVS * 32 * 64)
         .p2align 6
-xhci_ep0:    .space (RING_TRBS * TRB_SZ)
+xhci_ep0:    .space (MAX_DEVS * RING_TRBS * TRB_SZ)
         .p2align 6
 xhci_desc:   .space 32                  /* what the device says it is */
         .p2align 6
@@ -2234,6 +2420,8 @@ xhci_desc:   .space 32                  /* what the device says it is */
 SYM(xhci_req): .space 8                 /* the eight bytes of a request */
         .p2align 6
 xhci_cfg:    .space 256                 /* the configuration, as it arrived */
+        .p2align 3
+xhci_cfgbytes: .space 4                 /* and how many of it there are */
         .p2align 6
 xhci_intring: .space (RING_TRBS * TRB_SZ)
         .p2align 3
@@ -2263,8 +2451,12 @@ xhci_intcycle: .space 4
 xhci_reports: .space (REPORTS_N * 8)    /* what is held down, several deep */
 xhci_before:  .space 8                  /* and what was, last time */
         .p2align 3
-xhci_ep0put: .space 8
-xhci_ep0cycle: .space 4
+xhci_ep0put: .space (MAX_DEVS * 8)
+xhci_ep0cycle: .space (MAX_DEVS * 4)
+        .p2align 3
+xhci_slotdev: .space 32                 /* which of the three a slot is */
+xhci_ndev:    .space 4                  /* and how many have been taken */
+xhci_cur:     .space 4                  /* whose control ring is in use */
         .globl  SYM(xhci_vendor)
         .globl  SYM(xhci_product)
         .globl  SYM(xhci_class)
