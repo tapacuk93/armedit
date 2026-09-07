@@ -669,6 +669,51 @@ kmain:
 1:      LEA     x0, m_nonet
         bl      platform_puts
 3:
+/*
+ * Whatever was on the disk, back on the screen.
+ *
+ * Before the editor runs rather than after, so the first thing anybody sees is
+ * their own work rather than an empty screen that fills in a moment later. A
+ * machine with no disk, or a disk that is not a document, gets nothing and
+ * says nothing: an empty editor is the ordinary state.
+ */
+        bl      SYM(store_load)
+
+#ifdef SUE_DISK_TEST
+/*
+ * Write on purpose, so that writing can be checked from outside.
+ *
+ * The disk is the one device whose work is visible to the host afterwards -
+ * the image file is right there - so a build that puts a known document on it
+ * at boot needs no screen, no keyboard and no reading of pixels to say whether
+ * the driver moved the bytes.
+ */
+        LEA     x0, m_disktest
+        bl      SYM(editor_insert_str)
+        bl      SYM(store_save)
+        mov     w19, w0
+        LEA     x0, m_savedmsg
+        bl      platform_puts
+        mov     w0, w19
+        bl      uart_puthex
+        LEA     x0, m_nl3
+        bl      platform_puts
+/*
+ * And read it back, which is a different claim from having written it. A write
+ * that the device acknowledged and did not perform reports success and leaves
+ * the disk as it was; only reading says which happened.
+ */
+        bl      SYM(store_scribble)
+        bl      SYM(store_load)
+        mov     w19, w0
+        LEA     x0, m_readback
+        bl      platform_puts
+        mov     w0, w19
+        bl      uart_puthex
+        LEA     x0, m_nl3
+        bl      platform_puts
+#endif
+
         bl      kedit_run               /* the editor is the operating system */
         b       .Lidle
 
@@ -782,6 +827,11 @@ m_boot:   .asciz "sue: boot\n"
 m_dhcp:   .asciz "sue: the network gave us "
 m_nodhcp: .asciz "sue: nobody answered DHCP - using QEMU's fixed addresses\n"
 m_dot4:   .asciz "."
+#ifdef SUE_DISK_TEST
+m_disktest:  .asciz "a document that should survive"
+m_savedmsg:  .asciz "sue: store_save said "
+m_readback:  .asciz "sue: reading it back said "
+#endif
 m_nl3:    .asciz "\n"
 #ifdef SUE_REBOOT_TEST
 m_reboot_returned: .asciz "sue: reboot returned\n"

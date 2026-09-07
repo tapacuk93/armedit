@@ -157,6 +157,12 @@ kedit_run:
         mov     x24, x0
         bl      SYM(editor_caret_blink)
         orr     w23, w23, w0            /* it says nothing changed while busy */
+/*
+ * The document is written on the same tick, when it has stopped changing.
+ * Cheap: it is a checksum unless something is different, and the disk is only
+ * touched when it is.
+ */
+        bl      SYM(store_tick)
         bl      SYM(video_ok)           /* the clip advances on the same tick */
         cbz     w0, .Lke_loop
         bl      SYM(video_next)

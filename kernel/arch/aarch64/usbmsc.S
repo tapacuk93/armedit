@@ -427,11 +427,22 @@ ms_transfer:
         LEA     x0, ms_cdb
         mov     x1, #16
         bl      ms_zero
+/*
+ * The command block, and the address recomputed after the call.
+ *
+ * ms_put32 works in w9, which is where the command block was being held, so
+ * everything written after it went to whatever the helper had left there. The
+ * block number landed correctly and the transfer length did not - and a device
+ * told to move zero blocks does exactly that, reports success, and leaves the
+ * disk as it was. Reading worked throughout, because the one read that had
+ * been exercised - the capacity - has no length field in its command.
+ */
         LEA     x9, ms_cdb
         strb    w22, [x9]
         add     x0, x9, #2              /* the block, most significant first */
         mov     w1, w19
         bl      ms_put32
+        LEA     x9, ms_cdb
         lsr     w10, w20, #8
         strb    w10, [x9, #7]           /* and how many, the same way */
         strb    w20, [x9, #8]
