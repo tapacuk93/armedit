@@ -100,7 +100,14 @@ final class Aicoin {
      * exchange somewhere cheaper or stronger.
      */
     String ask(String wallet, Router.Tier tier, String prompt, int maxTokens) throws Exception {
-        return send(wallet, Provider.of(tier.provider()), tier.model(), prompt, maxTokens);
+        try {
+            return text(wallet, prompt, null);
+        } catch (NoText older) {
+            /* A proxy without the capability endpoints. The tier's provider
+               and model are still a working answer there, which is why the
+               table has not been deleted - it is the fallback, not the plan. */
+            return send(wallet, Provider.of(tier.provider()), tier.model(), prompt, maxTokens);
+        }
     }
 
     String ask(String wallet, String prompt, int maxTokens) throws Exception {
@@ -116,7 +123,71 @@ final class Aicoin {
      */
     String askDirect(String wallet, String providerName, String model,
                      String prompt, int maxTokens) throws Exception {
-        return send(wallet, Provider.of(providerName), model, prompt, maxTokens);
+        try {
+            /* Pinned, because a consortium's whole point is that a named model
+               answered - and a pinned provider is never silently replaced. */
+            return text(wallet, prompt, providerName);
+        } catch (NoText older) {
+            return send(wallet, Provider.of(providerName), model, prompt, maxTokens);
+        }
+    }
+
+    /**
+     * Ask for a paragraph, and let the proxy decide who writes it.
+     *
+     * The rest of this file is provider-shaped: it sends Anthropic's own body
+     * to Anthropic's own path, which is right for a caller that has chosen a
+     * provider and wrong for this one. Nothing here has a view on who should
+     * answer - it wants an operation written, or a piece of code judged - and
+     * choosing meant carrying a table of which models exist, which is a copy
+     * of something the proxy knows and goes quietly out of date.
+     *
+     * So `/text`: one request shape, one response shape, and the provider
+     * picked by what it is rated at for the subject. Every call from this
+     * project is about code, which is said rather than left to be inferred -
+     * the tagger would guess it from the words, and being right by accident is
+     * not the same as being right.
+     *
+     * Escalation is off. The proxy will offer a single model the chance to say
+     * the question needs the whole panel, and for this caller that decision is
+     * already made elsewhere and made explicitly: Triage decides whether to
+     * convene one, and the panel it convenes is a poll rather than a merge.
+     * Leaving it on would mean a triage call that could silently become
+     * thirteen.
+     */
+    String text(String wallet, String prompt, String pin) throws Exception {
+        var body = new StringBuilder("{\"prompt\":\"").append(Json.escape(prompt))
+                .append("\",\"subject\":\"code\",\"escalate\":false");
+        if (pin != null && !pin.isBlank()) {
+            body.append(",\"provider\":\"").append(Json.escape(pin)).append('"');
+        }
+        body.append('}');
+
+        var req = HttpRequest.newBuilder(base.resolve("/text"))
+                .timeout(Duration.ofMinutes(5))
+                .header("Content-Type", "application/json")
+                .header("X-Api-Key", wallet)
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        var res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() == 404) {
+            throw new NoText("this proxy has no /text endpoint");
+        }
+        if (res.statusCode() / 100 != 2) {
+            throw new IllegalStateException(
+                    "aicoin %d: %s".formatted(res.statusCode(), trim(res.body())));
+        }
+        var flat = Json.parse(res.body());
+        String answer = flat.get("answer");
+        if (answer == null || answer.isBlank()) {
+            throw new IllegalStateException("no answer in " + trim(res.body()));
+        }
+        return answer;
+    }
+
+    /** Thrown when the proxy predates the capability endpoints. */
+    static final class NoText extends Exception {
+        NoText(String why) { super(why); }
     }
 
     private String send(String wallet, Provider provider, String model,

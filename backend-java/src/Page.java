@@ -65,6 +65,22 @@ final class Page {
 
             <div id="more" style="display:none">
             <fieldset>
+            <legend>CHANGE AN ACCESS</legend>
+            <small>An account is its accesses, and accesses change. A wallet opened after the fact, or a key rotated, is the same account with something different bound to it - not a reason to register again and reissue the key every device is carrying.</small>
+            <label for="w2">aicoin wallet token</label>
+            <input id="w2" type="password" autocomplete="off" spellcheck="false" placeholder="eyJhZGRyIjoi...">
+            <button id="wb" type="button">BIND THIS WALLET</button>
+            <div id="wout"></div>
+            <label for="k2">AWS access key id</label>
+            <input id="k2" autocomplete="off" spellcheck="false" placeholder="AKIA...">
+            <label for="s2">AWS secret access key</label>
+            <input id="s2" type="password" autocomplete="off" spellcheck="false">
+            <label for="r2">Region</label>
+            <input id="r2" autocomplete="off" spellcheck="false" value="us-east-1">
+            <button id="ab" type="button">BIND THIS AWS ACCESS</button>
+            <div id="aout"></div>
+            </fieldset>
+            <fieldset>
             <legend>OTHER CLOUDS</legend>
             <small>Optional, and addable any time. With more than one bound, work goes to whichever can run it most cheaply - unless it names resources that only live somewhere specific, in which case it goes there.</small>
             <label for="cp">Provider</label>
@@ -101,6 +117,31 @@ final class Page {
               else{out.innerHTML='<span class="err">'+(j.error||"registration failed")+"</span>";}
              }catch(x){out.innerHTML='<span class="err">'+x+"</span>";}
              $("b").disabled=false;
+            });
+
+            async function bind(path,body,el,ok){
+             el.textContent="binding...";
+             try{
+              const r=await fetch(path,{method:"POST",
+               headers:{"Content-Type":"application/json","X-Armedit-Key":issuedKey},
+               body:JSON.stringify(body)});
+              const j=await r.json();
+              el.innerHTML=j.error?'<span class="err">'+j.error+"</span>"
+               :(ok+(j.complete?"":" This account still needs the other access before it can work."));
+             }catch(x){el.innerHTML='<span class="err">'+x+"</span>";}
+            }
+
+            $("wb").addEventListener("click",()=>{
+             const v=$("w2").value.trim();
+             if(!v){$("wout").innerHTML='<span class="err">nothing to bind</span>';return;}
+             bind("/api/wallet",{wallet:v},$("wout"),"Wallet bound.");$("w2").value="";
+            });
+
+            $("ab").addEventListener("click",()=>{
+             const k=$("k2").value.trim(),sec=$("s2").value.trim();
+             if(!k||!sec){$("aout").innerHTML='<span class="err">both fields are required</span>';return;}
+             bind("/api/aws",{aws_key:k,aws_secret:sec,region:$("r2").value.trim()},
+              $("aout"),"AWS access bound.");$("s2").value="";
             });
 
             $("cb").addEventListener("click",async()=>{

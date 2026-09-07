@@ -241,6 +241,22 @@ bad at the world having moved since it was trained. That is why the appeal asks
 whether an objection is *correct* rather than merely specific, and why claims
 about the world get checked by making the call.
 
+**How a model is reached.** Through aicoin's `/text`: one request shape, one
+response shape, and the provider chosen by what it is rated at for the subject.
+The rest of that proxy is provider-shaped — Anthropic's own body to Anthropic's
+own path — which is right for a caller that has chosen a provider and wrong for
+this one. Nothing here has a view on who should answer; it wants an operation
+written or a piece of code judged, and choosing meant carrying a table of which
+models exist, which is a copy of something the proxy already knows and goes
+quietly out of date.
+
+Every call from this project says `subject: "code"` rather than leaving it to be
+inferred from the words, and turns escalation off: the proxy will offer a single
+model the chance to say a question needs the whole panel, and for this caller
+that decision is made elsewhere and made explicitly. Leaving it on would let a
+triage call become thirteen. A proxy that has never heard of `/text` is an older
+proxy, not a failure, and the provider-shaped path is still there for it.
+
 **Where the panel comes from.** The models are aicoin's, and so is the panel:
 `POST /consortium` in `mode: "poll"` — one request, one turn per panelist, every
 answer returned attributed and unmerged. That mode was added to aicoin for this;
@@ -320,6 +336,16 @@ the evidence the panel said it lacked; it does not vote. Machine code still
 enters this repository only when several models have separately agreed it
 should, and the count of people who asked is now part of what they are told
 when they decide.
+
+### An account is its accesses, and accesses change
+
+A wallet and AWS access were settable only at registration, so a wallet opened
+after the fact — or a key rotated — meant registering again and reissuing the key
+every device is carrying. Neither is a new account. `POST /api/wallet` and
+`POST /api/aws` bind them afterwards, authorised by the account's own key like
+everything else, and the page has the fields for it beside the ones for other
+clouds. Nothing is echoed back but whether the account is now complete, because
+returning a credential is a way of leaking it into a log.
 
 ### Backend configuration
 

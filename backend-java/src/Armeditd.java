@@ -245,6 +245,8 @@ public final class Armeditd {
             case "/api/teardown" -> routeSession(r, false);
             case "/api/journal" -> routeJournal(r);
             case "/api/clouds" -> routeClouds(r);
+            case "/api/wallet" -> routeWallet(r);
+            case "/api/aws" -> routeAws(r);
             case "/api/otp" -> routeOtp(r);
             case "/api/otp/reserve" -> routeOtpReserve(r);
             case "/api/run/result" -> routeRunResult(r);
@@ -1590,6 +1592,67 @@ public final class Armeditd {
         account.clouds().bind(provider, fields);
         return Res.json(200, Json.obj("provider", provider.id,
                 "complete", account.clouds().has(provider)));
+    }
+
+    /*
+     * The two accesses an account is made of, changeable after it is made.
+     *
+     * They used to be settable only at registration, so a wallet opened after
+     * the fact - or an AWS key rotated - meant making a new account and
+     * reissuing the key every device is carrying. Neither of those is a new
+     * account: it is the same account with a different access, which is
+     * exactly what the other clouds have been able to say all along.
+     *
+     * Authorised by the account's own key, like everything else here. Nothing
+     * is returned but whether the account is now complete, because echoing a
+     * credential back is a way of leaking it into a log.
+     */
+    private Res routeWallet(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        if (!r.isPost()) {
+            return Res.json(200, Json.obj("bound", !account.wallet().isBlank()));
+        }
+        var in = Json.parse(r.body());
+        String wallet = in.getOrDefault("wallet", "").trim();
+        if (wallet.isEmpty()) {
+            return Res.json(400, Json.obj("error", "a wallet token is required"));
+        }
+        account.wallet(wallet);
+        accounts.persist();
+        System.out.printf("armedit: %s bound a wallet%n", account.id());
+        return Res.json(200, Json.obj("bound", true,
+                "complete", !account.awsKey().isBlank()));
+    }
+
+    private Res routeAws(Req r) {
+        var account = authorise(r);
+        if (account == null) return unauthorised();
+        if (!r.isPost()) {
+            return Res.json(200, Json.obj("bound", !account.awsKey().isBlank(),
+                    "region", account.region()));
+        }
+        var in = Json.parse(r.body());
+        String key = in.getOrDefault("aws_key", "").trim();
+        String secret = in.getOrDefault("aws_secret", "").trim();
+        String region = in.getOrDefault("region", "").trim();
+        if (key.isEmpty() || secret.isEmpty()) {
+            return Res.json(400, Json.obj("error",
+                    "both an access key id and a secret are required"));
+        }
+        if (region.isEmpty()) region = "us-east-1";
+        account.aws(key, secret, region);
+        /* Rebound as a cloud too, so the chooser compares it against the
+           others on the same terms it always did. */
+        var fields = new java.util.LinkedHashMap<String, String>();
+        fields.put("key", key);
+        fields.put("secret", secret);
+        fields.put("region", region);
+        account.clouds().bind(Clouds.Provider.AWS, fields);
+        accounts.persist();
+        System.out.printf("armedit: %s bound AWS access in %s%n", account.id(), region);
+        return Res.json(200, Json.obj("bound", true,
+                "complete", !account.wallet().isBlank()));
     }
 
     /* ---------------------------------------------------------------- otp */

@@ -27,10 +27,23 @@ final class Accounts {
     static final class Account {
         private final String id;
         private final long createdNanos;
-        private final String wallet;
-        private final String awsKey;
-        private final String awsSecret;
-        private final String region;
+        /*
+         * Changeable, and that is the point of them being here rather than
+         * final. An account used to be a thing you got exactly right at
+         * registration or made again: a wallet you had not opened yet, or a
+         * key you rotated, meant a new account and a new device key. These
+         * four are the accesses, and accesses are the part of an account that
+         * changes while the account stays the same.
+         *
+         * Volatile because the request that changes one and the request that
+         * spends it arrive on different threads, and a half-published pair of
+         * AWS credentials is a signature that fails for a reason nobody can
+         * see.
+         */
+        private volatile String wallet;
+        private volatile String awsKey;
+        private volatile String awsSecret;
+        private volatile String region;
         /* Kept because the one-time pad is derived from it: an account cannot
            be reconstructed after a restart without the seed it was built on. */
         private final String password;
@@ -54,6 +67,16 @@ final class Accounts {
         String id() { return id; }
         long createdNanos() { return createdNanos; }
         String wallet() { return wallet; }
+        void wallet(String v) { wallet = v; }
+        void aws(String key, String secret, String reg) {
+            /* All three together, because two of them are a pair and the third
+               decides which endpoint they are signed for. Setting one at a
+               time would leave a window where the signature is made with a key
+               from one account and a region from another. */
+            awsKey = key;
+            awsSecret = secret;
+            region = reg;
+        }
         String awsKey() { return awsKey; }
         String awsSecret() { return awsSecret; }
         String region() { return region; }
@@ -184,6 +207,12 @@ final class Accounts {
      * about: this file is as sensitive as the credentials in it, and lives
      * wherever the workspace does.
      */
+    /**
+     * Write the accounts out. Called by anything that changes one - which is
+     * no longer only creation, now that an access can be bound afterwards.
+     */
+    synchronized void persist() { flush(); }
+
     private synchronized void flush() {
         if (store == null) return;
         try {

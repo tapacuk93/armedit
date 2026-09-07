@@ -194,6 +194,19 @@ public class ConsortiumTest {
         ok(Aicoin.answers("{\"answers\":[{\"provider\":\"a\",\"model\":\"m\",\"text\":\"\"}]}").isEmpty(),
            "and a panelist that said nothing is not a member who voted");
 
+        // --- the consolidated endpoint, whose answer is one field
+        //
+        // /text is one request shape and one response shape with the provider
+        // chosen by the proxy. What this side has to get right is reading the
+        // answer out of it, and treating a proxy that has never heard of it as
+        // an older proxy rather than a failure.
+        ok(Json.parse("{\"answer\":\"VERDICT: COMMIT\",\"provider\":\"anthropic\"}")
+                   .get("answer").equals("VERDICT: COMMIT"),
+           "the answer is read out of a capability reply");
+        ok(Json.parse("{\"answer\":\"a {brace} and a \\\"quote\\\"\"}")
+                   .get("answer").contains("{brace}"),
+           "...with its braces and quotes intact");
+
         System.exit(fails == 0 ? 0 : 1);
     }
 
